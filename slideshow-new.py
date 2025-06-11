@@ -1,3 +1,9 @@
+"""
+slideshow-new.py
+A Python script to create a slideshow from a list of files, with various modes and features.
+
+version: 1.20"""
+
 import argparse
 import os
 import random
