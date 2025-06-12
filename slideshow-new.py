@@ -13,7 +13,6 @@ from PIL import Image, ImageTk
 # Constants
 TOTAL_WEIGHT = 1000000
 
-
 # Argument parsing setup
 class ModeAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
@@ -71,7 +70,7 @@ args = parser.parse_args()
 
 
 class ImageSlideshow:
-    def __init__(self, root, image_paths, weights, mode, is_random):
+    def __init__(self, root, image_paths, weights, is_random):
         self.root = root
         self.image_paths = image_paths
         self.weights = weights
@@ -408,27 +407,18 @@ class Tree:
 
 
 def parse_input_file(input_file):
-    image_dirs = defaultdict(
-        lambda: {
-            "weight": 100,
-            "is_percentage": True,
-            "balance_level": None,
-            "depth": None,
-        }
-    )
-    specific_images = defaultdict(
-        lambda: {
-            "weight": 100,
-            "is_percentage": True,
-            "balance_level": None,
-            "depth": None,
-        }
-    )
+    image_dirs = {}
+    specific_images = {}
     filters = {
         "must_contain": [],  # List of keywords that must be present in the path
         "must_not_contain": [],  # List of keywords that must NOT be present in the path
         "ignored_dirs": [],  # List of absolute directories to ignore
     }
+
+    default_weight = 100
+    default_is_percentage = True
+    default_balance = args.mode[1] if args.mode else 1
+    default_depth = args.depth if args.depth else 9999
 
     modifier_pattern = re.compile(r"(\[.*?\])")
     weight_pattern = re.compile(r"^\d+%?$")
@@ -477,10 +467,10 @@ def parse_input_file(input_file):
                 continue
 
             # Initialize default modifiers
-            weight = 100
-            is_percentage = True
-            balance_level = None
-            depth = None
+            weight = default_weight
+            is_percentage = default_is_percentage
+            balance_level = default_balance
+            depth = default_depth
 
             # Extract all modifiers
             modifiers = modifier_pattern.findall(line)
@@ -549,7 +539,9 @@ def test_filters(path, filters):
     return 0
 
 
-def calculate_weights(folder_data, specific_images, filters, mode, depth):
+def calculate_weights(
+    folder_data, specific_images, filters, mode, depth
+):
     """
     Calculate weights of all images in folders in folders_data, and specified_images
     """
@@ -609,7 +601,7 @@ def calculate_weights(folder_data, specific_images, filters, mode, depth):
 
 
 def test_distribution(
-    image_paths, weights, iterations, mode, testdepth, is_random=False
+    image_paths, weights, iterations, testdepth, is_random=False
 ):
     hit_counts = defaultdict(int)
     for _ in range(iterations):
@@ -634,15 +626,13 @@ def test_distribution(
 def main(
     input_files,
     test_iterations=None,
-    mode=(),
-    depth=9999,
     testdepth=None,
     is_random=False,
 ):
     start_time = time.time()
 
-    image_dirs = defaultdict(lambda: {"weight": 100, "is_percentage": True, "depth": 0})
-    specific_images = defaultdict(lambda: {"weight": 100, "is_percentage": True})
+    image_dirs = {}
+    specific_images = {}
     filters = {
         "must_contain": [],  # List of keywords that must be present in the path
         "must_not_contain": [],  # List of keywords that must NOT be present in the path
@@ -665,17 +655,17 @@ def main(
         )
         sys.exit()
     all_image_paths, weights = calculate_weights(
-        image_dirs, specific_images, filters, mode, depth
+        image_dirs, specific_images, filters
     )
 
     if test_iterations:
         test_distribution(
-            all_image_paths, weights, test_iterations, mode, testdepth, is_random
+            all_image_paths, weights, test_iterations, testdepth, is_random
         )
     else:
         root = tk.Tk()
         slideshow = ImageSlideshow(  # noqa: F841
-            root, all_image_paths, weights, mode, is_random
+            root, all_image_paths, weights, is_random
         )  # noqa: F841
         root.mainloop()
 
@@ -683,17 +673,11 @@ def main(
 
 
 if __name__ == "__main__":
-    default_weight = 100
-    default_is_asbolute = False
-    default_mode = args.mode if args.mode else ("weighted", 0)
-    default_depth = args.depth if args.depth else 9999
-
+    
     if args.run:
         input_files = args.input_file.split("+") if args.input_file else []
         main(
             input_files,
-            mode=default_mode,
-            depth=default_depth,
             is_random=args.random,
         )
     elif args.test:
@@ -701,8 +685,6 @@ if __name__ == "__main__":
         main(
             input_files,
             test_iterations=args.test,
-            mode=default_mode,
-            depth=default_depth,
-            testdepth=args.testdepth if args.testdepth else default_depth + 1,
+            testdepth=args.testdepth if args.testdepth else args.depth,
             is_random=args.random,
         )
