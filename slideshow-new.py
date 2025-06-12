@@ -7,12 +7,13 @@ import argparse
 import re
 from collections import defaultdict, deque
 
-# Argument parsing
+# Argument parsing setup
 parser = argparse.ArgumentParser(description='Create a slideshow from a list of files.')
 parser.add_argument('--input_file', '-i', metavar='input_file', nargs='?', type=str, help='Input file or Folder to build')
 parser.add_argument('--run', dest='run', action='store_true', help='Run the slideshow')
 parser.add_argument('--test', metavar='N', type=int, help='Run the test with N iterations')
 parser.add_argument('--random', action='store_true', help='Start in Completely Random mode')
+parser.add_argument('--total_weight', type=int, default=10000, help='Total weight to be distributed among all images')
 args = parser.parse_args()
 
 class ImageSlideshow:
@@ -48,6 +49,7 @@ class ImageSlideshow:
     
     def show_image(self, image_path=None):
         if image_path is None:
+            # Choose the next image based on the mode (random or weighted)
             if self.completely_random:
                 image_path = random.choice(self.image_paths)
             else:
@@ -56,6 +58,8 @@ class ImageSlideshow:
             self.forward_history.clear()  # Clear forward history when a new image is shown
         self.current_image_path = image_path
         image = Image.open(image_path)
+        
+        # Resize image to fit the screen while maintaining aspect ratio
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         image_ratio = image.width / image.height
@@ -145,57 +149,58 @@ def count_images_in_directories(directories, ignored_dirs=None, scan_subfolders=
     if ignored_dirs is None:
         ignored_dirs = []
     folder_image_paths = defaultdict(list)
-    folder_weights = defaultdict(lambda: 0)  # Initialize weights to 0 to accumulate correctly
     for directory in directories:
-        weight = 100
-        if directory.startswith('[') and ']' in directory:
+        if directory.startswith("[") and "]" in directory:
             weight_str = directory[1:directory.find(']')]
-            try:
-                weight = int(weight_str)
-                directory = directory[directory.find(']') + 1:].strip()
-            except ValueError:
-                pass
-        for root, dirs, files in os.walk(directory):
+            dir_path = directory[directory.find(']') + 1:].strip()
+        else:
+            weight_str = "100"
+            dir_path = directory
+
+        for root, dirs, files in os.walk(dir_path):
             if any(ignored in root for ignored in ignored_dirs):
                 continue
             images = [os.path.join(root, f) for f in files if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp'))]
             if images:
-                folder_image_paths[root].extend(images)
-                folder_weights[root] += weight  # Accumulate weights for repeated entries
+                folder_image_paths[directory].extend(images)  # Use original directory name with weight
             if not scan_subfolders:
                 break
     # Remove empty folders
     folder_image_paths = {k: v for k, v in folder_image_paths.items() if v}
-    folder_weights = {k: v for k, v in folder_weights.items() if k in folder_image_paths}
-    return folder_image_paths, folder_weights
+    return folder_image_paths
 
-def calculate_weights(folder_image_paths, folder_weights, specific_images):
-    if not folder_image_paths and not specific_images:
-        raise ValueError("No images found in the provided directories and specific images.")
-        
-    total_folder_weight = sum(folder_weights.values()) / 100
-    total_specific_weight = sum(specific_images.values()) / 100
-    total_weight = total_folder_weight + total_specific_weight
-
-    if total_weight == 0:
-        raise ValueError("Total weight cannot be zero.")
+def calculate_weights(folder_image_paths, total_weight=10000):
+    if not folder_image_paths:
+        raise ValueError("No images found in the provided directories.")
 
     all_image_paths = []
     weights = []
 
-    # Normalize folder weights
+    # Calculate the number of folders
+    num_folders = len(folder_image_paths)
+    # Calculate weight to be assigned to each folder
+    folder_weight = total_weight / num_folders if num_folders > 0 else 0
+
+    # Distribute weights for images within each folder
     for folder, images in folder_image_paths.items():
-        folder_weight = folder_weights[folder] / 100
-        image_weight = folder_weight / len(images) / total_weight
+        if folder.startswith("[") and "]" in folder:
+            weight_str = folder[1:folder.find(']')]
+            is_percentage = weight_str.endswith('%')
+            dir_weight = int(weight_str.rstrip('%'))
+            folder = folder[folder.find(']') + 1:].strip()
+        else:
+            dir_weight = 100
+            is_percentage = True
+
+        num_images = len(images)
+        if is_percentage:
+            image_weight = (folder_weight / num_images) * (dir_weight / 100)  # Percentage weight per image
+        else:
+            image_weight = folder_weight / dir_weight  # Absolute weight per image
+
         for image in images:
             all_image_paths.append(image)
             weights.append(image_weight)
-
-    # Normalize specific image weights
-    for path, percentage in specific_images.items():
-        specific_weight = (percentage / 100) / total_weight
-        all_image_paths.append(path)
-        weights.append(specific_weight)
 
     return all_image_paths, weights
 
@@ -217,7 +222,7 @@ def test_distribution(image_paths, weights, iterations):
 def parse_input_file(input_file):
     image_dirs = []
     ignored_dirs = []
-    specific_images = defaultdict(int)
+
     with open(input_file, "r", encoding="utf-8") as f:
         content = f.readlines()
         for line in content:
@@ -225,47 +230,33 @@ def parse_input_file(input_file):
             if line.startswith("[l]"):
                 subfile = line[3:].strip()
                 if os.path.isfile(subfile):
-                    sub_image_dirs, sub_ignored_dirs, sub_specific_images = parse_input_file(subfile)
+                    sub_image_dirs, sub_ignored_dirs = parse_input_file(subfile)
                     image_dirs.extend(sub_image_dirs)
                     ignored_dirs.extend(sub_ignored_dirs)
-                    for k, v in sub_specific_images.items():
-                        specific_images[k] += v  # Accumulate weights for repeated entries
             elif line.startswith("[-]"):
                 ignored_dirs.append(line[3:].strip())
-            elif os.path.isdir(line):
+            elif os.path.isdir(line) or re.match(r'\[\d+%?\].*', line):
                 image_dirs.append(line)
-            else:
-                matches = re.match(r'\[(\d+)\](.*)', line)
-                if matches:
-                    weight = int(matches[1])
-                    path = matches[2].strip()
-                    if os.path.isdir(path):
-                        image_dirs.append(f"[{weight}]{path}")
-                    elif os.path.isfile(path):
-                        specific_images[path] += weight  # Accumulate weights for repeated entries
-                elif os.path.isfile(line):
-                    specific_images[line] += 100  # Default weight to 100%
-    return image_dirs, ignored_dirs, specific_images
 
-def main(input_files, test_iterations=None, completely_random=False):
+    return image_dirs, ignored_dirs
+
+def main(input_files, test_iterations=None, completely_random=False, total_weight=10000):
     image_dirs = []
     ignored_dirs = []
-    specific_images = defaultdict(int)
+
     for input_filename in input_files:
         if os.path.isfile(input_filename):
-            sub_image_dirs, sub_ignored_dirs, sub_specific_images = parse_input_file(input_filename)
+            sub_image_dirs, sub_ignored_dirs = parse_input_file(input_filename)
             image_dirs.extend(sub_image_dirs)
             ignored_dirs.extend(sub_ignored_dirs)
-            for k, v in sub_specific_images.items():
-                specific_images[k] += v  # Accumulate weights for repeated entries
 
-    folder_image_paths, folder_weights = count_images_in_directories(image_dirs, ignored_dirs, scan_subfolders=True)
-    
-    if not folder_image_paths and not specific_images:
-        raise ValueError("No images found in the provided directories and specific images.")
-        
-    all_image_paths, weights = calculate_weights(folder_image_paths, folder_weights, specific_images)
-    
+    folder_image_paths = count_images_in_directories(image_dirs, ignored_dirs, scan_subfolders=True)
+
+    if not folder_image_paths:
+        raise ValueError("No images found in the provided directories.")
+
+    all_image_paths, weights = calculate_weights(folder_image_paths, total_weight)
+
     if test_iterations:
         test_distribution(all_image_paths, weights, test_iterations)
     else:
@@ -276,7 +267,7 @@ def main(input_files, test_iterations=None, completely_random=False):
 if __name__ == "__main__":
     if args.run:
         input_files = args.input_file.split('+') if args.input_file else []
-        main(input_files, completely_random=args.random)
+        main(input_files, completely_random=args.random, total_weight=args.total_weight)
     elif args.test:
         input_files = args.input_file.split('+') if args.input_file else []
-        main(input_files, test_iterations=args.test, completely_random=args.random)
+        main(input_files, test_iterations=args.test, completely_random=args.random, total_weight=args.total_weight)
