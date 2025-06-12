@@ -19,12 +19,18 @@ class ImageSlideshow:
         self.root = root
         self.image_paths = image_paths
         self.weights = weights
+        self.original_image_paths = image_paths[:]
+        self.original_weights = weights[:]
         self.history = deque(maxlen=10)
         self.forward_history = deque(maxlen=10)
+        self.subfolder_mode = False
+        self.show_filename = False
         
         self.root.configure(background='black')  # Set root background to black
         self.label = tk.Label(root, bg='black')  # Set label background to black
         self.label.pack()
+        
+        self.filename_label = tk.Label(self.root, bg='black', fg='white', anchor='nw')
         
         self.root.attributes("-fullscreen", True)
         self.root.bind('<space>', self.next_image)
@@ -32,6 +38,8 @@ class ImageSlideshow:
         self.root.bind('<Left>', self.previous_image)
         self.root.bind('<Right>', self.next_image_forward)
         self.root.bind('<Delete>', self.delete_image)
+        self.root.bind('<s>', self.toggle_subfolder_mode)
+        self.root.bind('<n>', self.toggle_filename_display)
         self.show_image()
     
     def show_image(self, image_path=None):
@@ -57,6 +65,8 @@ class ImageSlideshow:
         photo = ImageTk.PhotoImage(image)
         self.label.config(image=photo)
         self.label.image = photo
+        
+        self.update_filename_display()
     
     def next_image(self, event=None):
         self.show_image()
@@ -86,6 +96,29 @@ class ImageSlideshow:
                 except Exception as e:
                     messagebox.showerror("Error", f"Could not delete the image: {e}")
 
+    def toggle_subfolder_mode(self, event=None):
+        if not self.subfolder_mode:
+            current_dir = os.path.dirname(self.current_image_path)
+            self.image_paths = [path for path in self.original_image_paths if path.startswith(current_dir)]
+            self.weights = [self.original_weights[i] for i, path in enumerate(self.original_image_paths) if path.startswith(current_dir)]
+            self.subfolder_mode = True
+        else:
+            self.image_paths = self.original_image_paths[:]
+            self.weights = self.original_weights[:]
+            self.subfolder_mode = False
+        self.show_image(self.current_image_path)
+    
+    def toggle_filename_display(self, event=None):
+        self.show_filename = not self.show_filename
+        self.update_filename_display()
+    
+    def update_filename_display(self):
+        if self.show_filename:
+            self.filename_label.config(text=self.current_image_path)
+            self.filename_label.place(x=0, y=0)
+        else:
+            self.filename_label.place_forget()
+
     def exit_slideshow(self, event=None):
         self.root.destroy()
 
@@ -112,9 +145,15 @@ def count_images_in_directories(directories, ignored_dirs=None, scan_subfolders=
                 folder_weights[root] += weight  # Accumulate weights for repeated entries
             if not scan_subfolders:
                 break
+    # Remove empty folders
+    folder_image_paths = {k: v for k, v in folder_image_paths.items() if v}
+    folder_weights = {k: v for k, v in folder_weights.items() if k in folder_image_paths}
     return folder_image_paths, folder_weights
 
 def calculate_weights(folder_image_paths, folder_weights, specific_images):
+    if not folder_image_paths and not specific_images:
+        raise ValueError("No images found in the provided directories and specific images.")
+        
     total_folder_weight = sum(folder_weights.values()) / 100
     total_specific_weight = sum(specific_images.values()) / 100
     total_weight = total_folder_weight + total_specific_weight
@@ -202,6 +241,10 @@ def main(input_files, test_iterations=None):
                 specific_images[k] += v  # Accumulate weights for repeated entries
 
     folder_image_paths, folder_weights = count_images_in_directories(image_dirs, ignored_dirs, scan_subfolders=True)
+    
+    if not folder_image_paths and not specific_images:
+        raise ValueError("No images found in the provided directories and specific images.")
+        
     all_image_paths, weights = calculate_weights(folder_image_paths, folder_weights, specific_images)
     
     if test_iterations:
