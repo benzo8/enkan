@@ -9,23 +9,33 @@ import re
 from collections import defaultdict, deque
 
 # Argument parsing setup
+import argparse
+
 class ModeAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
         if len(values) == 1:
+            if values[0] not in ['weighted', 'balanced']:
+                parser.error(f"Invalid choice: '{values[0]}'. Choose from 'weighted', 'balanced'.")
             setattr(namespace, self.dest, (values[0], 0))
         elif len(values) == 2:
-            setattr(namespace, self.dest, (values[0], values[1]))
+            if values[0] not in ['weighted', 'balanced']:
+                parser.error(f"Invalid choice: '{values[0]}'. Choose from 'weighted', 'balanced'.")
+            try:
+                level = int(values[1])
+            except ValueError:
+                parser.error(f"Invalid level: '{values[1]}'. Must be an integer.")
+            setattr(namespace, self.dest, (values[0], level))
 
 parser = argparse.ArgumentParser(description='Create a slideshow from a list of files.')
 parser.add_argument('--input_file', '-i', metavar='input_file', nargs='?', type=str, help='Input file or Folder to build')
 parser.add_argument('--run', dest='run', action='store_true', help='Run the slideshow')
 parser.add_argument('--test', metavar='N', type=int, help='Run the test with N iterations')
-parser.add_argument('--mode', nargs='+', action=ModeAction, choices=['weighted', 'balanced'], default=('balanced', 2), help='Set the mode: (weighted) or (balanced [x])')
-parser.add_argument('--completely-random', action='store_true', help='Start in Completely Random mode')
+parser.add_argument('--mode', nargs='+', action=ModeAction, default=('weighted', 0), help='Set the mode: (weighted) or (balanced [x])')
+parser.add_argument('--random', action='store_true', help='Start in Completely Random mode')
 parser.add_argument('--total_weight', type=int, default=10000, help='Total weight to be distributed among all images')
 args = parser.parse_args()
 
-initial_path ="I:\\imagesftp"
+initial_path = "I:\\imagesftp"
 
 class ImageSlideshow:
     def __init__(self, root, image_paths, weights, mode):
@@ -150,7 +160,10 @@ class ImageSlideshow:
             self.filename_label.config(text=self.current_image_path)
             self.filename_label.place(x=0, y=0)
             
-            mode_text = 'R' if self.mode == 'random' else 'W'
+            if self.mode == 'random':
+                mode_text = 'R' 
+            else:
+                mode_text = 'W' if self.mode == 'weighted' else 'B'
             if self.subfolder_mode:
                 mode_text = 'S'
             self.mode_label.config(text=mode_text)
@@ -281,10 +294,11 @@ def calculate_weights(folder_data, specific_images, ignored_dirs, mode, total_we
                     if current_level >= mode[1]:
                         sub_folder_data[root] = {'level': current_level, 'weight': data['weight'], 'is_absolute': data['is_absolute']}
                         dirs[:] = []
-        if not sub_folder_data:
-            raise ValueError("No folders found at the requested level.")
-            sys.exit()
-        folder_data = sub_folder_data
+            if not sub_folder_data:
+                raise ValueError("No folders found at the requested level.")
+                sys.exit()
+            else:
+                folder_data = sub_folder_data
             
         balanced_weight = total_weight / len(folder_data)
         for path, data in folder_data.items():
