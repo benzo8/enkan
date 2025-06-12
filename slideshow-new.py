@@ -593,6 +593,7 @@ class Tree:
             for root, data in image_dirs.items():
                 if data.get("flat", False):
                     self.add_flat_branch(root, data)
+                    self.handle_grafting(root, data.get("graft_level"))
                 else:
                     # Process each directory
                     self.process_directory(root, data, defaults, pbar)
@@ -755,8 +756,8 @@ class Tree:
             level,
             depth,
             {
-                "weight_modifier": 100,
-                "is_percentage": True,
+                "weight_modifier": data.get("weight_modifier", 100),
+                "is_percentage": data.get("is_percentage", True),
                 "images": images,
             },
         )
@@ -812,6 +813,8 @@ class Tree:
         )
 
     def handle_grafting(self, root, graft_level):
+        if not graft_level:
+            return
         """
         Handle grafting by adjusting the tree structure after the directory is processed.
         """
@@ -1021,6 +1024,8 @@ class Tree:
         # Normalize the drive component
         if len(path_components) > 0 and path_components[0].endswith(":"):
             path_components[0] += os.path.sep
+        # Remove any empty components
+        path_components = list(filter(lambda x: x != '', path_components))
 
         if level < current_level:
             # Truncate the path
@@ -1194,37 +1199,6 @@ class Tree:
             node.weight = total_weight * (node.weight_modifier / 100)
         else:
             node.weight = total_weight
-
-    # def normalize_weights(self, node, total_weight=100.0):
-    #     """
-    #     Normalize all weights in the tree so that the root equals total_weight.
-
-    #     Args:
-    #         node (TreeNode): The node to normalize.
-    #         total_weight (float): The total weight to normalize to (default: 100%).
-    #     """
-    #     def calculate_total_weight(node):
-    #         total = 0
-    #         for child in node.children:
-    #             total += calculate_total_weight(child)
-    #         if isinstance(node.weight, str) and "%" in node.weight:
-    #             total += float(node.weight.strip("%"))
-    #         else:
-    #             total += float(node.weight)
-    #         return total
-
-    #     def scale_weights(node, factor):
-    #         if isinstance(node.weight, str) and "%" in node.weight:
-    #             node.weight = f"{float(node.weight.strip('%')) * factor:.2f}%"
-    #         else:
-    #             node.weight = f"{float(node.weight) * factor:.2f}"
-    #         for child in node.children:
-    #             scale_weights(child, factor)
-
-    #     total_node_weight = calculate_total_weight(node)
-    #     if total_node_weight > 0:
-    #         normalization_factor = total_weight / total_node_weight
-    #         scale_weights(node, normalization_factor)
 
     def print_tree(self, node=None, indent="", current_depth=0, max_depth=None):
         """
@@ -1430,142 +1404,6 @@ def is_textfile(file):
 def is_imagefile(file):
     return file.lower().endswith(IMAGE_FILES)
 
-def find_input_file(input_filename, additional_search_paths=[]):
-    # List of potential directories to search
-    possible_locations = [
-        os.path.dirname(os.path.abspath(__file__)),  # Script's directory
-        os.getcwd(),  # Current working directory
-        *additional_search_paths,  # Additional paths (e.g., main input file's directory)
-        os.path.join(os.getcwd(), 'config'),  # Fixed "config" folder in the current working directory
-    ]
-    
-    for location in possible_locations:
-        potential_path = os.path.join(location, input_filename)
-        if os.path.isfile(potential_path):
-            return potential_path
-
-    return None
-
-def parse_input_file(input_file, defaults):
-    image_dirs = {}
-    specific_images = {}
-
-    modifier_pattern = re.compile(r"(\[.*?\])")
-    weight_modifier_pattern = re.compile(r"^\d+%?$")
-    balance_pattern = re.compile(r"^b\d+$", re.IGNORECASE)
-    graft_pattern = re.compile(r"^g\d+$", re.IGNORECASE)
-    depth_pattern = re.compile(r"^d\d+$", re.IGNORECASE)
-    flat_pattern = re.compile(r"^f$", re.IGNORECASE)
-
-    with open(input_file, "r", encoding="utf-8") as f:
-        content = f.readlines()
-        for line in content:
-            line = line.strip()
-
-            # Skip empty lines and comments
-            if not line or line.startswith("#"):
-                continue
-
-            # Remove enclosing double quotes, if any
-            line = line.replace('"', "").strip()
-
-            # Handle defaults declaration
-            if line.startswith("[r]"):
-                defaults.set_global_defaults(is_random=True)
-                continue
-
-            # Handle subfile inclusion
-            if line.startswith("[l]"):
-                subfile = line[3:].strip()
-                additional_search_paths = [os.path.dirname(input_file)]
-                subfilename_full = find_input_file(subfile, additional_search_paths)
-                if subfilename_full:
-                    sub_image_dirs, sub_specific_images = parse_input_file(
-                        subfilename_full, defaults
-                    )
-                    image_dirs.update(sub_image_dirs)
-                    for k, v in sub_specific_images.items():
-                        specific_images[k].update(v)
-                continue  # Move to the next line after processing subfile
-
-            # Handle filters
-            if line.startswith("[+]"):
-                keyword = line[3:].strip()
-                filters.add_must_contain(keyword)
-                continue
-            elif line.startswith("[-]"):
-                path_or_keyword = line[3:].strip()
-                if os.path.isabs(path_or_keyword):
-                    if os.path.isfile(path_or_keyword):
-                        filters.add_ignored_file(path_or_keyword)
-                    else:
-                        filters.add_ignored_dir(path_or_keyword)
-                else:                
-                    filters.add_must_not_contain(path_or_keyword)
-                continue
-
-            # Initialize default modifiers
-            weight_modifier = 100
-            is_percentage = True
-            graft_level = None
-            balance_level = defaults.mode[1]
-            depth = defaults.depth
-            flat = False
-
-            # Extract all modifiers
-            modifiers = modifier_pattern.findall(line)
-            # Remove all modifiers from the line to get the path
-            path = modifier_pattern.sub("", line).strip()
-
-            # Process each modifier
-            for mod in modifiers:
-                mod_content = mod.strip("[]").strip()
-                if weight_modifier_pattern.match(mod_content):
-                    # Weight modifier
-                    if mod_content.endswith("%"):
-                        weight_modifier = int(mod_content[:-1])
-                        is_percentage = True
-                    else:
-                        weight_modifier = int(mod_content)
-                        is_percentage = False
-                elif graft_pattern.match(mod_content):
-                    # Level modifier
-                    graft_level = int(mod_content[1:])
-                elif balance_pattern.match(mod_content):
-                    # Balance level modifier, global only
-                    balance_level = int(mod_content[1:])
-                elif depth_pattern.match(mod_content):
-                    # Depth modifier
-                    depth = int(mod_content[1:])
-                elif flat_pattern.match(mod_content):
-                    flat = True
-                else:
-                    print(f"Unknown modifier '{mod_content}' in line: {line}")
-
-            # Handle directory or specific image
-            if path == "*":
-                defaults.set_global_defaults(
-                    mode=("balanced", balance_level), depth=depth
-                )
-            elif os.path.isdir(path):
-                image_dirs[path] = {
-                    "weight_modifier": weight_modifier,
-                    "is_percentage": is_percentage,
-                    "graft_level": graft_level,
-                    "depth": depth,
-                    "flat": flat,
-                }
-            elif os.path.isfile(path):
-                specific_images[path] = {
-                    "weight_modifier": weight_modifier,
-                    "is_percentage": is_percentage,
-                    "graft_level": graft_level
-                }
-            else:
-                print(f"Path '{path}' is neither a file nor a directory.")
-
-    return image_dirs, specific_images
-
 def test_distribution(image_paths, weights, iterations, testdepth, defaults):
     hit_counts = defaultdict(int)
     for _ in tqdm(range(iterations), desc="Iterating tests"):
@@ -1589,6 +1427,114 @@ def test_distribution(image_paths, weights, iterations, testdepth, defaults):
             f"Directory: {directory}, Hits: {count}, Weight: {count / total_images * TOTAL_WEIGHT:.2f}"
         )
 
+def find_input_file(input_filename, additional_search_paths=[]):
+    # List of potential directories to search
+    possible_locations = [
+        os.path.dirname(os.path.abspath(__file__)),  # Script's directory
+        os.getcwd(),  # Current working directory
+        *additional_search_paths,  # Additional paths (e.g., main input file's directory)
+        os.path.join(os.getcwd(), 'config'),  # Fixed "config" folder in the current working directory
+    ]
+    
+    for location in possible_locations:
+        potential_path = os.path.join(location, input_filename)
+        if os.path.isfile(potential_path):
+            return potential_path
+
+    return None
+
+def parse_input_line(line, defaults):
+    modifier_pattern = re.compile(r"(\[.*?\])")
+    weight_modifier_pattern = re.compile(r"^\d+%?$")
+    balance_pattern = re.compile(r"^b\d+$", re.IGNORECASE)
+    graft_pattern = re.compile(r"^g\d+$", re.IGNORECASE)
+    depth_pattern = re.compile(r"^d\d+$", re.IGNORECASE)
+    flat_pattern = re.compile(r"^f$", re.IGNORECASE)
+
+    if line.startswith("[r]"):
+        defaults.set_global_defaults(is_random=True)
+        return None, None
+
+     # Handle filters
+    if line.startswith("[+]"):
+        keyword = line[3:].strip()
+        filters.add_must_contain(keyword)
+        return None, None
+    elif line.startswith("[-]"):
+        path_or_keyword = line[3:].strip()
+        if os.path.isabs(path_or_keyword):
+            if os.path.isfile(path_or_keyword):
+                filters.add_ignored_file(path_or_keyword)
+            else:
+                filters.add_ignored_dir(path_or_keyword)
+        else:                
+            filters.add_must_not_contain(path_or_keyword)
+        return None, None
+
+    # Initialize default modifiers
+    weight_modifier = 100
+    is_percentage = True
+    graft_level = None
+    balance_level = defaults.mode[1]
+    depth = defaults.depth
+    flat = False
+
+    # Extract all modifiers
+    modifiers = modifier_pattern.findall(line)
+    # Remove all modifiers from the line to get the path
+    path = modifier_pattern.sub("", line).strip()
+
+    # Process each modifier
+    for mod in modifiers:
+        mod_content = mod.strip("[]").strip()
+        if weight_modifier_pattern.match(mod_content):
+            # Weight modifier
+            if mod_content.endswith("%"):
+                weight_modifier = int(mod_content[:-1])
+                is_percentage = True
+            else:
+                weight_modifier = int(mod_content)
+                is_percentage = False
+        elif graft_pattern.match(mod_content):
+            # Level modifier
+            graft_level = int(mod_content[1:])
+        elif balance_pattern.match(mod_content):
+            # Balance level modifier, global only
+            balance_level = int(mod_content[1:])
+        elif depth_pattern.match(mod_content):
+            # Depth modifier
+            depth = int(mod_content[1:])
+        elif flat_pattern.match(mod_content):
+            flat = True
+        else:
+            print(f"Unknown modifier '{mod_content}' in line: {line}")
+
+    # Handle directory or specific image
+    if path == "*":
+        defaults.set_global_defaults(
+            mode=("balanced", balance_level), depth=depth
+        )
+        return None, None
+    
+    if os.path.isdir(path):
+        return path, {
+            "weight_modifier": weight_modifier,
+            "is_percentage": is_percentage,
+            "graft_level": graft_level,
+            "depth": depth,
+            "flat": flat,
+        }
+    elif os.path.isfile(path):
+        return path, {
+            "weight_modifier": weight_modifier,
+            "is_percentage": is_percentage,
+            "graft_level": graft_level
+        }
+    else:
+        print(f"Path '{path}' is neither a file nor a directory.")
+
+    return None, None
+
 def process_inputs(input_files, defaults):
     """
     Parse input files and directories to create image_dirs and specific_images dictionaries.
@@ -1603,29 +1549,47 @@ def process_inputs(input_files, defaults):
     image_dirs = {}
     specific_images = {}
 
-    for input_path in input_files:
-        # Check if input_path is a file
-        if is_textfile(input_path):
-            additional_search_paths = [os.path.dirname(input_path)]
-            input_filename_full = find_input_file(input_path, additional_search_paths)
+    def process_entry(entry):
+        """Process a single input entry (file, directory, or image)."""
+        nonlocal image_dirs, specific_images
+
+        if is_textfile(entry):  # If it's a text file, parse its contents
+            additional_search_paths = [os.path.dirname(entry)]
+            input_filename_full = find_input_file(entry, additional_search_paths)
 
             if input_filename_full:
-                sub_image_dirs, sub_specific_images = parse_input_file(
-                    input_filename_full, defaults
-                )
-                image_dirs.update(sub_image_dirs)
-                specific_images.update(sub_specific_images)
-            else:
-                print(f"Input file {input_path} not found.")
-        # Check if input_path is a directory
-        elif os.path.isdir(input_path):
-            # Treat the directory as an image directory
-            image_dirs[input_path] = {"depth": defaults.depth, "weight_modifier": 100}
-        else:
-            print(f"Invalid input path: {input_path}")
+                with open(input_filename_full, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#"):  # Skip comments/empty lines
+                            continue
+                        line = line.replace('"', "").strip()  # Remove enclosing quotes
+
+                        if is_textfile(line):  # Recursively process nested text files
+                            sub_image_dirs, sub_specific_images = process_inputs([line], defaults)
+                            image_dirs.update(sub_image_dirs)
+                            specific_images.update(sub_specific_images)
+                        else:
+                            path, modifier_list = parse_input_line(line, defaults)
+                            if modifier_list:
+                                if is_imagefile(path):
+                                    specific_images[path] = modifier_list
+                                else:
+                                    image_dirs[path] = modifier_list
+
+        else:  # Handle directories and images directly
+            path, modifier_list = parse_input_line(entry, defaults)
+            if modifier_list:
+                if is_imagefile(path):
+                    specific_images[path] = modifier_list
+                else:
+                    image_dirs[path] = modifier_list
+
+    # Process each entry in the input list
+    for input_entry in input_files:
+        process_entry(input_entry)
 
     return image_dirs, specific_images
-
 
 def start_slideshow(all_image_paths, weights, tree, defaults):
     """
