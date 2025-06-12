@@ -1,4 +1,5 @@
 import os
+import sys
 import random
 import tkinter as tk
 from tkinter import messagebox
@@ -8,16 +9,26 @@ import re
 from collections import defaultdict, deque
 
 # Argument parsing setup
+class ModeAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        if len(values) == 1:
+            setattr(namespace, self.dest, (values[0], 0))
+        elif len(values) == 2:
+            setattr(namespace, self.dest, (values[0], values[1]))
+
 parser = argparse.ArgumentParser(description='Create a slideshow from a list of files.')
 parser.add_argument('--input_file', '-i', metavar='input_file', nargs='?', type=str, help='Input file or Folder to build')
 parser.add_argument('--run', dest='run', action='store_true', help='Run the slideshow')
 parser.add_argument('--test', metavar='N', type=int, help='Run the test with N iterations')
-parser.add_argument('--random', action='store_true', help='Start in Completely Random mode')
+parser.add_argument('--mode', nargs='+', action=ModeAction, choices=['weighted', 'balanced'], default=('balanced', 2), help='Set the mode: (weighted) or (balanced [x])')
+parser.add_argument('--completely-random', action='store_true', help='Start in Completely Random mode')
 parser.add_argument('--total_weight', type=int, default=10000, help='Total weight to be distributed among all images')
 args = parser.parse_args()
 
+initial_path ="I:\\imagesftp"
+
 class ImageSlideshow:
-    def __init__(self, root, image_paths, weights, completely_random):
+    def __init__(self, root, image_paths, weights, mode):
         self.root = root
         self.image_paths = image_paths
         self.weights = weights
@@ -27,7 +38,8 @@ class ImageSlideshow:
         self.forward_history = deque(maxlen=10)
         self.subfolder_mode = False
         self.show_filename = False
-        self.completely_random = completely_random
+        self.mode, self.mode_level = mode
+        self.initial_mode = mode
         self.rotation_angle = 0
         
         self.root.configure(background='black')  # Set root background to black
@@ -52,7 +64,7 @@ class ImageSlideshow:
     def show_image(self, image_path=None):
         if image_path is None:
             # Choose the next image based on the mode (random or weighted)
-            if self.completely_random:
+            if self.mode == 'random':
                 image_path = random.choice(self.image_paths)
             else:
                 image_path = random.choices(self.image_paths, weights=self.weights, k=1)[0]
@@ -138,7 +150,7 @@ class ImageSlideshow:
             self.filename_label.config(text=self.current_image_path)
             self.filename_label.place(x=0, y=0)
             
-            mode_text = 'R' if self.completely_random else 'W'
+            mode_text = 'R' if self.mode == 'random' else 'W'
             if self.subfolder_mode:
                 mode_text = 'S'
             self.mode_label.config(text=mode_text)
@@ -148,7 +160,10 @@ class ImageSlideshow:
             self.mode_label.place_forget()
     
     def toggle_random_mode(self, event=None):
-        self.completely_random = not self.completely_random
+        if self.mode == 'random':
+            self.mode = self.initial_mode
+        else:
+            self.mode = 'random'
         self.update_filename_display()
         
     def rotate_image(self, event=None):
@@ -193,12 +208,15 @@ def parse_input_file(input_file):
 
     return image_dirs, specific_images, ignored_dirs
 
+def level(current_path, start_path=initial_path):
+    return len(os.path.relpath(current_path,start_path).split(os.sep))
+
 def build_folder_lists(directories, ignored_dirs=None, scan_subfolders=True):
     if ignored_dirs is None:
         ignored_dirs = []
-    folder_image_paths = defaultdict(lambda: {'weight': 100, 'is_absolute': False})
-    folder_data = defaultdict(int)
-    
+        
+    folder_data = defaultdict(lambda: {'level': 0, 'count': -1, 'weight': 100, 'is_absolute': False})
+          
     for path, data in directories.items():
         for root, dirs, files in os.walk(path):
             if any(ignored in dirs for ignored in ignored_dirs):
@@ -206,45 +224,78 @@ def build_folder_lists(directories, ignored_dirs=None, scan_subfolders=True):
 
             images = [os.path.join(root, f) for f in files if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp'))]
             if images:
-                for image in images:
-                    folder_image_paths[image] = {'weight': data['weight'], 'is_absolute': data['is_absolute']}
-                    folder_data[root] += 1
+                    folder_data[root] = {'level': level(root), 'weight': data['weight'], 'is_absolute': data['is_absolute']}
 
             # Control whether to scan subfolders by modifying dirs in place
             if not scan_subfolders:
                 del dirs[:]  # Clear dirs to prevent descending into subfolders
 
     # Remove empty folders
-    #folder_image_paths = {k: v for k, v in folder_image_paths.items() if v}
-    return folder_image_paths, folder_data
+    # folder_image_paths = {k: v for k, v in folder_image_paths.items() if v}
+    
+    return folder_data
 
-def calculate_weights(folder_image_paths, folder_data, specific_images, total_weight=10000):
-    if not folder_image_paths and not specific_images:
-        raise ValueError("No images found in the provided directories and specific images.")
+def calculate_weights(folder_data, specific_images, ignored_dirs, mode, total_weight=10000):
+    
+    # if not folder_image_paths and not specific_images:
+    #     raise ValueError("No images found in the provided directories and specific images.")
 
     all_image_paths = []
     weights = []
+    num_folders = 0
+        
+    # if mode == 'weighted':
+    #     folder_data = build_folder_lists(image_dirs, ignored_dirs, scan_subfolders=True)
+    # else:
+    #     folder_data = image_dirs
 
-    # Calculate the number of folders plus the number of specific images
-    num_folders = len(folder_data)
+    def weigh_images(folder_tree, assigned_weight):
+        folder_data = build_folder_lists(folder_tree, ignored_dirs=None, scan_subfolders=True)
+        if folder_data:
+            sub_num_folders = len(folder_data)
+            item_weight = assigned_weight / sub_num_folders
+            for path, data in folder_data.items():
+                for root, dirs, files in os.walk(path):
+                    images = [os.path.join(root, f) for f in files if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp'))]
+                    if images:
+                        num_images_in_folder = len(images)
+                        for image in images:
+                            specific_weight = data['weight']
+                            is_percentage = not data['is_absolute']
+                            if is_percentage:
+                                image_weight = (item_weight / num_images_in_folder) * (specific_weight / 100)  # Percentage weight per image
+                            else:
+                                image_weight = item_weight / specific_weight  # Absolute weight per image
+                            all_image_paths.append(image)
+                            weights.append(image_weight)
+        else:
+            sub_num_folders = 0
+        return sub_num_folders
+
+    if mode[0] == 'balanced':
+        if mode[1] != 0:
+            sub_folder_data = {}
+            for path, data in folder_data.items():
+                for root, dirs, files in os.walk(path, topdown=True):
+                    current_level = level(root)
+                    if current_level >= mode[1]:
+                        sub_folder_data[root] = {'level': current_level, 'weight': data['weight'], 'is_absolute': data['is_absolute']}
+                        dirs[:] = []
+        if not sub_folder_data:
+            raise ValueError("No folders found at the requested level.")
+            sys.exit()
+        folder_data = sub_folder_data
+            
+        balanced_weight = total_weight / len(folder_data)
+        for path, data in folder_data.items():
+            num_folders += weigh_images({path: data}, balanced_weight)
+    else:
+        num_folders = weigh_images(folder_data, total_weight)
+            
     num_specific_images = len(specific_images)
     total_num_items = num_folders + num_specific_images
-
-    # Calculate weight to be assigned to each folder or specific image
     item_weight = total_weight / total_num_items if total_num_items > 0 else 0
-
-    # Distribute weights for images within each folder
-    for path, data in folder_image_paths.items():
-        num_images = folder_data[os.path.dirname(path)]
-        specific_weight = data['weight']
-        is_percentage = not data['is_absolute']
-        if is_percentage:
-            image_weight = (item_weight / num_images) * (specific_weight / 100)  # Percentage weight per image
-        else:
-            image_weight = item_weight / specific_weight  # Absolute weight per image
-        all_image_paths.append(path)
-        weights.append(image_weight)
-
+            
     # Assign weights to specific images
     for path, data in specific_images.items():
         specific_weight = data['weight']
@@ -273,7 +324,7 @@ def test_distribution(image_paths, weights, iterations):
     for directory, count in sorted(directory_counts.items()):  # Alphabetical order
         print(f"Directory: {directory}, Hits: {count}, Weight: {count / total_images:.2f}")
 
-def main(input_files, test_iterations=None, completely_random=False, total_weight=10000):
+def main(input_files, test_iterations=None, mode=(), total_weight=10000):
     image_dirs = defaultdict(lambda: {'weight': 100, 'is_absolute': False})
     specific_images = defaultdict(lambda: {'weight': 100, 'is_absolute': False})
     ignored_dirs = []
@@ -285,24 +336,22 @@ def main(input_files, test_iterations=None, completely_random=False, total_weigh
             specific_images.update(sub_specific_images)
             ignored_dirs.extend(sub_ignored_dirs)
 
-    folder_image_paths, folder_data = build_folder_lists(image_dirs, ignored_dirs, scan_subfolders=True)
-
-    if not folder_image_paths and not specific_images:
+    if not image_dirs and not specific_images:
         raise ValueError("No images found in the provided directories and specific images.")
-
-    all_image_paths, weights = calculate_weights(folder_image_paths, folder_data, specific_images, total_weight)
+        sys.exit()
+    all_image_paths, weights = calculate_weights(image_dirs, specific_images, ignored_dirs, mode, total_weight)
 
     if test_iterations:
         test_distribution(all_image_paths, weights, test_iterations)
     else:
         root = tk.Tk()
-        slideshow = ImageSlideshow(root, all_image_paths, weights, completely_random)
+        slideshow = ImageSlideshow(root, all_image_paths, weights, mode)
         root.mainloop()
 
 if __name__ == "__main__":
     if args.run:
         input_files = args.input_file.split('+') if args.input_file else []
-        main(input_files, completely_random=args.random, total_weight=args.total_weight)
+        main(input_files, mode=args.mode, total_weight=args.total_weight)
     elif args.test:
         input_files = args.input_file.split('+') if args.input_file else []
-        main(input_files, test_iterations=args.test, completely_random=args.random, total_weight=args.total_weight)
+        main(input_files, test_iterations=args.test, mode=args.mode, total_weight=args.total_weight)
