@@ -2,27 +2,28 @@ import argparse
 import os
 import random
 import re
-import sys
-import time
+# import sys
 import tkinter as tk
 from collections import defaultdict, deque
 from tkinter import messagebox
+from tqdm import tqdm
 
 from PIL import Image, ImageTk
 
 # Constants
-TOTAL_WEIGHT = 1000000
+TOTAL_WEIGHT = 100
 PARENT_STACK_MAX = 5
 QUEUE_LENGTH_MAX = 10
-
-
+IMAGE_FILES = (".png", ".jpg", ".jpeg", ".gif", ".bmp")
+TEXT_FILES = (".txt")
+              
 # Argument parsing setup
 class ModeAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
         if len(values) == 1:
-            if values[0] not in ["weighted", "balanced"]:
+            if values[0] not in ["weighted", "balanced", "flat", "plain"]:
                 parser.error(
-                    f"Invalid choice: '{values[0]}'. Choose from 'weighted', 'balanced'."
+                    f"Invalid choice: '{values[0]}'. Choose from 'weighted', 'balanced', 'flat', 'plain'."
                 )
             setattr(namespace, self.dest, (values[0], 0))
         elif len(values) == 2:
@@ -42,7 +43,7 @@ parser.add_argument(
     "--input_file",
     "-i",
     metavar="input_file",
-    nargs="?",
+    nargs="+",
     type=str,
     help="Input file or Folder to build",
 )
@@ -67,8 +68,10 @@ parser.add_argument(
 parser.add_argument(
     "--testdepth", type=int, default=None, help="Depth to display test results"
 )
+parser.add_argument(
+    "--printtree", action="store_true", help="Print the tree structure"
+)
 args = parser.parse_args()
-
 
 class ImageSlideshow:
     def __init__(self, root, image_paths, weights, tree, defaults):
@@ -244,64 +247,74 @@ class ImageSlideshow:
         self.show_image(self.current_image_path)
         self.update_filename_display()
 
+    """ TODO:
+            Fix follow_branch_down and follow_branch_up
+    """
+    
     def follow_branch_down(self, event=None):
-        """Move down one level in the tree and update the slideshow."""
-        
-        if self.parentFolderStack.is_full(): # Test for S0                         
+        """Move down one level in the folder structure, build a new tree, and update the slideshow."""
+        # Check if the stack is full (S0)
+        if self.parentFolderStack.is_full():
             print("S0 - Doing nothing")
-            return    
-            
-        if self.subfolder_mode and self.parent_mode: # S4
+            return
+
+        # Turn off subfolder mode if in parent mode (S4)
+        if self.subfolder_mode and self.parent_mode:
             self.subfolder_mode_off()
             self.show_image(self.current_image_path)
             self.update_filename_display()
             return
-                        
-        if not self.parent_mode: # S2
+
+        # Handle navigating up the folder structure (S2)
+        if not self.parent_mode:
             current_path = os.path.dirname(self.current_image_path)
             current_path_level = level_of(current_path)
-            for i in range(current_path_level - 1, 1, -1):             
+
+            # Traverse up levels until a valid parent is found
+            for i in range(current_path_level - 1, 1, -1):
                 parent_level = i
                 parent_path = truncate_path(current_path, parent_level)
-                if contains_subdirectory(parent_path) > 1 or contains_files:
+                if contains_subdirectory(parent_path) > 1 or contains_files(parent_path):
                     break
-                
+
             self.parentFolderStack.push(
                 parent_path, self.original_image_paths, self.original_weights
             )
-        else: # S3
+        else:  # Handle moving up a level in parent mode (S3)
             previous_path = self.parentFolderStack.read_top()
             parent_level = level_of(previous_path) - 1
             parent_path = truncate_path(previous_path, parent_level)
+
+            # If we're backtracking, step backwards instead
             if parent_path == self.parentFolderStack.read_top(2):
                 self.step_backwards()
                 return
-            
+
             self.parentFolderStack.push(parent_path, self.image_paths, self.weights)
 
+        # Check if the parent path exists and is a directory
         if os.path.isdir(parent_path):
-
-            parent_image_dirs = {}
+            # Prepare for building the new tree
             self.image_paths = []
             self.weights = []
 
-            parent_tree = Tree(defaults.mode[1])
-            parent_image_dirs[parent_path] = {
-                "weight": 100,
-                "is_percentage": True,
-                "balance_level": defaults.mode[1],
-                "depth": defaults.depth,
+            parent_tree = Tree()  # Use newTree instead of Tree
+            parent_image_dirs = {
+                parent_path: {
+                    "weight_modifier": 100,
+                    "is_percentage": True,
+                    "depth": defaults.depth,
+                }
             }
+
+            # Build the new tree and extract images and weights
             parent_tree.build_tree(parent_image_dirs, None, defaults)
-            self.image_paths, self.weights = (
-                parent_tree.extract_image_paths_and_weights_from_tree()
-            )
-            self.number_of_images = len(
-                self.image_paths
-            )  # Update the number of images for the subfolder
-            self.current_image_index = (
-                0  # Reset the current image index for the subfolder
-            )
+            parent_tree.calculate_branch_weights(mode=defaults.mode[0], balance_level=1)
+            self.image_paths, self.weights = parent_tree.extract_image_paths_and_weights_from_tree()
+
+            # Update slideshow state
+            self.number_of_images = len(self.image_paths)
+            self.current_image_index = 0
             self.parent_mode = True
             self.subfolder_mode = False
             self.subFolderStack.clear()
@@ -352,7 +365,7 @@ class ImageSlideshow:
 
                 parent_tree = Tree(defaults.mode[1])
                 parent_image_dirs[parent_path] = {
-                    "weight": 100,
+                    "weight_modifier": 100,
                     "is_percentage": True,
                     "balance_level": defaults.mode[1],
                     "depth": defaults.depth,
@@ -510,195 +523,731 @@ class ImageSlideshow:
     def exit_slideshow(self, event=None):
         self.root.destroy()
 
+class TreeNode:
+    def __init__(self, name, path, weight_modifier=100, is_percentage=True, flat= False, images=None, parent=None):
+        self.name = name                                # Virtual name of the node
+        self.path = path                                # Path of the node in the filesystem
+        self.weight = None                              # Weight for this node
+        self.weight_modifier = weight_modifier          # Weight modifier for this node
+        self.is_percentage = is_percentage              # Boolean to indicate if the weight is a percentage
+        self.images = images if images else []          # List of images in this node
+        self.children = []                              # List of child nodes (branches)
+        self.parent = parent                            # Reference to the parent node
+
+    @property
+    def level(self):
+        """
+        Dynamically compute the level of this node in the tree by traversing up to the root.
+
+        Returns:
+            int: The level of this node, with the root node at level 0.
+        """
+        current = self
+        level = 1
+
+        while current.parent:  # Traverse upwards until reaching the root
+            level += 1
+            current = current.parent
+
+        return level
+
+    def add_child(self, child_node):
+        child_node.parent = self
+        self.children.append(child_node)
+
+    def find_node(self, name):
+        # Check if the current node is the one we're looking for
+        if self.name == name:
+            return self
+        
+        # Recursively search in the children
+        for child in self.children:
+            result = child.find_node(name)
+            if result:
+                return result
+        
+        return None  # Node not found
+
+    def get_nodes_at_level(self, target_level):
+        nodes_at_level = []
+        
+        if self.level == target_level:
+            nodes_at_level.append(self)
+        
+        for child in self.children:
+            nodes_at_level.extend(child.get_nodes_at_level(target_level))
+        
+        return nodes_at_level
 
 class Tree:
-    def __init__(self, balance_level):
-        self.balance_level = balance_level  # Store the balance level
-        self.trunks = {}  # Dictionary to store multiple trunks
-
-    def add_trunk(self, trunk):
-        """Add a new trunk if it doesn't exist."""
-        if trunk not in self.trunks:
-            self.trunks[trunk] = {}
-
-    def extract_trunk(self, trunk):
-        """Extract the specified trunk."""
-        return self.trunks.get(trunk, None)
-
-    def extract_branch(self, trunk, branch_path):
-        """Extract a specific branch from a specific trunk."""
-        if trunk in self.trunks:
-            return self.trunks[trunk].get(branch_path, None)
-        return None
-
-    def get_parent_branch(self, path, levels_up=1):
-        """Retrieve all branches at a parent level."""
-        truncated_path = truncate_path(path, levels_up)
-        parent_branch = self.extract_trunk(truncated_path)
-        return parent_branch
-
-    def append_overwrite_or_update(self, full_branch_path, depth, data):
-        """Append, overwrite, or update a branch based on the full branch path, with support for virtual folders."""
-        # Automatically determine the trunk based on the balance level
-        trunk = truncate_path(full_branch_path, self.balance_level)
-
-        # Ensure the trunk exists
-        self.add_trunk(trunk)
-
-        # Determine the depth of the current branch
-        current_depth = len(full_branch_path.split("\\"))
-
-        # If the current depth is at or above the specified depth, move to a virtual folder
-        if current_depth >= depth:
-            virtual_folder = self.trunks[trunk].setdefault(
-                "virtual-folder",
-                {"weight": data["weight"], "is_percentage": True, "images": []},
-            )
-            virtual_folder["images"].extend(data.get("images", []))
-            # virtual_folder["weight"] += data["weight"]  # Optionally adjust the weight based on the new data
-            virtual_folder["is_percentage"] = (
-                virtual_folder["is_percentage"] or data["is_percentage"]
-            )
-        else:
-            # If the branch exists, update the data; otherwise, add the new branch
-            if full_branch_path in self.trunks[trunk]:
-                existing_data = self.trunks[trunk][full_branch_path]
-                existing_data.update(data)
-                self.trunks[trunk][full_branch_path] = existing_data
-            else:
-                self.trunks[trunk][full_branch_path] = data
-
-        # Handle small folders
-        if len(data.get("images", [])) < 25 and current_depth < depth:
-            small_folder = self.trunks[trunk].setdefault(
-                "small-folder",
-                {"weight": data["weight"], "is_percentage": True, "images": []},
-            )
-            small_folder["images"].extend(data.get("images", []))
-            # small_folder["weight"] += data["weight"]  # Optionally adjust the weight based on the new data
-            small_folder["is_percentage"] = (
-                small_folder["is_percentage"] or data["is_percentage"]
-            )
-
-    def branches_in_trunk(self, trunk):
-        """Return the number of branches within a given trunk."""
-        branches = self.extract_trunk(trunk)
-        return len(branches) if branches else 0
-
-    def leaves_in_branch(self, trunk, branch_path):
-        """Return the number of leaves (images) within a given branch."""
-        branch = self.extract_branch(trunk, branch_path)
-        return len(branch.get("images", [])) if branch else 0
-
-    def average_images_in_trunk(self, trunk):
-        """Calculate the average number of images in a trunk."""
-        branches = self.extract_trunk(trunk)
-        if not branches:
-            return 0  # Return 0 if there are no branches in the trunk
-
-        total_images = sum(
-            len(branch_data.get("images", [])) for branch_data in branches.values()
-        )
-        num_branches = len(branches)
-
-        return total_images / num_branches if num_branches > 0 else 0
-
-    def average_images_in_tree(self):
-        """Calculate the average number of images across the entire tree."""
-        total_images = 0
-        total_branches = 0
-
-        for trunk, branches in self.trunks.items():
-            for branch_data in branches.values():
-                total_images += len(branch_data.get("images", []))
-                total_branches += 1
-        return total_images / total_branches if total_branches > 0 else 0
+    def __init__(self):
+        self.root = TreeNode("root", 0)
+        self.node_lookup = {"root": self.root}
 
     def build_tree(self, image_dirs, specific_images, defaults):
         """
-        Read image_dirs and specific_images and build a tree
+        Read image_dirs and specific_images and build a tree.
         """
-        # Assign weights to image folders
+        # Initialize tqdm progress bar
+        with tqdm(total=0, desc="Building tree", unit="file") as pbar:
+            for root, data in image_dirs.items():
+                if data.get("flat", False):
+                    self.add_flat_branch(root, data)
+                else:
+                    # Process each directory
+                    self.process_directory(root, data, defaults, pbar)
 
-        for path, data in image_dirs.items():
-            depth = data["depth"] or defaults.depth
-            for root, dirs, files in os.walk(path):
-                result = filters.passes(root)
-                if result == 0:
-                    images = [
-                        os.path.join(root, f)
-                        for f in files
-                        if f.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp"))
-                    ]
-                    if images:
-                        self.append_overwrite_or_update(
-                            root,
-                            depth,
-                            {
-                                "weight": data["weight"],
-                                "is_percentage": data["is_percentage"],
-                                "images": images,
-                            },
-                        )
-                elif result == 1:
-                    del dirs[:]
-
+        # Handle specific images if provided
         if specific_images:
-            num_average_images = int(self.average_images_in_tree())
-            for path, data in specific_images.items():
-                is_percentage = data["is_percentage"]
+            self.process_specific_images(specific_images, defaults)
+
+    def process_directory(self, root, data, defaults, pbar):
+        """
+        Process a single root directory and add nodes to the tree.
+        Handles image processing and grafting.
+        """
+        root_level = level_of(root)
+        depth = data.get("depth", defaults.depth)
+
+        # Traverse the directory tree
+        for path, dirs, files in os.walk(root):
+            if filters.passes(path) == 0:
+                # Update the total for new files discovered
+                pbar.total += len(files)
+                pbar.refresh()
+                self.process_path(path, files, dirs, data, root_level, depth, pbar)
+            elif filters.passes(path) == 1:
+                del dirs[:]  # Prune directories
+
+        # Handle grafting after processing the directory
+        graft_level = data.get("graft_level")
+        if graft_level is not None and graft_level != root_level:
+            self.handle_grafting(root, graft_level)
+
+    def preprocess_ignored_files(self, ignored_files):
+        """
+        Preprocess ignored_dirs to extract directory paths.
+
+        Args:
+            ignored_dirs (list): List of ignored file paths.
+
+        Returns:
+            set: Set of directory paths containing ignored files.
+        """
+        ignored_files_dirs = set()
+        for ignored in ignored_files:
+            dir_path = os.path.dirname(ignored)  # Get the directory path
+            ignored_files_dirs.add(dir_path)
+        return ignored_files_dirs
+
+    def process_files(self, path, files, filters):
+        """
+        Process files in the current directory, ignoring specified files.
+
+        Args:
+            path (str): Current directory path.
+            files (list): List of files in the current directory.
+            filters (object): Object containing ignored_dirs.
+
+        Returns:
+            list: List of valid image file paths.
+        """
+        # Preprocess ignored_dirs once (outside this function)
+        if not hasattr(filters, "ignored_dirs_set"):
+            filters.ignored_files_dirs = self.preprocess_ignored_files(filters.ignored_files)
+
+        # Check if the current directory is in ignored_dirs_set
+        if path in filters.ignored_files_dirs:
+            # Filter out ignored files from the current directory
+            valid_files = [
+                f for f in files
+                if os.path.join(path, f) not in filters.ignored_files
+            ]
+        else:
+            # No ignored files in this directory
+            valid_files = files
+
+        # Filter for valid image files
+        images = [
+            os.path.join(path, f)
+            for f in valid_files
+            if f.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp"))
+        ]
+
+        return images
+
+    def process_path(self, path, files, dirs, data, root_level, depth, pbar):
+        """
+        Process an individual path, adding images or virtual nodes as needed.
+        """
+        images = self.process_files(path, files, filters)
+        
+        if not images:
+            return
+
+        # Dynamically update the progress bar as files are processed
+        for _ in images:
+            # Simulate processing the file
+            pbar.update(1)
+
+        path_level = self.calculate_level(path)
+        path_depth = path_level - root_level
+
+        if dirs:
+            # Create a special "images" branch for directories with images
+            self.add_images_branch(path, images, path_level + 1, depth)
+        elif path_depth > depth:
+            # Truncate to a virtual path
+            self.add_virtual_branch(path, images, root_level, depth, data)
+        else:
+            # Add a regular branch
+            self.add_regular_branch(path, images, path_level, depth, data)
+
+    def flatten_branch(self, root):
+        """
+        Collect all images from the branch rooted at `root`, including subdirectories.
+
+        Args:
+            root (str): The root directory of the branch.
+
+        Returns:
+            list: A list of full paths to all images in the branch.
+        """
+        images = []
+        for path, _, files in os.walk(root):
+            images.extend(
+                os.path.join(path, f)
+                for f in files
+                if f.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp"))
+            )
+        return images
+
+    def add_flat_branch(self, path, data):
+        """
+        Add a special 'flat' branch for directories with images.
+        """
+        
+        def flatten_branch(self, root):
+            """
+            Collect all images from the branch rooted at `root`, including subdirectories.
+
+            Args:
+                root (str): The root directory of the branch.
+
+            Returns:
+                list: A list of full paths to all images in the branch.
+            """
+            images = []
+            for path, _, files in os.walk(root):
+                images.extend(
+                    os.path.join(path, f)
+                    for f in files
+                    if f.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp"))
+                )
+            return images
+        
+        images = self.flatten_branch(path)
+        level = data.get("level", self.calculate_level(path))
+        depth = data.get("depth", 9999)
+        
+        self.append_overwrite_or_update(
+            path,
+            level,
+            depth,
+            {
+                "weight_modifier": 100,
+                "is_percentage": True,
+                "images": images,
+            },
+        )
+
+    def add_images_branch(self, path, images, level, depth):
+        """
+        Add a special 'images' branch for directories with images.
+        """
+        images_path = os.path.join(path, "images")
+        self.append_overwrite_or_update(
+            images_path,
+            level,
+            depth,
+            {
+                "weight_modifier": 100,
+                "is_percentage": True,
+                "images": images,
+            },
+        )
+
+    def add_virtual_branch(self, path, images, root_level, depth, data):
+        """
+        Add a virtual branch when the path depth exceeds the allowed depth.
+        """
+        virtual_path_level = root_level + depth
+        virtual_path = os.path.join(
+            *path.split(os.path.sep)[:virtual_path_level - 1], "Virtual"
+        )
+        self.append_overwrite_or_update(
+            virtual_path,
+            virtual_path_level,
+            depth,
+            {
+                "weight_modifier": data.get("weight_modifier", 100),
+                "is_percentage": data.get("is_percentage", True),
+                "images": images,
+            },
+        )
+
+    def add_regular_branch(self, path, images, level, depth, data):
+        """
+        Add a regular branch for paths that don't need truncation.
+        """
+        self.append_overwrite_or_update(
+            path,
+            level,
+            depth,
+            {
+                "weight_modifier": data.get("weight_modifier", 100),
+                "is_percentage": data.get("is_percentage", True),
+                "images": images,
+            },
+        )
+
+    def handle_grafting(self, root, graft_level):
+        """
+        Handle grafting by adjusting the tree structure after the directory is processed.
+        """
+        current_node_name = self.convert_path_to_tree_format(root)
+        current_node = self.find_node(current_node_name)
+
+        if not current_node:
+            print(f"Warning: Node '{current_node_name}' not found for grafting. Skipping.")
+            return
+
+        levelled_name = self.convert_path_to_tree_format(self.set_path_to_level(root, graft_level))
+        parent_path = os.path.dirname(levelled_name)
+        parent_node = self.ensure_parent_exists(parent_path)
+
+        # Detach from the old parent and graft to the new location
+        self.detach_node(current_node)
+        current_node.name = levelled_name
+        parent_node.add_child(current_node)
+        current_node.path = root
+
+        # Rename and relevel child nodes
+        self.rename_children(current_node, levelled_name)
+
+    def rename_children(self, parent_node, new_parent_name):
+        """
+        Traverse the subtree of the parent node and update the names
+        of all child nodes to reflect the graft. Assumes levels are calculated dynamically.
+
+        Args:
+            parent_node (TreeNode): The grafted node whose children need updating.
+            new_parent_name (str): The new name of the parent node after grafting.
+        """
+        for child in parent_node.children:
+            # Calculate the new name for the child node
+            child_basename = os.path.basename(child.name)
+            # old_name = child.name
+            child.name = os.path.join(new_parent_name, child_basename)
+
+            # Log the renaming
+            # print(f"Updated node: {old_name} -> {child.name}")
+
+            # Recursively update the child's subtree
+            self.rename_children(child, child.name)
+
+    def process_specific_images(self, specific_images, defaults):
+        """
+        Process specific images and add them to the tree.
+        """
+        num_average_images = int((lambda a, b: b / a)(*self.count_branches(self.root)))
+
+        for path, data in specific_images.items():
+            if filters.passes(path) == 0:
+                node_name = os.path.dirname(path)
+                is_percentage = data.get("is_percentage", True)
+                level = data.get("level", self.calculate_level(node_name))
+
                 self.append_overwrite_or_update(
-                    path,
-                    depth,
+                    node_name,
+                    level,
+                    defaults.depth,
                     {
-                        "weight": data["weight"],
-                        "is_percentage": data["is_percentage"],
-                        "images": [path]
-                        * (num_average_images if is_percentage else data["weight"]),
+                        "weight_modifier": data.get("weight_modifier", 100),
+                        "is_percentage": is_percentage,
+                        "images": [path] * (num_average_images if is_percentage else data.get("weight_modifier", 100)),
                     },
                 )
 
+                # Handle grafting after processing the directory
+                graft_level = data.get("graft_level")
+                if graft_level is not None and graft_level != level:
+                    self.handle_grafting(node_name, graft_level)
+
+    def append_overwrite_or_update(self, path, level, depth, node_data=None):
+        """
+        Add or update a node in the tree. If the node already exists, overwrite or update it.
+        """
+
+        # # If a level override exists, truncate the path
+        # if level is not None:
+        #     path = self.set_path_to_level(path, level)
+
+        # Convert path to match the format used in node_lookup
+        tree_path = self.convert_path_to_tree_format(path)
+
+        # Ensure all parent nodes exist
+        tree_parent_name = self.find_parent_name(tree_path)
+        # tree_parent_name = self.convert_path_to_tree_format(parent_name)
+        self.ensure_parent_exists(tree_parent_name)
+
+        # path_name = self.convert_path_to_tree_format(path)
+        node = self.find_node(tree_path)
+        if node:
+            # Update node data if it exists
+            node.weight_modifier = node_data["weight_modifier"]
+            node.is_percentage = node_data["is_percentage"]
+            node.images.extend(node_data["images"])
+        else:
+            # Create a new node and add it to the tree
+            new_node = TreeNode(
+                name=tree_path,
+                path=None,
+                weight_modifier=node_data["weight_modifier"],
+                is_percentage=node_data["is_percentage"],
+                images=node_data["images"],
+            )
+            self.add_node(new_node, tree_parent_name)
+
+    def detach_node(self, node):
+        """
+        Detach a node from its parent and update parent/child relationships.
+
+        Args:
+            node (TreeNode): The node to be detached.
+        """
+        if node.parent:
+            # Remove the node from its parent's children list
+            node.parent.children = [child for child in node.parent.children if child != node]
+            # Clear the node's parent reference
+            node.parent = None
+
+    def add_node(self, new_node, tree_parent_name):
+        """
+        Add a new node to the tree, ensuring the parent exists.
+
+        Args:
+            new_node (TreeNode): The node to be added.
+            parent_name (str): The name of the parent node.
+
+        Raises:
+            ValueError: If the parent cannot be created or added for any reason.
+        """
+        # Ensure the parent exists
+
+        # tree_parent_name = self.convert_path_to_tree_format(parent_name)
+        # self.ensure_parent_exists(tree_parent_name)
+
+        # Find the parent node
+        parent_node = self.find_node(tree_parent_name)
+        # if not parent_node:
+        #     raise ValueError(f"Failed to create or find parent node '{parent_name}'.")
+
+        # Add the new node to the parent
+        parent_node.add_child(new_node)
+        self.node_lookup[new_node.name] = new_node
+
+    def ensure_parent_exists(self, parent_name):
+        """
+        Iteratively ensure all parent nodes exist from the root down to the specified parent_name.
+
+        Args:
+            parent_name (str): The full path of the parent node to ensure exists.
+            return_parent (bool): If True, return the parent `TreeNode`.
+
+        Returns:
+            TreeNode: The parent node if `return_parent` is True, otherwise None.
+        """
+        path_components = parent_name.split(os.path.sep)
+        current_path = "root"
+        current_node = self.root
+
+        for component in path_components[1:]:  # Skip the "root" component
+            next_path = os.path.join(current_path, component)
+
+            if next_path not in self.node_lookup:
+                # Create the next node if it doesn't exist
+                new_node = TreeNode(name=next_path, path=None)
+                current_node.add_child(new_node)
+                self.node_lookup[next_path] = new_node
+                current_node = new_node
+            else:
+                # Move to the existing node
+                current_node = self.node_lookup[next_path]
+
+            current_path = next_path
+
+        return current_node
+
+    def convert_path_to_tree_format(self, path):
+        """
+        Convert the path to match the format used in node_lookup (e.g., prefixed with 'root').
+        Removes the drive letter and adds 'root' as the base.
+        """
+        # Remove the drive letter (e.g., "I:") from the path
+        path_without_drive = os.path.splitdrive(path)[1]
+
+        # Split the path into components and prepend "root"
+        path_components = ["root"] + path_without_drive.strip(os.path.sep).split(os.path.sep)
+
+        # Join the components back into a single path
+        return os.path.join(*path_components)
+
+    def set_path_to_level(self, path, level):
+        """
+        Adjust the path to the specified level. If the level is less than the current level, truncate the path.
+        If the level is greater than the current level, extend the path with placeholder folders.
+
+        Args:
+            path (str): The original path.
+            level (int): The target level for the path.
+
+        Returns:
+            str: The adjusted path.
+        """
+        current_level = self.calculate_level(path)
+        path_components = path.split(os.path.sep)
+
+        # Normalize the drive component
+        if len(path_components) > 0 and path_components[0].endswith(":"):
+            path_components[0] += os.path.sep
+
+        if level < current_level:
+            # Truncate the path
+            truncated_components = path_components[:level - 1] + path_components[len(path_components) - 1:]
+            return os.path.join(*truncated_components)
+
+        elif level > current_level:
+            # Extend the path with placeholders
+            extension = [f"unnamed_{i}" for i in range(current_level, level)]
+            extended_components = path_components[:-1] + extension + [path_components[-1]]
+            return os.path.join(*extended_components)
+
+        # No adjustment needed
+        return path
+
+    def find_parent_name(self, node_name):
+        """
+        Find the name of the parent node.
+
+        Args:
+            node_name (str): The name of the current node.
+
+        Returns:
+            str: The name of the parent node.
+        """
+        return os.path.dirname(node_name)
+
+    def find_node(self, name):
+        return self.node_lookup.get(name)
+
+    def get_nodes_at_level(self, target_level):
+        """
+        Retrieve all nodes at a specific level, optimized to skip unnecessary traversal.
+
+        Args:
+            target_level (int): The level to retrieve nodes from.
+
+        Returns:
+            list: A list of TreeNode instances at the specified level.
+        """
+        nodes_at_level = []
+
+        def traverse(node):
+            if node.level == target_level:
+                nodes_at_level.append(node)
+                # Skip traversing children since this node is at the target level
+                return
+            for child in node.children:
+                traverse(child)
+
+        traverse(self.root)
+        return nodes_at_level
+
+    def calculate_level(self, path):
+        return len(list(filter(None, path.split(os.path.sep))))  # Calculate level based on path depth
+
     def extract_image_paths_and_weights_from_tree(self):
-        """Iterate through the tree to build all_image_paths and weights."""
         all_image_paths = []
         weights = []
 
-        for trunk, branches in self.trunks.items():
-            num_branches = len(branches)
-            for branch, data in branches.items():
-                image_list = data.get("images", [])
+        # Helper function to recursively gather data
+        def traverse_node(node):
+            if not node:
+                return
 
-                is_percentage = data.get("is_percentage", True)
-                if is_percentage:
-                    number_of_images = len(image_list)
-                    branch_weight = data.get("weight", 100) / 100
+            # Number of images in this node
+            number_of_images = len(node.images)
+            if number_of_images != 0:
+                normalised_weight = node.weight / (number_of_images if node.is_percentage else node.weight_modifier)
 
-                else:
-                    number_of_images = data.get("weight", 100)
-                    branch_weight = 1
-                normalised_weight = (
-                    (TOTAL_WEIGHT / num_branches) / (number_of_images) * (branch_weight)
-                )
+                # Add current node's images and normalized weights
+                for img in node.images:
+                    all_image_paths.append(img)
+                    weights.append(normalised_weight)
 
-                all_image_paths.extend(image_list)
-                weights.extend([normalised_weight] * number_of_images)
+            # Recurse into children
+            for child in node.children:
+                traverse_node(child)
+
+        # Start traversal from the root node
+        traverse_node(self.root)
 
         return all_image_paths, weights
 
-    def print_tree(self):  # Utility method to print the tree structure (for debugging)
-        for trunk, branches in self.trunks.items():
-            print(f"Trunk: {trunk}")
-            for branch, data in branches.items():
-                print(f"  Branch: {branch}")
-                for key, value in data.items():
-                    print(f"    {key}: {value}")
+    def count_branches(self, node):
+        """
+        Recursively count the number of branches and images in the tree.
 
+        Args:
+            node (TreeNode): The current node.
+
+        Returns:
+            tuple: (branch_count, image_count) where:
+                - branch_count is the total number of branches.
+                - image_count is the total number of images.
+        """
+        if not node:
+            return 0, 0
+
+        branch_count = 0
+        image_count = 0
+
+        # Count current node as a branch if it has images
+        if node.images:
+            branch_count = 1
+            image_count = len(node.images)
+
+        # Recursively count branches and images in child nodes
+        for child in node.children:
+            child_branch_count, child_image_count = self.count_branches(child)
+            branch_count += child_branch_count
+            image_count += child_image_count
+
+        return branch_count, image_count
+
+    def calculate_branch_weights(self, mode="plain", balance_level=None, node=None, total_weight=100.0):
+        """
+        Recursively calculates and normalizes the total weight for each branch in the tree,
+        ensuring weights are divided horizontally across siblings.
+
+        Args:
+            mode (str): Weighting mode. Options are "plain", "balanced", "weighted_x".
+            balance_level (int): Used for "weighted_x" mode. Specifies the level to start weighting from.
+            node (TreeNode): The current node to calculate weights for. Defaults to the root node.
+            total_weight (float): Total weight to distribute (defaults to 100%).
+
+        Returns:
+            float: The total weight for the current branch.
+        """
+
+        if node is None:
+            node = self.root
+        """ TODO:
+                Implement secondary modes
+        """
+        if mode == "flat":
+            for child in node.children:
+                self.calculate_branch_weights(mode, balance_level, child, total_weight)
+        elif mode == "balanced":
+            # Weight only starts balancing at level X
+            if node.level < balance_level - 1:
+                # Propagate weights without dividing
+                for child in node.children:
+                    self.calculate_branch_weights("balanced", balance_level, child, total_weight)
+            elif node.level == balance_level - 1:
+                children = self.get_nodes_at_level(balance_level)
+                # Treat as a new subtree
+                for child in children:
+                    self.calculate_branch_weights("balanced", balance_level, child, total_weight / len(children))
+            elif node.level >= balance_level:
+                for child in node.children:
+                    self.calculate_branch_weights("balanced", balance_level, child, total_weight / len(node.children))
+        elif mode == "weighted":
+            # Weight only starts balancing at level X
+            if node.level >= balance_level:
+                # Treat as a new subtree
+                child_weight = total_weight
+                for child in node.children:
+                    self.calculate_branch_weights("weighted", balance_level, child, child_weight / len(node.children))
+            else:
+                # Propagate weights without dividing
+                for child in node.children:
+                    self.calculate_branch_weights("weighted", balance_level, child, total_weight)
+
+        elif mode == "plain":
+            for children in node.children:
+                self.calculate_branch_weights(mode=mode, balance_level=balance_level, node=children, total_weight=total_weight / len(node.children))
+
+        # Assign the calculated weight to the current node
+        if node.is_percentage:
+            node.weight = total_weight * (node.weight_modifier / 100)
+        else:
+            node.weight = total_weight
+
+    # def normalize_weights(self, node, total_weight=100.0):
+    #     """
+    #     Normalize all weights in the tree so that the root equals total_weight.
+
+    #     Args:
+    #         node (TreeNode): The node to normalize.
+    #         total_weight (float): The total weight to normalize to (default: 100%).
+    #     """
+    #     def calculate_total_weight(node):
+    #         total = 0
+    #         for child in node.children:
+    #             total += calculate_total_weight(child)
+    #         if isinstance(node.weight, str) and "%" in node.weight:
+    #             total += float(node.weight.strip("%"))
+    #         else:
+    #             total += float(node.weight)
+    #         return total
+
+    #     def scale_weights(node, factor):
+    #         if isinstance(node.weight, str) and "%" in node.weight:
+    #             node.weight = f"{float(node.weight.strip('%')) * factor:.2f}%"
+    #         else:
+    #             node.weight = f"{float(node.weight) * factor:.2f}"
+    #         for child in node.children:
+    #             scale_weights(child, factor)
+
+    #     total_node_weight = calculate_total_weight(node)
+    #     if total_node_weight > 0:
+    #         normalization_factor = total_weight / total_node_weight
+    #         scale_weights(node, normalization_factor)
+
+    def print_tree(self, node=None, indent="", current_depth=0, max_depth=None):
+        """
+        Recursively prints the tree in an ASCII hierarchical format.
+        """
+        if node is None:
+            node = self.root
+
+        if max_depth is not None and current_depth > max_depth:
+            return
+
+        num_images = len(node.images) if node.images else 0
+        if num_images > 0:
+            print(f"{indent}{node.name} (Level: {node.level}, Weight: {node.weight}, Images: {num_images})")
+
+        for child in node.children:
+            self.print_tree(child, indent + " + ", current_depth + 1, max_depth)
 
 class Defaults:
     def __init__(
-        self, weight=100, mode=("weighted", 0), depth=9999, is_random=False, args=None
+        self, weight_modifier=100, mode=("balanced", 1), depth=9999, is_random=False, args=None
     ):
-        self._weight = weight
+        self._weight_modifier = weight_modifier
         self._mode = mode
         self._depth = depth
         self._is_random = is_random
@@ -712,8 +1261,8 @@ class Defaults:
         self.args_is_random = args.random if args and args.random is not None else None
 
     @property
-    def weight(self):
-        return self._weight
+    def weight_modifier(self):
+        return self._weight_modifier
 
     @property
     def mode(self):
@@ -758,27 +1307,28 @@ class Defaults:
         if is_random is not None:
             self.args_is_random = is_random
 
-
 class Filters:
     def __init__(self):
-        self.must_contain = []
-        self.must_not_contain = []
-        self.ignored_dirs = []
+        self.must_contain = set()
+        self.must_not_contain = set()
+        self.ignored_dirs = set()
+        self.ignored_files = set()
 
     def add_must_contain(self, keyword):
-        self.must_contain.append(keyword)
+        self.must_contain.add(keyword)
 
     def add_must_not_contain(self, keyword):
-        self.must_not_contain.append(keyword)
+        self.must_not_contain.add(keyword)
 
     def add_ignored_dir(self, directory):
-        self.ignored_dirs.append(directory)
+        self.ignored_dirs.add(directory)
+        
+    def add_ignored_file(self, file):
+        self.ignored_files.add(file)
 
     def passes(self, path):
-        if any(
-            os.path.normpath(path) == os.path.normpath(ignored_dir)
-            for ignored_dir in self.ignored_dirs
-        ):
+        if any(os.path.normpath(path) == os.path.normpath(ignored_dir)
+                for ignored_dir in self.ignored_dirs):
             return 1
 
         if any(keyword in path for keyword in self.must_not_contain):
@@ -790,7 +1340,6 @@ class Filters:
             return 2
 
         return 0
-
 
 class Stack:
     def __init__(self, max_size=None):
@@ -851,7 +1400,6 @@ class Stack:
             return False
         return len(self.stack) >= self.max_size
 
-
 # Utility functions
 def level_of(path):
     return len([item for item in path.split(os.sep) if item != ""])
@@ -876,6 +1424,12 @@ def contains_files(path):
             return True
     return False
 
+def is_textfile(file):
+    return file.lower().endswith(TEXT_FILES)
+    
+def is_imagefile(file):
+    return file.lower().endswith(IMAGE_FILES)
+
 def find_input_file(input_filename, additional_search_paths=[]):
     # List of potential directories to search
     possible_locations = [
@@ -897,9 +1451,11 @@ def parse_input_file(input_file, defaults):
     specific_images = {}
 
     modifier_pattern = re.compile(r"(\[.*?\])")
-    weight_pattern = re.compile(r"^\d+%?$")
+    weight_modifier_pattern = re.compile(r"^\d+%?$")
     balance_pattern = re.compile(r"^b\d+$", re.IGNORECASE)
+    graft_pattern = re.compile(r"^g\d+$", re.IGNORECASE)
     depth_pattern = re.compile(r"^d\d+$", re.IGNORECASE)
+    flat_pattern = re.compile(r"^f$", re.IGNORECASE)
 
     with open(input_file, "r", encoding="utf-8") as f:
         content = f.readlines()
@@ -921,9 +1477,11 @@ def parse_input_file(input_file, defaults):
             # Handle subfile inclusion
             if line.startswith("[l]"):
                 subfile = line[3:].strip()
-                if os.path.isfile(subfile):
+                additional_search_paths = [os.path.dirname(input_file)]
+                subfilename_full = find_input_file(subfile, additional_search_paths)
+                if subfilename_full:
                     sub_image_dirs, sub_specific_images = parse_input_file(
-                        subfile, defaults
+                        subfilename_full, defaults
                     )
                     image_dirs.update(sub_image_dirs)
                     for k, v in sub_specific_images.items():
@@ -938,16 +1496,21 @@ def parse_input_file(input_file, defaults):
             elif line.startswith("[-]"):
                 path_or_keyword = line[3:].strip()
                 if os.path.isabs(path_or_keyword):
-                    filters.add_ignored_dir(path_or_keyword)
-                else:
+                    if os.path.isfile(path_or_keyword):
+                        filters.add_ignored_file(path_or_keyword)
+                    else:
+                        filters.add_ignored_dir(path_or_keyword)
+                else:                
                     filters.add_must_not_contain(path_or_keyword)
                 continue
 
             # Initialize default modifiers
-            weight = 100
+            weight_modifier = 100
             is_percentage = True
+            graft_level = None
             balance_level = defaults.mode[1]
             depth = defaults.depth
+            flat = False
 
             # Extract all modifiers
             modifiers = modifier_pattern.findall(line)
@@ -957,20 +1520,25 @@ def parse_input_file(input_file, defaults):
             # Process each modifier
             for mod in modifiers:
                 mod_content = mod.strip("[]").strip()
-                if weight_pattern.match(mod_content):
+                if weight_modifier_pattern.match(mod_content):
                     # Weight modifier
                     if mod_content.endswith("%"):
-                        weight = int(mod_content[:-1])
+                        weight_modifier = int(mod_content[:-1])
                         is_percentage = True
                     else:
-                        weight = int(mod_content)
+                        weight_modifier = int(mod_content)
                         is_percentage = False
+                elif graft_pattern.match(mod_content):
+                    # Level modifier
+                    graft_level = int(mod_content[1:])
                 elif balance_pattern.match(mod_content):
-                    # Balance level modifier
+                    # Balance level modifier, global only
                     balance_level = int(mod_content[1:])
                 elif depth_pattern.match(mod_content):
                     # Depth modifier
                     depth = int(mod_content[1:])
+                elif flat_pattern.match(mod_content):
+                    flat = True
                 else:
                     print(f"Unknown modifier '{mod_content}' in line: {line}")
 
@@ -981,27 +1549,26 @@ def parse_input_file(input_file, defaults):
                 )
             elif os.path.isdir(path):
                 image_dirs[path] = {
-                    "weight": weight,
+                    "weight_modifier": weight_modifier,
                     "is_percentage": is_percentage,
-                    "balance_level": balance_level,
+                    "graft_level": graft_level,
                     "depth": depth,
+                    "flat": flat,
                 }
             elif os.path.isfile(path):
                 specific_images[path] = {
-                    "weight": weight,
+                    "weight_modifier": weight_modifier,
                     "is_percentage": is_percentage,
-                    "balance_level": balance_level,
-                    "depth": depth,
+                    "graft_level": graft_level
                 }
             else:
                 print(f"Path '{path}' is neither a file nor a directory.")
 
     return image_dirs, specific_images
 
-
 def test_distribution(image_paths, weights, iterations, testdepth, defaults):
     hit_counts = defaultdict(int)
-    for _ in range(iterations):
+    for _ in tqdm(range(iterations), desc="Iterating tests"):
         if defaults.is_random:
             image_path = random.choice(image_paths)
         else:
@@ -1022,68 +1589,98 @@ def test_distribution(image_paths, weights, iterations, testdepth, defaults):
             f"Directory: {directory}, Hits: {count}, Weight: {count / total_images * TOTAL_WEIGHT:.2f}"
         )
 
+def process_inputs(input_files, defaults):
+    """
+    Parse input files and directories to create image_dirs and specific_images dictionaries.
 
-def main(input_files, defaults, test_iterations=None, testdepth=None):
-    start_time = time.time()
+    Args:
+        input_files (list): List of input files or directories.
+        defaults (object): Defaults object containing configuration.
 
+    Returns:
+        tuple: (image_dirs, specific_images)
+    """
     image_dirs = {}
     specific_images = {}
 
-    # Read input file(s) and create image_dirs and specific_images dictionaries
+    for input_path in input_files:
+        # Check if input_path is a file
+        if is_textfile(input_path):
+            additional_search_paths = [os.path.dirname(input_path)]
+            input_filename_full = find_input_file(input_path, additional_search_paths)
 
-    for input_filename in input_files:
-        additional_search_paths = [os.path.dirname(input_filename)]
-        input_filename_full = find_input_file(input_filename, additional_search_paths)
-        if input_filename_full:
-            sub_image_dirs, sub_specific_images = parse_input_file(
-                input_filename_full, defaults
-            )
-            image_dirs.update(sub_image_dirs)
-            specific_images.update(sub_specific_images)
+            if input_filename_full:
+                sub_image_dirs, sub_specific_images = parse_input_file(
+                    input_filename_full, defaults
+                )
+                image_dirs.update(sub_image_dirs)
+                specific_images.update(sub_specific_images)
+            else:
+                print(f"Input file {input_path} not found.")
+        # Check if input_path is a directory
+        elif os.path.isdir(input_path):
+            # Treat the directory as an image directory
+            image_dirs[input_path] = {"depth": defaults.depth, "weight_modifier": 100}
         else:
-            print("Input file %T not found.", input_filename)
+            print(f"Invalid input path: {input_path}")
+
+    return image_dirs, specific_images
+
+
+def start_slideshow(all_image_paths, weights, tree, defaults):
+    """
+    Start the slideshow using the given paths and weights.
+
+    Args:
+        all_image_paths (list): List of image paths.
+        weights (list): List of weights corresponding to image paths.
+        tree (Tree): Tree object containing the image hierarchy.
+        defaults (object): Defaults object containing configuration.
+    """
+    import tkinter as tk
+    root = tk.Tk()
+    slideshow = ImageSlideshow(root, all_image_paths, weights, tree, defaults)  # noqa: F841
+    root.mainloop()
+
+
+def main(input_files, defaults, test_iterations=None, testdepth=None, printtree=None):
+    # Parse input files and directories
+    image_dirs, specific_images = process_inputs(input_files, defaults)
 
     if not image_dirs and not specific_images:
-        raise ValueError(
-            "No images found in the provided directories and specific images."
-        )
-        sys.exit()
+        raise ValueError("No images found in the provided directories and specific images.")
 
-    # ('weighted', x) is functionally identical to ('balanced', 1)
-    if defaults.mode[0] == "weighted":
-        mode = ("balanced", 1)
-    else:
-        mode = defaults.mode
-
-    tree = Tree(mode[1])  # instantiate tree
+    # Instantiate and build the tree
+    tree = Tree()
     tree.build_tree(image_dirs, specific_images, defaults)
+    tree.calculate_branch_weights(mode=defaults.mode[0], balance_level=defaults.mode[1])
 
-    # pull image paths and calculated weights lists from tree
+    # Print tree if requested
+    if printtree:
+        tree.print_tree(max_depth=testdepth)
+        return
+
+    # Extract paths and weights from the tree
     all_image_paths, weights = tree.extract_image_paths_and_weights_from_tree()
-    print("Finished --- %s seconds ---" % (time.time() - start_time))
 
+    # Test or start the slideshow
     if test_iterations:
-        test_distribution(
-            all_image_paths, weights, test_iterations, testdepth, defaults
-        )
+        test_distribution(all_image_paths, weights, test_iterations, testdepth, defaults)
     else:
-        root = tk.Tk()
-        slideshow = ImageSlideshow(  # noqa: F841
-            root, all_image_paths, weights, tree, defaults
-        )  # noqa: F841
-        root.mainloop()
-
+        start_slideshow(all_image_paths, weights, tree, defaults)
 
 if __name__ == "__main__":
-
     defaults = Defaults(args=args)
     filters = Filters()
 
+    # Use args.input_file directly as a list
+    input_files = args.input_file if args.input_file else []
+
     if args.run:
-        input_files = args.input_file.split("+") if args.input_file else []
         main(input_files, defaults)
+    elif args.printtree:
+        main(input_files, defaults, testdepth=args.testdepth, printtree=True)
     elif args.test:
-        input_files = args.input_file.split("+") if args.input_file else []
         main(
             input_files,
             defaults,
