@@ -13,6 +13,7 @@ from PIL import Image, ImageTk
 # Constants
 TOTAL_WEIGHT = 1000000
 
+
 # Argument parsing setup
 class ModeAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
@@ -48,13 +49,11 @@ parser.add_argument(
     "--mode",
     nargs="+",
     action=ModeAction,
-    default=("weighted", 0),
     help="Set the mode: (weighted) or (balanced [x])",
 )
 parser.add_argument(
     "--depth",
     type=int,
-    default=9999,
     help="Depth below which to combine all folders into one",
 )
 parser.add_argument(
@@ -70,7 +69,7 @@ args = parser.parse_args()
 
 
 class ImageSlideshow:
-    def __init__(self, root, image_paths, weights, is_random):
+    def __init__(self, root, image_paths, weights, defaults):
         self.root = root
         self.image_paths = image_paths
         self.weights = weights
@@ -86,11 +85,11 @@ class ImageSlideshow:
         self.screen_width = root.winfo_screenwidth()
         self.screen_height = root.winfo_screenheight()
 
-        self.initial_mode = mode
-        if is_random:
-            self.mode, self.mode_level = ("random", mode[1])
+        self.initial_mode = defaults.mode
+        if defaults.is_random:
+            self.mode, self.mode_level = ("random", defaults.mode[1])
         else:
-            self.mode, self.mode_level = mode
+            self.mode, self.mode_level = defaults.mode
 
         self.rotation_angle = 0
 
@@ -406,19 +405,102 @@ class Tree:
                     print(f"    {key}: {value}")
 
 
-def parse_input_file(input_file):
+class Defaults:
+    def __init__(
+        self, weight=100, mode=("weighted", 0), depth=9999, is_random=False, args=None
+    ):
+        self._weight = weight
+        self._mode = mode
+        self._depth = depth
+        self._is_random = is_random
+
+        self.global_mode = None
+        self.global_depth = None
+        self.global_is_random = None
+
+        self.args_mode = args.mode if args and args.mode is not None else None
+        self.args_depth = args.depth if args and args.depth is not None else None
+        self.args_is_random = args.random if args and args.random is not None else None
+
+    @property
+    def weight(self):
+        return self._weight
+
+    @property
+    def mode(self):
+        if self.args_mode is not None:
+            return self.args_mode
+        elif self.global_mode is not None:
+            return self.global_mode
+        else:
+            return self._mode
+
+    @property
+    def depth(self):
+        if self.args_depth is not None:
+            return self.args_depth
+        elif self.global_depth is not None:
+            return self.global_depth
+        else:
+            return self._depth
+
+    @property
+    def is_random(self):
+        if self.args_is_random is None:
+            return self.args_is_random
+        elif self.global_is_random is not None:
+            return self.global_is_random
+        else:
+            return self._is_random
+
+    def set_global_defaults(self, mode=None, depth=None, is_random=None):
+        if mode is not None:
+            self.global_mode = mode
+        if depth is not None:
+            self.global_depth = depth
+        if is_random is not None:
+            self.global_is_random = is_random
+
+    def set_args_defaults(self, mode=None, depth=None, is_random=None):
+        if mode is not None:
+            self.args_mode = mode
+        if depth is not None:
+            self.args_depth = depth
+        if is_random is not None:
+            self.args_is_random = is_random
+
+
+class Filters:
+    def __init__(self):
+        self.must_contain = []
+        self.must_not_contain = []
+        self.ignored_dirs = []
+        
+    def add_must_contain(self, keyword):
+        self.must_contain.append(keyword)
+    
+    def add_must_not_contain(self, keyword):
+        self.must_not_contain.append(keyword)
+        
+    def add_ignored_dir(self, directory):
+        self.ignored_dirs.append(directory)
+        
+    def passes(self, path):
+        if any(os.path.normpath(path) == os.path.normpath(ignored_dir) for ignored_dir in self.ignored_dirs):
+            return 1
+        
+        if any(keyword in path for keyword in self.must_not_contain):
+            return 2
+        
+        if self.must_contain and not any(keyword in path for keyword in self.must_contain):
+            return 2
+        
+        return 0
+        
+        
+def parse_input_file(input_file, defaults):
     image_dirs = {}
     specific_images = {}
-    filters = {
-        "must_contain": [],  # List of keywords that must be present in the path
-        "must_not_contain": [],  # List of keywords that must NOT be present in the path
-        "ignored_dirs": [],  # List of absolute directories to ignore
-    }
-
-    default_weight = 100
-    default_is_percentage = True
-    default_balance = args.mode[1] if args.mode else 1
-    default_depth = args.depth if args.depth else 9999
 
     modifier_pattern = re.compile(r"(\[.*?\])")
     weight_pattern = re.compile(r"^\d+%?$")
@@ -437,40 +519,41 @@ def parse_input_file(input_file):
             # Remove enclosing double quotes, if any
             line = line.replace('"', "").strip()
 
+            # Handle defaults declaration
+            if line.startswith("[r]"):
+                defaults.set_global_defaults(is_random=True)
+                continue
+
             # Handle subfile inclusion
             if line.startswith("[l]"):
                 subfile = line[3:].strip()
                 if os.path.isfile(subfile):
-                    sub_image_dirs, sub_specific_images, sub_filters = parse_input_file(
-                        subfile
+                    sub_image_dirs, sub_specific_images = parse_input_file(
+                        subfile, defaults
                     )
                     image_dirs.update(sub_image_dirs)
                     for k, v in sub_specific_images.items():
                         specific_images[k].update(v)
-                    for key in filters:
-                        filters[key].extend(sub_filters[key])
-                    specific_images.update(sub_specific_images)
                 continue  # Move to the next line after processing subfile
 
             # Handle filters
-            if line.startswith("[-]"):
-                path_or_keyword = line[3:].strip()
-                if os.path.isabs(path_or_keyword):
-                    filters["ignored_dirs"].append(path_or_keyword)
-                else:
-                    filters["must_not_contain"].append(path_or_keyword)
-                continue
-
             if line.startswith("[+]"):
                 keyword = line[3:].strip()
-                filters["must_contain"].append(keyword)
+                filters.add_must_contain(keyword)
+                continue
+            elif line.startswith("[-]"):
+                path_or_keyword = line[3:].strip()
+                if os.path.isabs(path_or_keyword):
+                    filters.add_ignored_dir(path_or_keyword)
+                else:
+                    filters.add_must_not_contain(path_or_keyword)
                 continue
 
             # Initialize default modifiers
-            weight = default_weight
-            is_percentage = default_is_percentage
-            balance_level = default_balance
-            depth = default_depth
+            weight = 100
+            is_percentage = True
+            balance_level = defaults.mode[1]
+            depth = defaults.depth
 
             # Extract all modifiers
             modifiers = modifier_pattern.findall(line)
@@ -497,8 +580,10 @@ def parse_input_file(input_file):
                 else:
                     print(f"Unknown modifier '{mod_content}' in line: {line}")
 
-                # Handle directory or specific image
-            if os.path.isdir(path):
+            # Handle directory or specific image
+            if path == "*":
+                defaults.set_global_defaults(mode=("balanced", balance_level), depth=depth)
+            elif os.path.isdir(path):
                 image_dirs[path] = {
                     "weight": weight,
                     "is_percentage": is_percentage,
@@ -515,33 +600,9 @@ def parse_input_file(input_file):
             else:
                 print(f"Path '{path}' is neither a file nor a directory.")
 
-    return image_dirs, specific_images, filters
+    return image_dirs, specific_images
 
-
-def test_filters(path, filters):
-    # Check if the path is in the ignored_dirs
-    if any(
-        os.path.normpath(path) == os.path.normpath(ignored_dir)
-        for ignored_dir in filters["ignored_dirs"]
-    ):
-        return 1
-
-    # Check must_not_contain keywords
-    if any(keyword in path for keyword in filters["must_not_contain"]):
-        return 2
-
-    # Check must_contain keywords
-    if filters["must_contain"] and not any(
-        keyword in path for keyword in filters["must_contain"]
-    ):
-        return 2
-
-    return 0
-
-
-def calculate_weights(
-    folder_data, specific_images, filters, mode, depth
-):
+def calculate_weights(image_dirs, specific_images, defaults):
     """
     Calculate weights of all images in folders in folders_data, and specified_images
     """
@@ -549,18 +610,19 @@ def calculate_weights(
     all_image_paths = []
     weights = []
 
-    if mode[0] == "weighted":
+    if defaults.mode[0] == "weighted":
         mode = ("balanced", 1)
-
-    # Assign weights to image folders
+    else:
+        mode = defaults.mode
     mode_depth = mode[1]
 
+    # Assign weights to image folders
     tree = Tree(mode_depth)
 
-    for path, data in folder_data.items():
-        depth = data["depth"] or depth
+    for path, data in image_dirs.items():
+        depth = data["depth"] or defaults.depth
         for root, dirs, files in os.walk(path):
-            result = test_filters(root, filters)
+            result = filters.passes(root)
             if result == 0:
                 images = [
                     os.path.join(root, f)
@@ -600,54 +662,40 @@ def calculate_weights(
     return all_image_paths, weights
 
 
-def test_distribution(
-    image_paths, weights, iterations, testdepth, is_random=False
-):
+def test_distribution(image_paths, weights, iterations, testdepth, defaults):
     hit_counts = defaultdict(int)
     for _ in range(iterations):
-        if is_random:
+        if defaults.is_random:
             image_path = random.choice(image_paths)
         else:
             image_path = random.choices(image_paths, weights=weights, k=1)[0]
         hit_counts["\\".join(image_path.split("\\")[:testdepth])] += 1
 
-    # directory_counts = defaultdict(int)
-    # for path, count in hit_counts.items():
-    #     directory = os.path.dirname(path)
-    #     directory_counts[directory] += count
+    directory_counts = defaultdict(int)
+    for path, count in hit_counts.items():
+        directory = os.path.dirname(path)
+        directory_counts[directory] += count
 
     total_images = len(image_paths)
-    for directory, count in sorted(hit_counts.items()):  # Alphabetical order
+    for directory, count in sorted(directory_counts.items()):  # Alphabetical order
         print(
             f"Directory: {directory}, Hits: {count}, Weight: {count / total_images * TOTAL_WEIGHT:.2f}"
         )
 
 
-def main(
-    input_files,
-    test_iterations=None,
-    testdepth=None,
-    is_random=False,
-):
+def main(input_files, defaults, test_iterations=None, testdepth=None):
     start_time = time.time()
 
     image_dirs = {}
     specific_images = {}
-    filters = {
-        "must_contain": [],  # List of keywords that must be present in the path
-        "must_not_contain": [],  # List of keywords that must NOT be present in the path
-        "ignored_dirs": [],  # List of absolute directories to ignore
-    }
 
     for input_filename in input_files:
         if os.path.isfile(input_filename):
-            sub_image_dirs, sub_specific_images, sub_filters = parse_input_file(
-                input_filename
+            sub_image_dirs, sub_specific_images = parse_input_file(
+                input_filename, defaults
             )
             image_dirs.update(sub_image_dirs)
             specific_images.update(sub_specific_images)
-            for key in sub_filters:
-                filters[key].extend(sub_filters[key])
 
     if not image_dirs and not specific_images:
         raise ValueError(
@@ -655,17 +703,17 @@ def main(
         )
         sys.exit()
     all_image_paths, weights = calculate_weights(
-        image_dirs, specific_images, filters
+        image_dirs, specific_images, defaults
     )
 
     if test_iterations:
         test_distribution(
-            all_image_paths, weights, test_iterations, testdepth, is_random
+            all_image_paths, weights, test_iterations, testdepth, defaults
         )
     else:
         root = tk.Tk()
         slideshow = ImageSlideshow(  # noqa: F841
-            root, all_image_paths, weights, is_random
+            root, all_image_paths, weights, defaults
         )  # noqa: F841
         root.mainloop()
 
@@ -673,18 +721,18 @@ def main(
 
 
 if __name__ == "__main__":
-    
+
+    defaults = Defaults(args=args)
+    filters = Filters()
+
     if args.run:
         input_files = args.input_file.split("+") if args.input_file else []
-        main(
-            input_files,
-            is_random=args.random,
-        )
+        main(input_files, defaults)
     elif args.test:
         input_files = args.input_file.split("+") if args.input_file else []
         main(
             input_files,
+            defaults,
             test_iterations=args.test,
-            testdepth=args.testdepth if args.testdepth else args.depth,
-            is_random=args.random,
+            testdepth=args.testdepth if args.testdepth else defaults.depth + 1,
         )
