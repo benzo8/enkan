@@ -79,6 +79,8 @@ class ImageSlideshow:
         self.image_paths = image_paths
         self.weights = weights
         self.original_image_paths = image_paths
+        self.number_of_images = len(image_paths)
+        self.current_image_index = 0
         self.original_weights = weights
         self.history = deque(maxlen=10)
         self.forward_history = deque(maxlen=10)
@@ -127,6 +129,7 @@ class ImageSlideshow:
             self.history.append(image_path)
             self.forward_history.clear()  # Clear forward history when a new image is shown
         self.current_image_path = image_path
+        self.current_image_index = self.image_paths.index(image_path)
         image = Image.open(image_path)
 
         # Apply rotation
@@ -203,10 +206,22 @@ class ImageSlideshow:
                 for i, path in enumerate(self.original_image_paths)
                 if path.startswith(current_dir)
             ]
+            self.number_of_images = len(
+                self.image_paths
+            )  # Update the number of images for the subfolder
+            self.current_image_index = (
+                0  # Reset the current image index for the subfolder
+            )
             self.subfolder_mode = True
         else:
             self.image_paths = self.original_image_paths
             self.weights = self.original_weights
+            self.number_of_images = len(
+                self.image_paths
+            )  # Update the number of images for the full set
+            self.current_image_index = self.image_paths.index(
+                self.current_image_path
+            )  # Update to the current image index
             self.subfolder_mode = False
         self.show_image(self.current_image_path)
         self.update_filename_display()
@@ -217,7 +232,8 @@ class ImageSlideshow:
 
     def update_filename_display(self):
         if self.show_filename:
-            self.filename_label.config(text=self.current_image_path)
+            filename_text = f"{self.current_image_path}"
+            self.filename_label.config(text=filename_text)
             self.filename_label.place(x=0, y=0)
 
             if self.mode == "random":
@@ -225,7 +241,17 @@ class ImageSlideshow:
             else:
                 mode_text = "W" if self.mode == "weighted" else "B"
             if self.subfolder_mode:
-                mode_text = "S"
+                mode_text += " S"
+                subfolder_number_of_images = len(
+                    self.image_paths
+                )  # Number of images in the subfolder
+                subfolder_current_image_index = (
+                    self.image_paths.index(self.current_image_path) + 1
+                )  # Current index in the subfolder
+                mode_text = f"({subfolder_current_image_index}/{subfolder_number_of_images}) {mode_text}"
+            else:
+                mode_text = f"({self.current_image_index + 1}/{self.number_of_images}) {mode_text}"
+
             self.mode_label.config(text=mode_text)
             self.mode_label.place(x=self.root.winfo_screenwidth(), y=0, anchor="ne")
         else:
@@ -259,6 +285,9 @@ def parse_input_file(input_file):
 
     image_dirs = defaultdict(lambda: {"weight": 100, "is_absolute": False})
     specific_images = defaultdict(lambda: {"weight": 100, "is_absolute": False})
+    specific_images = defaultdict(
+        lambda: {"weight": default_weight, "is_absolute": False, "mode": default_mode}
+    )
     ignored_dirs = []
 
     with open(input_file, "r", encoding="utf-8") as f:
@@ -300,7 +329,7 @@ def parse_input_file(input_file):
     return image_dirs, specific_images, ignored_dirs
 
 
-def level(current_path):
+def what_level_is(current_path):
     """Return:
     directory level of current_path where 1 is root of drive
     """
@@ -308,15 +337,9 @@ def level(current_path):
     return len([item for item in current_path.split(os.sep) if item != ""])
 
 
-def folders_at_level(folder_list, level):
-    """
-    Return:
-        Dictionary of folders at specified level
-    """
-
-    return [
-        [folder, data] for folder, data in folder_list.items() if data["level"] == level
-    ]
+def truncate_path(path, depth):
+    truncated_path = "\\".join(path.split("\\")[:depth])
+    return truncated_path
 
 
 def build_folder_lists(image_dirs, ignored_dirs=None, scan_subfolders=True):
@@ -345,7 +368,7 @@ def build_folder_lists(image_dirs, ignored_dirs=None, scan_subfolders=True):
             ]
             if images:
                 folder_data[root] = {
-                    "level": level(root),
+                    "level": what_level_is(root),
                     "weight": data["weight"],
                     "is_absolute": data["is_absolute"],
                 }
@@ -353,10 +376,6 @@ def build_folder_lists(image_dirs, ignored_dirs=None, scan_subfolders=True):
             # Control whether to scan subfolders by modifying dirs in place
             if not scan_subfolders:
                 del dirs[:]  # Clear dirs to prevent descending into subfolders
-
-    # Remove empty folders
-    # folder_image_paths = {k: v for k, v in folder_image_paths.items() if v}
-
     return folder_data
 
 
@@ -390,7 +409,7 @@ def calculate_weights(
                         if f.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp"))
                     ]
                     if images:
-                        if level(path) < depth:
+                        if what_level_is(path) < depth:
                             all_image_paths.extend(images)
                             if data["is_absolute"]:
                                 sub_weights_edit_list.append(
@@ -408,7 +427,7 @@ def calculate_weights(
                                     ]
                                 )
                         else:
-                            vf = "\\".join(path.split("\\")[:depth])
+                            vf = truncate_path(path, depth)
                             for image in images:
                                 virtual_folders[vf].append(image)
             for path, data in virtual_folders.items():
@@ -419,23 +438,40 @@ def calculate_weights(
 
     # Assign weights to image folders
     if mode[0] == "balanced":
-        if mode[1] != 0:
-            sub_folder_data = {}
-            for path, data in folder_data.items():
-                for root, dirs, files in os.walk(path, topdown=True):
-                    current_level = level(root)
-                    if current_level >= mode[1]:
-                        sub_folder_data[root] = {
-                            "level": current_level,
+        if (
+            mode[1] != 0
+        ):  # if balanced mode is 0 then balance per entry in folder_data, otherwise...
+            # each tree below this level should be equally balanced, and weighted within the tree
+            sub_folder_data = defaultdict(list)
+            for path, data in folder_data.items():  # group trees
+                sf = truncate_path(path, mode[1])
+                sub_folder_data[sf].append(
+                    [
+                        path,
+                        {
+                            "level": what_level_is(path),
                             "weight": data["weight"],
                             "is_absolute": data["is_absolute"],
-                        }
-                        dirs[:] = []
+                        },
+                    ]
+                )
+
             if not sub_folder_data:
                 raise ValueError("No folders found at the requested level.")
                 sys.exit()
-            else:
-                folder_data = sub_folder_data
+            else:  # normalise weights within each tree
+                sub_sub_folder_data = defaultdict(list)
+                for item, data in sub_folder_data.items():
+                    combined_weight = sum(entry[1]["weight"] for entry in data)
+                    for path, inner_data in data:
+                        normalised_weight = (
+                            inner_data["weight"] / combined_weight
+                        ) * 100
+                        sub_sub_folder_data[path] = {
+                            "weight": normalised_weight,
+                            "is_absolute": inner_data["is_absolute"],
+                        }
+                folder_data = sub_sub_folder_data
 
         balanced_weight = total_weight / len(folder_data)
         for path, data in folder_data.items():
@@ -443,14 +479,8 @@ def calculate_weights(
                 {path: data}, balanced_weight, weights_edit_list
             )
     else:
+        # weighted mode, where each folder in the entire collection is weighted against each other
         weights_edit_list = weigh_images(folder_data, total_weight, weights_edit_list)
-
-    # # Handle virtual folders
-    # if virtual_folders:
-    #     for folder, images in virtual_folders.items():
-    #         for image in images:
-    #             all_image_paths.append(image)
-    #         weights_edit_list[folder] = ([(total_weight / len(images)), len(images)])
 
     # Assign weights to specific images
     if specific_images:
@@ -555,12 +585,18 @@ def main(
 
 
 if __name__ == "__main__":
+
+    default_weight = 100
+    default_is_asbolute = False
+    default_mode = args.mode if args.mode else ("weighted", 0)
+    default_depth = args.depth if args.depth else 9999
+
     if args.run:
         input_files = args.input_file.split("+") if args.input_file else []
         main(
             input_files,
-            mode=args.mode,
-            depth=args.depth,
+            mode=default_mode,
+            depth=default_depth,
             is_random=args.random,
             total_weight=args.total_weight,
         )
@@ -569,9 +605,9 @@ if __name__ == "__main__":
         main(
             input_files,
             test_iterations=args.test,
-            mode=args.mode,
-            depth=args.depth,
-            testdepth=args.testdepth if args.testdepth else args.depth + 1,
+            mode=default_mode,
+            depth=default_depth,
+            testdepth=args.testdepth if args.testdepth else default_depth + 1,
             is_random=args.random,
             total_weight=args.total_weight,
         )
