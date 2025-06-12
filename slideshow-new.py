@@ -86,17 +86,20 @@ class ImageSlideshow:
         self.update_filename_display()
     
     def next_image(self, event=None):
+        if self.rotation_angle != 0: self.rotation_angle = 0
         self.show_image()
     
     def previous_image(self, event=None):
         if len(self.history) > 1:
             self.forward_history.appendleft(self.history.pop())
+            if self.rotation_angle != 0: self.rotation_angle = 0
             self.show_image(self.history[-1])
     
     def next_image_forward(self, event=None):
         if self.forward_history:
             image_path = self.forward_history.popleft()
             self.history.append(image_path)
+            if self.rotation_angle != 0: self.rotation_angle = 0
             self.show_image(image_path)
 
     def delete_image(self, event=None):
@@ -149,7 +152,7 @@ class ImageSlideshow:
         self.update_filename_display()
         
     def rotate_image(self, event=None):
-        self.rotation_angle = (self.rotation_angle + 90) % 360
+        self.rotation_angle = (self.rotation_angle - 90) % 360
         self.show_image(self.current_image_path)
 
     def exit_slideshow(self, event=None):
