@@ -38,7 +38,7 @@ args = parser.parse_args()
 initial_path = "I:\\imagesftp"
 
 class ImageSlideshow:
-    def __init__(self, root, image_paths, weights, mode):
+    def __init__(self, root, image_paths, weights, mode, is_random):
         self.root = root
         self.image_paths = image_paths
         self.weights = weights
@@ -48,8 +48,13 @@ class ImageSlideshow:
         self.forward_history = deque(maxlen=10)
         self.subfolder_mode = False
         self.show_filename = False
-        self.mode, self.mode_level = mode
+        
         self.initial_mode = mode
+        if is_random:
+            self.mode, self.mode_level = ('random', mode[1])
+        else:
+            self.mode, self.mode_level = mode
+        
         self.rotation_angle = 0
         
         self.root.configure(background='black')  # Set root background to black
@@ -196,7 +201,7 @@ def parse_input_file(input_file):
         for line in content:
             line = line.replace('"', '').strip()
             if line.startswith("[l]"):
-                subfile = line[3:].strip()
+                subfile = os.path.join(os.path.split(input_file)[0],line[3:].strip())
                 if os.path.isfile(subfile):
                     sub_image_dirs, sub_specific_images, sub_ignored_dirs = parse_input_file(subfile)
                     image_dirs.update(sub_image_dirs)
@@ -250,18 +255,10 @@ def build_folder_lists(directories, ignored_dirs=None, scan_subfolders=True):
 
 def calculate_weights(folder_data, specific_images, ignored_dirs, mode, total_weight=10000):
     
-    # if not folder_image_paths and not specific_images:
-    #     raise ValueError("No images found in the provided directories and specific images.")
-
     all_image_paths = []
     weights = []
     num_folders = 0
         
-    # if mode == 'weighted':
-    #     folder_data = build_folder_lists(image_dirs, ignored_dirs, scan_subfolders=True)
-    # else:
-    #     folder_data = image_dirs
-
     def weigh_images(folder_tree, assigned_weight):
         folder_data = build_folder_lists(folder_tree, ignored_dirs=None, scan_subfolders=True)
         if folder_data:
@@ -323,10 +320,13 @@ def calculate_weights(folder_data, specific_images, ignored_dirs, mode, total_we
 
     return all_image_paths, weights
 
-def test_distribution(image_paths, weights, iterations):
+def test_distribution(image_paths, weights, iterations, mode, is_random=False):
     hit_counts = defaultdict(int)
     for _ in range(iterations):
-        image_path = random.choices(image_paths, weights=weights, k=1)[0]
+        if is_random:
+            image_path = random.choice(image_paths)
+        else:
+            image_path = random.choices(image_paths, weights=weights, k=1)[0]
         hit_counts[image_path] += 1
 
     directory_counts = defaultdict(int)
@@ -338,7 +338,7 @@ def test_distribution(image_paths, weights, iterations):
     for directory, count in sorted(directory_counts.items()):  # Alphabetical order
         print(f"Directory: {directory}, Hits: {count}, Weight: {count / total_images:.2f}")
 
-def main(input_files, test_iterations=None, mode=(), total_weight=10000):
+def main(input_files, test_iterations=None, mode=(), is_random=False, total_weight=10000):
     image_dirs = defaultdict(lambda: {'weight': 100, 'is_absolute': False})
     specific_images = defaultdict(lambda: {'weight': 100, 'is_absolute': False})
     ignored_dirs = []
@@ -356,16 +356,16 @@ def main(input_files, test_iterations=None, mode=(), total_weight=10000):
     all_image_paths, weights = calculate_weights(image_dirs, specific_images, ignored_dirs, mode, total_weight)
 
     if test_iterations:
-        test_distribution(all_image_paths, weights, test_iterations)
+        test_distribution(all_image_paths, weights, test_iterations, mode, is_random)
     else:
         root = tk.Tk()
-        slideshow = ImageSlideshow(root, all_image_paths, weights, mode)
+        slideshow = ImageSlideshow(root, all_image_paths, weights, mode, is_random)
         root.mainloop()
 
 if __name__ == "__main__":
     if args.run:
         input_files = args.input_file.split('+') if args.input_file else []
-        main(input_files, mode=args.mode, total_weight=args.total_weight)
+        main(input_files, mode=args.mode, is_random=args.random, total_weight=args.total_weight)
     elif args.test:
         input_files = args.input_file.split('+') if args.input_file else []
-        main(input_files, test_iterations=args.test, mode=args.mode, total_weight=args.total_weight)
+        main(input_files, test_iterations=args.test, mode=args.mode, is_random=args.random, total_weight=args.total_weight)
