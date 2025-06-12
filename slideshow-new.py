@@ -12,6 +12,8 @@ from PIL import Image, ImageTk
 
 # Constants
 TOTAL_WEIGHT = 1000000
+PARENT_STACK_MAX = 5
+QUEUE_LENGTH_MAX = 10
 
 
 # Argument parsing setup
@@ -69,17 +71,21 @@ args = parser.parse_args()
 
 
 class ImageSlideshow:
-    def __init__(self, root, image_paths, weights, defaults):
+    def __init__(self, root, image_paths, weights, tree, defaults):
         self.root = root
         self.image_paths = image_paths
         self.weights = weights
+        self.tree = tree
         self.original_image_paths = image_paths
         self.number_of_images = len(image_paths)
         self.current_image_index = 0
         self.original_weights = weights
-        self.history = deque(maxlen=10)
-        self.forward_history = deque(maxlen=10)
+        self.subFolderStack = Stack(1)
+        self.parentFolderStack = Stack(PARENT_STACK_MAX)
+        self.history = deque(maxlen=QUEUE_LENGTH_MAX)
+        self.forward_history = deque(maxlen=QUEUE_LENGTH_MAX)
         self.subfolder_mode = False
+        self.parent_mode = False
         self.show_filename = False
 
         self.screen_width = root.winfo_screenwidth()
@@ -97,7 +103,10 @@ class ImageSlideshow:
         self.label = tk.Label(root, bg="black")  # Set label background to black
         self.label.pack()
 
-        self.filename_label = tk.Label(self.root, bg="black", fg="white", anchor="nw")
+        # self.filename_label = tk.Label(self.root, bg="black", fg="white", anchor="nw")
+        
+        self.filename_label = tk.Text(self.root, bg='black', fg='white', height=1, wrap='none', bd=0, highlightthickness=0)
+        self.filename_label.config(state=tk.DISABLED)
         self.mode_label = tk.Label(self.root, bg="black", fg="white", anchor="ne")
 
         self.root.attributes("-fullscreen", True)
@@ -107,9 +116,13 @@ class ImageSlideshow:
         self.root.bind("<Right>", self.next_image_forward)
         self.root.bind("<Delete>", self.delete_image)
         self.root.bind("<s>", self.toggle_subfolder_mode)
+        self.root.bind("<p>", self.follow_branch_down)
+        self.root.bind("<o>", self.follow_branch_up)
+        self.root.bind("<i>", self.step_backwards)
+        self.root.bind("<u>", self.reset_parent_mode)
         self.root.bind("<n>", self.toggle_filename_display)
-        self.root.bind("<r>", self.toggle_random_mode)
-        self.root.bind("<o>", self.rotate_image)
+        self.root.bind("<c>", self.toggle_random_mode)
+        self.root.bind("<r>", self.rotate_image)
         self.show_image()
 
     def show_image(self, image_path=None):
@@ -188,38 +201,220 @@ class ImageSlideshow:
                 except Exception as e:
                     messagebox.showerror("Error", f"Could not delete the image: {e}")
 
+    def subfolder_mode_on(self):
+        current_dir = os.path.dirname(self.current_image_path)
+
+        self.subFolderStack.push(current_dir, self.image_paths, self.weights)
+
+        temp_image_paths = [
+            path for path in self.image_paths if path.startswith(current_dir)
+        ]
+        temp_weights = [
+            self.weights[i]
+            for i, path in enumerate(self.image_paths)
+            if path.startswith(current_dir)
+        ]
+
+        self.image_paths = temp_image_paths
+        self.weights = temp_weights
+
+        self.number_of_images = len(
+            self.image_paths
+        )  # Update the number of images for the subfolder
+        self.current_image_index = self.image_paths.index(
+            self.current_image_path
+        )
+        self.subfolder_mode = True
+    
+    def subfolder_mode_off(self):
+        current_dir, self.image_paths, self.weights = self.subFolderStack.pop()
+        self.number_of_images = len(
+            self.image_paths
+        )  # Update the number of images for the full set
+        self.current_image_index = self.image_paths.index(
+            self.current_image_path
+        )  # Update to the current image index
+        self.subfolder_mode = False
+
     def toggle_subfolder_mode(self, event=None):
         if not self.subfolder_mode:
-            current_dir = os.path.dirname(self.current_image_path)
-            self.image_paths = [
-                path
-                for path in self.original_image_paths
-                if path.startswith(current_dir)
-            ]
-            self.weights = [
-                self.original_weights[i]
-                for i, path in enumerate(self.original_image_paths)
-                if path.startswith(current_dir)
-            ]
+            self.subfolder_mode_on()
+        else:
+            self.subfolder_mode_off()
+        self.show_image(self.current_image_path)
+        self.update_filename_display()
+
+    def follow_branch_down(self, event=None):
+        """Move down one level in the tree and update the slideshow."""
+        
+        if self.parentFolderStack.is_full(): # Test for S0                         
+            print("S0 - Doing nothing")
+            return    
+            
+        if self.subfolder_mode and self.parent_mode: # S4
+            self.subfolder_mode_off()
+            self.show_image(self.current_image_path)
+            self.update_filename_display()
+            return
+                        
+        if not self.parent_mode: # S2
+            current_path = os.path.dirname(self.current_image_path)
+            current_path_level = level_of(current_path)
+            for i in range(current_path_level - 1, 1, -1):             
+                parent_level = i
+                parent_path = truncate_path(current_path, parent_level)
+                if contains_subdirectory(parent_path) > 1 or contains_files:
+                    break
+                
+            self.parentFolderStack.push(
+                parent_path, self.original_image_paths, self.original_weights
+            )
+        else: # S3
+            previous_path = self.parentFolderStack.read_top()
+            parent_level = level_of(previous_path) - 1
+            parent_path = truncate_path(previous_path, parent_level)
+            if parent_path == self.parentFolderStack.read_top(2):
+                self.step_backwards()
+                return
+            
+            self.parentFolderStack.push(parent_path, self.image_paths, self.weights)
+
+        if os.path.isdir(parent_path):
+
+            parent_image_dirs = {}
+            self.image_paths = []
+            self.weights = []
+
+            parent_tree = Tree(defaults.mode[1])
+            parent_image_dirs[parent_path] = {
+                "weight": 100,
+                "is_percentage": True,
+                "balance_level": defaults.mode[1],
+                "depth": defaults.depth,
+            }
+            parent_tree.build_tree(parent_image_dirs, None, defaults)
+            self.image_paths, self.weights = (
+                parent_tree.extract_image_paths_and_weights_from_tree()
+            )
             self.number_of_images = len(
                 self.image_paths
             )  # Update the number of images for the subfolder
             self.current_image_index = (
                 0  # Reset the current image index for the subfolder
             )
-            self.subfolder_mode = True
+            self.parent_mode = True
+            self.subfolder_mode = False
+            self.subFolderStack.clear()
+
+            self.show_image(self.current_image_path)
+            self.update_filename_display()
         else:
-            self.image_paths = self.original_image_paths
-            self.weights = self.original_weights
-            self.number_of_images = len(
-                self.image_paths
-            )  # Update the number of images for the full set
+            print("No parent branch found.")
+
+    def follow_branch_up(self, event=None):
+        """Move up one level in the tree and update the slideshow."""
+        if self.parentFolderStack.is_full() or not self.parent_mode: # Test for S0 or trying to move up when not in parent_mode                  
+            print("S0 - Doing nothing")
+            return 
+            
+        if self.subfolder_mode and not self.parentFolderStack.is_empty(): # S4
+            self.subfolder_mode_off()
+            self.show_image(self.current_image_path)
+            self.update_filename_display()
+            return
+        
+        # if not self.parent_mode: # S2
+        current_path = os.path.dirname(self.current_image_path)
+        current_top = self.parentFolderStack.read_top()
+        if contains_subdirectory(current_top):
+            current_path_level = level_of(current_top)            
+            parent_level = current_path_level + 1
+            parent_path = truncate_path(current_path, parent_level)
+            
+            if parent_path == self.parentFolderStack.read_top(2):
+                self.step_backwards()
+                return
+            
+            self.parentFolderStack.push(
+                parent_path, self.original_image_paths, self.original_weights
+            )
+            # else: # S3
+            #     previous_path = self.parentFolderStack.read_top()
+            #     parent_level = level_of(previous_path) + 1
+            #     parent_path = truncate_path(previous_path, parent_level)
+            #     self.parentFolderStack.push(parent_path, self.image_paths, self.weights)
+
+            if os.path.isdir(parent_path):
+
+                parent_image_dirs = {}
+                self.image_paths = []
+                self.weights = []
+
+                parent_tree = Tree(defaults.mode[1])
+                parent_image_dirs[parent_path] = {
+                    "weight": 100,
+                    "is_percentage": True,
+                    "balance_level": defaults.mode[1],
+                    "depth": defaults.depth,
+                }
+                parent_tree.build_tree(parent_image_dirs, None, defaults)
+                self.image_paths, self.weights = (
+                    parent_tree.extract_image_paths_and_weights_from_tree()
+                )
+                self.number_of_images = len(
+                    self.image_paths
+                )  # Update the number of images for the subfolder
+                self.current_image_index = (
+                    0  # Reset the current image index for the subfolder
+                )
+                self.parent_mode = True
+                self.subfolder_mode = False
+                self.subFolderStack.clear()
+
+                self.show_image(self.current_image_path)
+                self.update_filename_display()
+        else:
+            print("No parent branch found.")
+
+    def step_backwards(self, event=None):
+        """Move back in the history and update the slideshow."""
+        current_path, self.image_paths, self.weights = self.parentFolderStack.pop()
+        self.number_of_images = len(
+            self.image_paths
+        )  # Update the number of images for the full set
+        try:
             self.current_image_index = self.image_paths.index(
                 self.current_image_path
             )  # Update to the current image index
-            self.subfolder_mode = False
+        except ValueError:
+            self.current_image_index = random.randint(0, self.number_of_images - 1)
+            self.current_image_path = self.image_paths[self.current_image_index]
+        if self.parentFolderStack.is_empty():
+            self.parent_mode = False
+        self.subfolder_mode = False
+
         self.show_image(self.current_image_path)
         self.update_filename_display()
+            
+    def reset_parent_mode(self, event=None):
+        if self.parent_mode:
+            self.image_paths, self.weights = self.original_image_paths, self.original_weights
+            self.number_of_images = len(
+                self.image_paths
+            )  # Update the number of images for the full set
+            try:
+                self.current_image_index = self.image_paths.index(
+                    self.current_image_path
+                )  # Update to the current image index
+            except ValueError:
+                self.current_image_index = random.randint(0, self.number_of_images - 1)
+                self.current_image_path = self.image_paths[self.current_image_index]
+            self.parentFolderStack.clear()
+            self.parent_mode = False
+            self.subfolder_mode = False
+            
+            self.show_image(self.current_image_path)
+            self.update_filename_display()
 
     def toggle_filename_display(self, event=None):
         self.show_filename = not self.show_filename
@@ -227,9 +422,47 @@ class ImageSlideshow:
 
     def update_filename_display(self):
         if self.show_filename:
-            filename_text = f"{self.current_image_path}"
-            self.filename_label.config(text=filename_text)
+            fixed_colour = None
+            self.filename_label.config(state=tk.NORMAL)
+            # Clear the previous text
+            self.filename_label.delete("1.0", tk.END)
+
+            # Determine the filename display text and color scheme
+            if self.subfolder_mode:
+                fixed_path = self.subFolderStack.read_top()
+                fixed_colour = 'tomato'      
+            elif self.parent_mode:
+                fixed_path = self.parentFolderStack.read_top()  # The "fixed" portion of the path
+                fixed_colour = 'gold'      
+            if fixed_colour:
+                if self.current_image_path.startswith(fixed_path):
+                    fixed_portion = fixed_path
+                    remaining_portion = self.current_image_path[len(fixed_path):]
+                else:
+                    fixed_portion = ""
+                    remaining_portion = self.current_image_path
+
+                self.filename_label.insert(tk.END, fixed_portion, "fixed")
+                self.filename_label.insert(tk.END, remaining_portion, "normal")
+            else:
+                # In normal mode, the entire filename is in white
+                self.filename_label.insert(tk.END, self.current_image_path, "normal")
+                fixed_colour = 'white'
+
+            # Apply the tags for coloring
+            self.filename_label.tag_configure("fixed", foreground=fixed_colour)
+            self.filename_label.tag_configure("normal", foreground="white")
+
+            # Set the filename label position
             self.filename_label.place(x=0, y=0)
+            self.filename_label.config(height=1, width=len(self.current_image_path) + 10, bg='black')
+
+            # Disable the text widget to prevent editing
+            self.filename_label.config(state=tk.DISABLED)
+            
+            # filename_text = f"{self.current_image_path}"
+            # self.filename_label.config(text=filename_text)
+            # self.filename_label.place(x=0, y=0)
 
             if self.mode == "random":
                 mode_text = "R"
@@ -244,6 +477,16 @@ class ImageSlideshow:
                     self.image_paths.index(self.current_image_path) + 1
                 )  # Current index in the subfolder
                 mode_text = f"({subfolder_current_image_index}/{subfolder_number_of_images}) {mode_text}"
+            elif self.parent_mode:
+                mode_text += " P" + str(self.parentFolderStack.len())
+                # mode_text = "(" + str(self.parentFolderStack.read_top()) +") " + mode_text + " P" + str(self.parentFolderStack.len())
+                parent_number_of_images = len(
+                    self.image_paths
+                )  # Number of images in the subfolder
+                parent_current_image_index = (
+                    self.image_paths.index(self.current_image_path) + 1
+                )  # Current index in the subfolder
+                mode_text = f"({parent_current_image_index}/{parent_number_of_images}) {mode_text}"
             else:
                 mode_text = f"({self.current_image_index + 1}/{self.number_of_images}) {mode_text}"
 
@@ -273,10 +516,6 @@ class Tree:
         self.balance_level = balance_level  # Store the balance level
         self.trunks = {}  # Dictionary to store multiple trunks
 
-    def truncate_path(self, path):
-        """Truncate the path based on the balance level."""
-        return "\\".join(path.split("\\")[: self.balance_level])
-
     def add_trunk(self, trunk):
         """Add a new trunk if it doesn't exist."""
         if trunk not in self.trunks:
@@ -292,10 +531,16 @@ class Tree:
             return self.trunks[trunk].get(branch_path, None)
         return None
 
+    def get_parent_branch(self, path, levels_up=1):
+        """Retrieve all branches at a parent level."""
+        truncated_path = truncate_path(path, levels_up)
+        parent_branch = self.extract_trunk(truncated_path)
+        return parent_branch
+
     def append_overwrite_or_update(self, full_branch_path, depth, data):
         """Append, overwrite, or update a branch based on the full branch path, with support for virtual folders."""
         # Automatically determine the trunk based on the balance level
-        trunk = self.truncate_path(full_branch_path)
+        trunk = truncate_path(full_branch_path, self.balance_level)
 
         # Ensure the trunk exists
         self.add_trunk(trunk)
@@ -369,7 +614,51 @@ class Tree:
                 total_branches += 1
         return total_images / total_branches if total_branches > 0 else 0
 
-    def build_image_paths_and_weights(self):
+    def build_tree(self, image_dirs, specific_images, defaults):
+        """
+        Read image_dirs and specific_images and build a tree
+        """
+        # Assign weights to image folders
+
+        for path, data in image_dirs.items():
+            depth = data["depth"] or defaults.depth
+            for root, dirs, files in os.walk(path):
+                result = filters.passes(root)
+                if result == 0:
+                    images = [
+                        os.path.join(root, f)
+                        for f in files
+                        if f.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp"))
+                    ]
+                    if images:
+                        self.append_overwrite_or_update(
+                            root,
+                            depth,
+                            {
+                                "weight": data["weight"],
+                                "is_percentage": data["is_percentage"],
+                                "images": images,
+                            },
+                        )
+                elif result == 1:
+                    del dirs[:]
+
+        if specific_images:
+            num_average_images = int(self.average_images_in_tree())
+            for path, data in specific_images.items():
+                is_percentage = data["is_percentage"]
+                self.append_overwrite_or_update(
+                    path,
+                    depth,
+                    {
+                        "weight": data["weight"],
+                        "is_percentage": data["is_percentage"],
+                        "images": [path]
+                        * (num_average_images if is_percentage else data["weight"]),
+                    },
+                )
+
+    def extract_image_paths_and_weights_from_tree(self):
         """Iterate through the tree to build all_image_paths and weights."""
         all_image_paths = []
         weights = []
@@ -475,29 +764,134 @@ class Filters:
         self.must_contain = []
         self.must_not_contain = []
         self.ignored_dirs = []
-        
+
     def add_must_contain(self, keyword):
         self.must_contain.append(keyword)
-    
+
     def add_must_not_contain(self, keyword):
         self.must_not_contain.append(keyword)
-        
+
     def add_ignored_dir(self, directory):
         self.ignored_dirs.append(directory)
-        
+
     def passes(self, path):
-        if any(os.path.normpath(path) == os.path.normpath(ignored_dir) for ignored_dir in self.ignored_dirs):
+        if any(
+            os.path.normpath(path) == os.path.normpath(ignored_dir)
+            for ignored_dir in self.ignored_dirs
+        ):
             return 1
-        
+
         if any(keyword in path for keyword in self.must_not_contain):
             return 2
-        
-        if self.must_contain and not any(keyword in path for keyword in self.must_contain):
+
+        if self.must_contain and not any(
+            keyword in path for keyword in self.must_contain
+        ):
             return 2
-        
+
         return 0
+
+
+class Stack:
+    def __init__(self, max_size=None):
+        """
+        Initialize a new Stack.
+
+        Args:
+            max_size (int, optional): The maximum number of items the stack can hold.
+                                      If None, the stack size is unlimited.
+        """
+        self.max_size = max_size
+        self.stack = []
+
+    def push(self, root, listA, listB):
+        """
+        Push a pair of lists onto the stack.
+
+        Args:
+            listA (list): The first list to be pushed onto the stack.
+            listB (list): The second list to be pushed onto the stack.
+        """
+        if self.max_size is None or len(self.stack) < self.max_size:
+            self.stack.append((root, listA, listB))
+        else:
+            print("Stack is full. Cannot push more items.")
+
+    def pop(self):
+        """
+        Pop the top pair of lists off the stack.
+
+        Returns:
+            tuple: A tuple containing the two lists that were on top of the stack.
+        """
+        if self.stack:
+            return self.stack.pop()
+        else:
+            print("Stack is empty. Cannot pop items.")
+            return None, None, None  # Return empty lists if the stack is empty
         
-        
+    def read_top(self, index=1):
+        if self.stack:
+            return self.stack[len(self.stack)-index][0]
+
+    def clear(self):
+        """Clear the stack."""
+        self.stack.clear()
+
+    def len(self):
+        return len(self.stack)
+
+    def is_empty(self):
+        """Check if the stack is empty."""
+        return len(self.stack) == 0
+
+    def is_full(self):
+        """Check if the stack is full."""
+        if self.max_size is None:
+            return False
+        return len(self.stack) >= self.max_size
+
+
+# Utility functions
+def level_of(path):
+    return len([item for item in path.split(os.sep) if item != ""])
+
+def truncate_path(path, levels_up):
+    """Truncate the path based on the balance level."""
+    return "\\".join(
+        path.split("\\")[
+            : ((level_of(path) - levels_up) if levels_up < 0 else levels_up)
+        ]
+    )
+
+def contains_subdirectory(path):
+    for root, directories, files in os.walk(path):
+        if directories:
+            return len(directories)
+    return False
+
+def contains_files(path):
+    for root, directories, files in os.walk(path):
+        if files:
+            return True
+    return False
+
+def find_input_file(input_filename, additional_search_paths=[]):
+    # List of potential directories to search
+    possible_locations = [
+        os.path.dirname(os.path.abspath(__file__)),  # Script's directory
+        os.getcwd(),  # Current working directory
+        *additional_search_paths,  # Additional paths (e.g., main input file's directory)
+        os.path.join(os.getcwd(), 'config'),  # Fixed "config" folder in the current working directory
+    ]
+    
+    for location in possible_locations:
+        potential_path = os.path.join(location, input_filename)
+        if os.path.isfile(potential_path):
+            return potential_path
+
+    return None
+
 def parse_input_file(input_file, defaults):
     image_dirs = {}
     specific_images = {}
@@ -582,7 +976,9 @@ def parse_input_file(input_file, defaults):
 
             # Handle directory or specific image
             if path == "*":
-                defaults.set_global_defaults(mode=("balanced", balance_level), depth=depth)
+                defaults.set_global_defaults(
+                    mode=("balanced", balance_level), depth=depth
+                )
             elif os.path.isdir(path):
                 image_dirs[path] = {
                     "weight": weight,
@@ -602,65 +998,6 @@ def parse_input_file(input_file, defaults):
 
     return image_dirs, specific_images
 
-def calculate_weights(image_dirs, specific_images, defaults):
-    """
-    Calculate weights of all images in folders in folders_data, and specified_images
-    """
-
-    all_image_paths = []
-    weights = []
-
-    if defaults.mode[0] == "weighted":
-        mode = ("balanced", 1)
-    else:
-        mode = defaults.mode
-    mode_depth = mode[1]
-
-    # Assign weights to image folders
-    tree = Tree(mode_depth)
-
-    for path, data in image_dirs.items():
-        depth = data["depth"] or defaults.depth
-        for root, dirs, files in os.walk(path):
-            result = filters.passes(root)
-            if result == 0:
-                images = [
-                    os.path.join(root, f)
-                    for f in files
-                    if f.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp"))
-                ]
-                if images:
-                    tree.append_overwrite_or_update(
-                        root,
-                        depth,
-                        {
-                            "weight": data["weight"],
-                            "is_percentage": data["is_percentage"],
-                            "images": images,
-                        },
-                    )
-            elif result == 1:
-                del dirs[:]
-
-    if specific_images:
-        num_average_images = int(tree.average_images_in_tree())
-        for path, data in specific_images.items():
-            is_percentage = data["is_percentage"]
-            tree.append_overwrite_or_update(
-                path,
-                depth,
-                {
-                    "weight": data["weight"],
-                    "is_percentage": data["is_percentage"],
-                    "images": [path]
-                    * (num_average_images if is_percentage else data["weight"]),
-                },
-            )
-
-    all_image_paths, weights = tree.build_image_paths_and_weights()
-
-    return all_image_paths, weights
-
 
 def test_distribution(image_paths, weights, iterations, testdepth, defaults):
     hit_counts = defaultdict(int)
@@ -673,7 +1010,10 @@ def test_distribution(image_paths, weights, iterations, testdepth, defaults):
 
     directory_counts = defaultdict(int)
     for path, count in hit_counts.items():
-        directory = os.path.dirname(path)
+        if os.path.isfile(path):
+            directory = os.path.dirname(path)
+        else:
+            directory = path
         directory_counts[directory] += count
 
     total_images = len(image_paths)
@@ -689,22 +1029,38 @@ def main(input_files, defaults, test_iterations=None, testdepth=None):
     image_dirs = {}
     specific_images = {}
 
+    # Read input file(s) and create image_dirs and specific_images dictionaries
+
     for input_filename in input_files:
-        if os.path.isfile(input_filename):
+        additional_search_paths = [os.path.dirname(input_filename)]
+        input_filename_full = find_input_file(input_filename, additional_search_paths)
+        if input_filename_full:
             sub_image_dirs, sub_specific_images = parse_input_file(
-                input_filename, defaults
+                input_filename_full, defaults
             )
             image_dirs.update(sub_image_dirs)
             specific_images.update(sub_specific_images)
+        else:
+            print("Input file %T not found.", input_filename)
 
     if not image_dirs and not specific_images:
         raise ValueError(
             "No images found in the provided directories and specific images."
         )
         sys.exit()
-    all_image_paths, weights = calculate_weights(
-        image_dirs, specific_images, defaults
-    )
+
+    # ('weighted', x) is functionally identical to ('balanced', 1)
+    if defaults.mode[0] == "weighted":
+        mode = ("balanced", 1)
+    else:
+        mode = defaults.mode
+
+    tree = Tree(mode[1])  # instantiate tree
+    tree.build_tree(image_dirs, specific_images, defaults)
+
+    # pull image paths and calculated weights lists from tree
+    all_image_paths, weights = tree.extract_image_paths_and_weights_from_tree()
+    print("Finished --- %s seconds ---" % (time.time() - start_time))
 
     if test_iterations:
         test_distribution(
@@ -713,11 +1069,9 @@ def main(input_files, defaults, test_iterations=None, testdepth=None):
     else:
         root = tk.Tk()
         slideshow = ImageSlideshow(  # noqa: F841
-            root, all_image_paths, weights, defaults
+            root, all_image_paths, weights, tree, defaults
         )  # noqa: F841
         root.mainloop()
-
-    print("Finished --- %s seconds ---" % (time.time() - start_time))
 
 
 if __name__ == "__main__":
