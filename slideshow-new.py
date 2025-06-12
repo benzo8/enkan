@@ -12,10 +12,11 @@ parser = argparse.ArgumentParser(description='Create a slideshow from a list of 
 parser.add_argument('--input_file', '-i', metavar='input_file', nargs='?', type=str, help='Input file or Folder to build')
 parser.add_argument('--run', dest='run', action='store_true', help='Run the slideshow')
 parser.add_argument('--test', metavar='N', type=int, help='Run the test with N iterations')
+parser.add_argument('--random', action='store_true', help='Start in Completely Random mode')
 args = parser.parse_args()
 
 class ImageSlideshow:
-    def __init__(self, root, image_paths, weights):
+    def __init__(self, root, image_paths, weights, completely_random):
         self.root = root
         self.image_paths = image_paths
         self.weights = weights
@@ -25,12 +26,14 @@ class ImageSlideshow:
         self.forward_history = deque(maxlen=10)
         self.subfolder_mode = False
         self.show_filename = False
+        self.completely_random = completely_random
         
         self.root.configure(background='black')  # Set root background to black
         self.label = tk.Label(root, bg='black')  # Set label background to black
         self.label.pack()
         
         self.filename_label = tk.Label(self.root, bg='black', fg='white', anchor='nw')
+        self.mode_label = tk.Label(self.root, bg='black', fg='white', anchor='ne')
         
         self.root.attributes("-fullscreen", True)
         self.root.bind('<space>', self.next_image)
@@ -40,11 +43,15 @@ class ImageSlideshow:
         self.root.bind('<Delete>', self.delete_image)
         self.root.bind('<s>', self.toggle_subfolder_mode)
         self.root.bind('<n>', self.toggle_filename_display)
+        self.root.bind('<r>', self.toggle_random_mode)
         self.show_image()
     
     def show_image(self, image_path=None):
         if image_path is None:
-            image_path = random.choices(self.image_paths, weights=self.weights, k=1)[0]
+            if self.completely_random:
+                image_path = random.choice(self.image_paths)
+            else:
+                image_path = random.choices(self.image_paths, weights=self.weights, k=1)[0]
             self.history.append(image_path)
             self.forward_history.clear()  # Clear forward history when a new image is shown
         self.current_image_path = image_path
@@ -107,6 +114,7 @@ class ImageSlideshow:
             self.weights = self.original_weights[:]
             self.subfolder_mode = False
         self.show_image(self.current_image_path)
+        self.update_filename_display()
     
     def toggle_filename_display(self, event=None):
         self.show_filename = not self.show_filename
@@ -116,8 +124,19 @@ class ImageSlideshow:
         if self.show_filename:
             self.filename_label.config(text=self.current_image_path)
             self.filename_label.place(x=0, y=0)
+            
+            mode_text = 'R' if self.completely_random else 'W'
+            if self.subfolder_mode:
+                mode_text = 'S'
+            self.mode_label.config(text=mode_text)
+            self.mode_label.place(x=self.root.winfo_screenwidth(), y=0, anchor='ne')
         else:
             self.filename_label.place_forget()
+            self.mode_label.place_forget()
+    
+    def toggle_random_mode(self, event=None):
+        self.completely_random = not self.completely_random
+        self.update_filename_display()
 
     def exit_slideshow(self, event=None):
         self.root.destroy()
@@ -228,7 +247,7 @@ def parse_input_file(input_file):
                     specific_images[line] += 100  # Default weight to 100%
     return image_dirs, ignored_dirs, specific_images
 
-def main(input_files, test_iterations=None):
+def main(input_files, test_iterations=None, completely_random=False):
     image_dirs = []
     ignored_dirs = []
     specific_images = defaultdict(int)
@@ -251,13 +270,13 @@ def main(input_files, test_iterations=None):
         test_distribution(all_image_paths, weights, test_iterations)
     else:
         root = tk.Tk()
-        slideshow = ImageSlideshow(root, all_image_paths, weights)
+        slideshow = ImageSlideshow(root, all_image_paths, weights, completely_random)
         root.mainloop()
 
 if __name__ == "__main__":
     if args.run:
         input_files = args.input_file.split('+') if args.input_file else []
-        main(input_files)
+        main(input_files, completely_random=args.random)
     elif args.test:
         input_files = args.input_file.split('+') if args.input_file else []
-        main(input_files, test_iterations=args.test)
+        main(input_files, test_iterations=args.test, completely_random=args.random)
