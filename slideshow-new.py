@@ -10,6 +10,9 @@ from tkinter import messagebox
 
 from PIL import Image, ImageTk
 
+# Constants
+TOTAL_WEIGHT = 1000000
+
 
 # Argument parsing setup
 class ModeAction(argparse.Action):
@@ -57,12 +60,6 @@ parser.add_argument(
 )
 parser.add_argument(
     "--random", action="store_true", help="Start in Completely Random mode"
-)
-parser.add_argument(
-    "--total_weight",
-    type=int,
-    default=1000000,
-    help="Total weight to be distributed among all images",
 )
 parser.add_argument(
     "--test", metavar="N", type=int, help="Run the test with N iterations"
@@ -273,278 +270,341 @@ class ImageSlideshow:
         self.root.destroy()
 
 
+class Tree:
+    def __init__(self, balance_level):
+        self.balance_level = balance_level  # Store the balance level
+        self.trunks = {}  # Dictionary to store multiple trunks
+
+    def truncate_path(self, path):
+        """Truncate the path based on the balance level."""
+        return "\\".join(path.split("\\")[: self.balance_level])
+
+    def add_trunk(self, trunk):
+        """Add a new trunk if it doesn't exist."""
+        if trunk not in self.trunks:
+            self.trunks[trunk] = {}
+
+    def extract_trunk(self, trunk):
+        """Extract the specified trunk."""
+        return self.trunks.get(trunk, None)
+
+    def extract_branch(self, trunk, branch_path):
+        """Extract a specific branch from a specific trunk."""
+        if trunk in self.trunks:
+            return self.trunks[trunk].get(branch_path, None)
+        return None
+
+    def append_overwrite_or_update(self, full_branch_path, depth, data):
+        """Append, overwrite, or update a branch based on the full branch path, with support for virtual folders."""
+        # Automatically determine the trunk based on the balance level
+        trunk = self.truncate_path(full_branch_path)
+
+        # Ensure the trunk exists
+        self.add_trunk(trunk)
+
+        # Determine the depth of the current branch
+        current_depth = len(full_branch_path.split("\\"))
+
+        # If the current depth is at or above the specified depth, move to a virtual folder
+        if current_depth >= depth:
+            virtual_folder = self.trunks[trunk].setdefault(
+                "virtual-folder",
+                {"weight": data["weight"], "is_percentage": True, "images": []},
+            )
+            virtual_folder["images"].extend(data.get("images", []))
+            # virtual_folder["weight"] += data["weight"]  # Optionally adjust the weight based on the new data
+            virtual_folder["is_percentage"] = (
+                virtual_folder["is_percentage"] or data["is_percentage"]
+            )
+        else:
+            # If the branch exists, update the data; otherwise, add the new branch
+            if full_branch_path in self.trunks[trunk]:
+                existing_data = self.trunks[trunk][full_branch_path]
+                existing_data.update(data)
+                self.trunks[trunk][full_branch_path] = existing_data
+            else:
+                self.trunks[trunk][full_branch_path] = data
+
+        # Handle small folders
+        if len(data.get("images", [])) < 25 and current_depth < depth:
+            small_folder = self.trunks[trunk].setdefault(
+                "small-folder",
+                {"weight": data["weight"], "is_percentage": True, "images": []},
+            )
+            small_folder["images"].extend(data.get("images", []))
+            # small_folder["weight"] += data["weight"]  # Optionally adjust the weight based on the new data
+            small_folder["is_percentage"] = (
+                small_folder["is_percentage"] or data["is_percentage"]
+            )
+
+    def branches_in_trunk(self, trunk):
+        """Return the number of branches within a given trunk."""
+        branches = self.extract_trunk(trunk)
+        return len(branches) if branches else 0
+
+    def leaves_in_branch(self, trunk, branch_path):
+        """Return the number of leaves (images) within a given branch."""
+        branch = self.extract_branch(trunk, branch_path)
+        return len(branch.get("images", [])) if branch else 0
+
+    def average_images_in_trunk(self, trunk):
+        """Calculate the average number of images in a trunk."""
+        branches = self.extract_trunk(trunk)
+        if not branches:
+            return 0  # Return 0 if there are no branches in the trunk
+
+        total_images = sum(
+            len(branch_data.get("images", [])) for branch_data in branches.values()
+        )
+        num_branches = len(branches)
+
+        return total_images / num_branches if num_branches > 0 else 0
+
+    def average_images_in_tree(self):
+        """Calculate the average number of images across the entire tree."""
+        total_images = 0
+        total_branches = 0
+
+        for trunk, branches in self.trunks.items():
+            for branch_data in branches.values():
+                total_images += len(branch_data.get("images", []))
+                total_branches += 1
+        return total_images / total_branches if total_branches > 0 else 0
+
+    def build_image_paths_and_weights(self):
+        """Iterate through the tree to build all_image_paths and weights."""
+        all_image_paths = []
+        weights = []
+
+        for trunk, branches in self.trunks.items():
+            num_branches = len(branches)
+            for branch, data in branches.items():
+                image_list = data.get("images", [])
+
+                is_percentage = data.get("is_percentage", True)
+                if is_percentage:
+                    number_of_images = len(image_list)
+                    branch_weight = data.get("weight", 100) / 100
+
+                else:
+                    number_of_images = data.get("weight", 100)
+                    branch_weight = 1
+                normalised_weight = (
+                    (TOTAL_WEIGHT / num_branches) / (number_of_images) * (branch_weight)
+                )
+
+                all_image_paths.extend(image_list)
+                weights.extend([normalised_weight] * number_of_images)
+
+        return all_image_paths, weights
+
+    def print_tree(self):  # Utility method to print the tree structure (for debugging)
+        for trunk, branches in self.trunks.items():
+            print(f"Trunk: {trunk}")
+            for branch, data in branches.items():
+                print(f"  Branch: {branch}")
+                for key, value in data.items():
+                    print(f"    {key}: {value}")
+
+
 def parse_input_file(input_file):
-    """Read in input file(s)
-    Interpret in-line modifiers
-
-    Return:
-        image_dirs - dictionary of top-level image directories, as per input files(s)
-        specific_images - dictionary of individually specified images
-        ignored_dirs - list of directories to be ignored
-    """
-
-    image_dirs = defaultdict(lambda: {"weight": 100, "is_absolute": False})
-    specific_images = defaultdict(lambda: {"weight": 100, "is_absolute": False})
-    specific_images = defaultdict(
-        lambda: {"weight": default_weight, "is_absolute": False, "mode": default_mode}
+    image_dirs = defaultdict(
+        lambda: {
+            "weight": 100,
+            "is_percentage": True,
+            "balance_level": None,
+            "depth": None,
+        }
     )
-    ignored_dirs = []
+    specific_images = defaultdict(
+        lambda: {
+            "weight": 100,
+            "is_percentage": True,
+            "balance_level": None,
+            "depth": None,
+        }
+    )
+    filters = {
+        "must_contain": [],  # List of keywords that must be present in the path
+        "must_not_contain": [],  # List of keywords that must NOT be present in the path
+        "ignored_dirs": [],  # List of absolute directories to ignore
+    }
+
+    modifier_pattern = re.compile(r"(\[.*?\])")
+    weight_pattern = re.compile(r"^\d+%?$")
+    balance_pattern = re.compile(r"^b\d+$", re.IGNORECASE)
+    depth_pattern = re.compile(r"^d\d+$", re.IGNORECASE)
 
     with open(input_file, "r", encoding="utf-8") as f:
         content = f.readlines()
         for line in content:
-            line = line.replace('"', "").strip()
-            if line.startswith("[l]"):
-                subfile = os.path.join(os.path.split(input_file)[0], line[3:].strip())
-                if os.path.isfile(subfile):
-                    sub_image_dirs, sub_specific_images, sub_ignored_dirs = (
-                        parse_input_file(subfile)
-                    )
-                    image_dirs.update(sub_image_dirs)
-                    specific_images.update(sub_specific_images)
-                    ignored_dirs.extend(sub_ignored_dirs)
-            elif line.startswith("[-]"):
-                ignored_dirs.append(line[3:].strip())
-            elif os.path.isdir(line):
-                image_dirs[line] = {"weight": 100, "is_absolute": False}
-            else:
-                matches = re.match(r"\[(\d+)(%?)\](.*)", line)
-                if matches:
-                    weight = int(matches[1])
-                    is_percentage = matches[2] == "%"
-                    path = matches[3].strip()
-                    if os.path.isdir(path):
-                        image_dirs[path] = {
-                            "weight": weight,
-                            "is_absolute": not is_percentage,
-                        }
-                    else:
-                        specific_images[path] = {
-                            "weight": weight,
-                            "is_absolute": not is_percentage,
-                        }
-                elif os.path.isfile(line):
-                    specific_images[line] = {"weight": 100, "is_absolute": False}
+            line = line.strip()
 
-    return image_dirs, specific_images, ignored_dirs
-
-
-def what_level_is(current_path):
-    """Return:
-    directory level of current_path where 1 is root of drive
-    """
-
-    return len([item for item in current_path.split(os.sep) if item != ""])
-
-
-def truncate_path(path, depth):
-    truncated_path = "\\".join(path.split("\\")[:depth])
-    return truncated_path
-
-
-def build_folder_lists(image_dirs, ignored_dirs=None, scan_subfolders=True):
-    """Recursively build directory of folders in image_dirs
-    Ignore folders in ignored_dirs
-
-    Returns:
-        folder_data - dictionary of all folders to be included in slideshow
-    """
-
-    if ignored_dirs is None:
-        ignored_dirs = []
-
-    folder_data = defaultdict(lambda: {"weight": 100, "is_absolute": False})
-
-    for path, data in image_dirs.items():
-        for root, dirs, files in os.walk(path):
-            if root in ignored_dirs:
-                del dirs[:]
+            # Skip empty lines and comments
+            if not line or line.startswith("#"):
                 continue
 
-            images = [
-                os.path.join(root, f)
-                for f in files
-                if f.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp"))
-            ]
-            if images:
-                folder_data[root] = {
-                    # "level": what_level_is(root),
-                    "weight": data["weight"],
-                    "is_absolute": data["is_absolute"],
+            # Remove enclosing double quotes, if any
+            line = line.replace('"', "").strip()
+
+            # Handle subfile inclusion
+            if line.startswith("[l]"):
+                subfile = line[3:].strip()
+                if os.path.isfile(subfile):
+                    sub_image_dirs, sub_specific_images, sub_filters = parse_input_file(
+                        subfile
+                    )
+                    image_dirs.update(sub_image_dirs)
+                    for k, v in sub_specific_images.items():
+                        specific_images[k].update(v)
+                    for key in filters:
+                        filters[key].extend(sub_filters[key])
+                    specific_images.update(sub_specific_images)
+                continue  # Move to the next line after processing subfile
+
+            # Handle filters
+            if line.startswith("[-]"):
+                path_or_keyword = line[3:].strip()
+                if os.path.isabs(path_or_keyword):
+                    filters["ignored_dirs"].append(path_or_keyword)
+                else:
+                    filters["must_not_contain"].append(path_or_keyword)
+                continue
+
+            if line.startswith("[+]"):
+                keyword = line[3:].strip()
+                filters["must_contain"].append(keyword)
+                continue
+
+            # Initialize default modifiers
+            weight = 100
+            is_percentage = True
+            balance_level = None
+            depth = None
+
+            # Extract all modifiers
+            modifiers = modifier_pattern.findall(line)
+            # Remove all modifiers from the line to get the path
+            path = modifier_pattern.sub("", line).strip()
+
+            # Process each modifier
+            for mod in modifiers:
+                mod_content = mod.strip("[]").strip()
+                if weight_pattern.match(mod_content):
+                    # Weight modifier
+                    if mod_content.endswith("%"):
+                        weight = int(mod_content[:-1])
+                        is_percentage = True
+                    else:
+                        weight = int(mod_content)
+                        is_percentage = False
+                elif balance_pattern.match(mod_content):
+                    # Balance level modifier
+                    balance_level = int(mod_content[1:])
+                elif depth_pattern.match(mod_content):
+                    # Depth modifier
+                    depth = int(mod_content[1:])
+                else:
+                    print(f"Unknown modifier '{mod_content}' in line: {line}")
+
+                # Handle directory or specific image
+            if os.path.isdir(path):
+                image_dirs[path] = {
+                    "weight": weight,
+                    "is_percentage": is_percentage,
+                    "balance_level": balance_level,
+                    "depth": depth,
                 }
+            elif os.path.isfile(path):
+                specific_images[path] = {
+                    "weight": weight,
+                    "is_percentage": is_percentage,
+                    "balance_level": balance_level,
+                    "depth": depth,
+                }
+            else:
+                print(f"Path '{path}' is neither a file nor a directory.")
 
-            # Control whether to scan subfolders by modifying dirs in place
-            if not scan_subfolders:
-                del dirs[:]  # Clear dirs to prevent descending into subfolders
-    return folder_data
+    return image_dirs, specific_images, filters
 
 
-def calculate_weights(
-    folder_data, specific_images, ignored_dirs, mode, depth, total_weight=1000000
-):
+def test_filters(path, filters):
+    # Check if the path is in the ignored_dirs
+    if any(
+        os.path.normpath(path) == os.path.normpath(ignored_dir)
+        for ignored_dir in filters["ignored_dirs"]
+    ):
+        return 1
+
+    # Check must_not_contain keywords
+    if any(keyword in path for keyword in filters["must_not_contain"]):
+        return 2
+
+    # Check must_contain keywords
+    if filters["must_contain"] and not any(
+        keyword in path for keyword in filters["must_contain"]
+    ):
+        return 2
+
+    return 0
+
+
+def calculate_weights(folder_data, specific_images, filters, mode, depth):
     """
     Calculate weights of all images in folders in folders_data, and specified_images
     """
 
     all_image_paths = []
-    weights_edit_list = {}
-
     weights = []
 
-    def weigh_images(folder_tree, assigned_weight, weights_edit_list):
-
-        sub_weights_edit_list = []
-        virtual_folders = defaultdict(list)
-
-        folder_index = list(folder_tree.keys())[0]
-        folder_data = build_folder_lists(
-            folder_tree, ignored_dirs, scan_subfolders=True
-        )
-        if folder_data:
-            for path, data in folder_data.items():
-                for root, dirs, files in os.walk(path, topdown=True):
-                    images = [
-                        os.path.join(root, f)
-                        for f in files
-                        if f.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp"))
-                    ]
-                    if images:
-                        if what_level_is(path) < depth:
-                            all_image_paths.extend(images)
-                            if data["is_absolute"]:
-                                sub_weights_edit_list.append(
-                                    [(assigned_weight / data["weight"]), len(images)]
-                                )
-                            else:
-                                sub_weights_edit_list.append(
-                                    [
-                                        (
-                                            assigned_weight
-                                            / len(images)
-                                            * (data["weight"] / 100)
-                                        ),
-                                        len(images),
-                                    ]
-                                )
-                        else:
-                            vf = truncate_path(path, depth)
-                            for image in images:
-                                virtual_folders[vf].append(image)
-                    del dirs[:]
-            for path, data in virtual_folders.items():
-                all_image_paths.extend(data)
-                sub_weights_edit_list.append([(assigned_weight / len(data)), len(data)])
-            weights_edit_list[folder_index] = sub_weights_edit_list
-        return weights_edit_list
-
-    def append_if_not_exists(dictionary, key, entry):
-        key_exists = False
-        
-        if key in dictionary:
-            for i, existing_entry in enumerate(dictionary[key]):
-                if existing_entry[0] == entry[0]:
-                    dictionary[key][i] = entry
-                    key_exists = True
-                    break
-        if not key_exists:
-            dictionary[key].append(entry)
+    if mode[0] == "weighted":
+        mode = ("balanced", 1)
 
     # Assign weights to image folders
-    if mode[0] == "balanced":
-        
-        mode_depth = mode[1]
-        if (
-            mode_depth != 0
-        ):  # if balanced mode is 0 then balance per entry in folder_data, otherwise...
-            # each tree below this level should be equally balanced, and weighted within the tree
-            sub_folder_data = defaultdict(list)
-               
-            for path, data in folder_data.items():  # group trees
-                if what_level_is(path) >= mode_depth:
-                    append_if_not_exists(sub_folder_data, truncate_path(path, mode_depth), 
-                        [
-                            path,
-                            {
-                                # "level": what_level_is(path),
-                                "weight": data["weight"],
-                                "is_absolute": data["is_absolute"],
-                            },
-                        ]
+    mode_depth = mode[1]
+
+    tree = Tree(mode_depth)
+
+    for path, data in folder_data.items():
+        depth = data["depth"] or depth
+        for root, dirs, files in os.walk(path):
+            result = test_filters(root, filters)
+            if result == 0:
+                images = [
+                    os.path.join(root, f)
+                    for f in files
+                    if f.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp"))
+                ]
+                if images:
+                    tree.append_overwrite_or_update(
+                        root,
+                        depth,
+                        {
+                            "weight": data["weight"],
+                            "is_percentage": data["is_percentage"],
+                            "images": images,
+                        },
                     )
-                else:
-                    for root, dirs, files in os.walk(path):
-                            for dir in dirs:
-                                if what_level_is(root) == mode_depth - 1:
-                                    full_path = os.path.join(root, dir)
-                                    if full_path+"\\" in ignored_dirs:
-                                        continue
-                                    append_if_not_exists(sub_folder_data, full_path, 
-                                        [
-                                            full_path,
-                                            {
-                                                # "level": what_level_is(dir),
-                                                "weight": data["weight"],
-                                                "is_absolute": data["is_absolute"],
-                                            },
-                                        ]
-                                    )
-                            del dirs[:]
-                            continue
+            elif result == 1:
+                del dirs[:]
 
-            if not sub_folder_data:
-                raise ValueError("No folders found at the requested level.")
-                sys.exit()
-            else:  # normalise weights within each tree
-                sub_sub_folder_data = defaultdict(list)
-                for item, data in sub_folder_data.items():
-                    combined_weight = sum(entry[1]["weight"] for entry in data)
-                    for path, inner_data in data:
-                        normalised_weight = (
-                            inner_data["weight"] / combined_weight
-                        ) * 100
-                        sub_sub_folder_data[path] = {
-                            "weight": normalised_weight,
-                            "is_absolute": inner_data["is_absolute"],
-                        }
-                folder_data = sub_sub_folder_data
-
-        balanced_weight = total_weight / len(folder_data)
-        for path, data in folder_data.items():
-            weights_edit_list = weigh_images(
-                {path: data}, balanced_weight, weights_edit_list
-            )
-    else:
-        # weighted mode, where each folder in the entire collection is weighted against each other
-        weights_edit_list = weigh_images(folder_data, total_weight, weights_edit_list)
-
-    # Assign weights to specific images
     if specific_images:
-        num_images = len(all_image_paths)
-        num_folders = 0
-        for path, data in weights_edit_list.items():
-            num_folders += len(data)
-        num_average_images = int(num_images / num_folders)
+        num_average_images = int(tree.average_images_in_tree())
         for path, data in specific_images.items():
-            is_percentage = not data["is_absolute"]
-            all_image_paths.extend(
-                [path] * (num_average_images if is_percentage else data["weight"])
+            is_percentage = data["is_percentage"]
+            tree.append_overwrite_or_update(
+                path,
+                depth,
+                {
+                    "weight": data["weight"],
+                    "is_percentage": data["is_percentage"],
+                    "images": [path]
+                    * (num_average_images if is_percentage else data["weight"]),
+                },
             )
-            weights_edit_list[path] = [
-                (
-                    [
-                        (
-                            total_weight
-                            / (num_images if is_percentage else data["weight"])
-                        ),
-                        (num_average_images if is_percentage else data["weight"]),
-                    ]
-                )
-            ]
 
-    # Populate weights list
-    for path, data in weights_edit_list.items():
-        for weight_data in data:
-            weights.extend([weight_data[0] / len(data)] * weight_data[1])
+    all_image_paths, weights = tree.build_image_paths_and_weights()
+
     return all_image_paths, weights
 
 
@@ -567,7 +627,7 @@ def test_distribution(
     total_images = len(image_paths)
     for directory, count in sorted(hit_counts.items()):  # Alphabetical order
         print(
-            f"Directory: {directory}, Hits: {count}, Weight: {count / total_images * 1000000:.2f}"
+            f"Directory: {directory}, Hits: {count}, Weight: {count / total_images * TOTAL_WEIGHT:.2f}"
         )
 
 
@@ -575,26 +635,29 @@ def main(
     input_files,
     test_iterations=None,
     mode=(),
-    depth=None,
+    depth=9999,
     testdepth=None,
     is_random=False,
-    total_weight=1000000,
 ):
-
     start_time = time.time()
 
-    image_dirs = defaultdict(lambda: {"weight": 100, "is_absolute": False, "depth": 0})
-    specific_images = defaultdict(lambda: {"weight": 100, "is_absolute": False})
-    ignored_dirs = []
+    image_dirs = defaultdict(lambda: {"weight": 100, "is_percentage": True, "depth": 0})
+    specific_images = defaultdict(lambda: {"weight": 100, "is_percentage": True})
+    filters = {
+        "must_contain": [],  # List of keywords that must be present in the path
+        "must_not_contain": [],  # List of keywords that must NOT be present in the path
+        "ignored_dirs": [],  # List of absolute directories to ignore
+    }
 
     for input_filename in input_files:
         if os.path.isfile(input_filename):
-            sub_image_dirs, sub_specific_images, sub_ignored_dirs = parse_input_file(
+            sub_image_dirs, sub_specific_images, sub_filters = parse_input_file(
                 input_filename
             )
             image_dirs.update(sub_image_dirs)
             specific_images.update(sub_specific_images)
-            ignored_dirs.extend(sub_ignored_dirs)
+            for key in sub_filters:
+                filters[key].extend(sub_filters[key])
 
     if not image_dirs and not specific_images:
         raise ValueError(
@@ -602,7 +665,7 @@ def main(
         )
         sys.exit()
     all_image_paths, weights = calculate_weights(
-        image_dirs, specific_images, ignored_dirs, mode, depth, total_weight
+        image_dirs, specific_images, filters, mode, depth
     )
 
     if test_iterations:
@@ -620,7 +683,6 @@ def main(
 
 
 if __name__ == "__main__":
-
     default_weight = 100
     default_is_asbolute = False
     default_mode = args.mode if args.mode else ("weighted", 0)
@@ -633,7 +695,6 @@ if __name__ == "__main__":
             mode=default_mode,
             depth=default_depth,
             is_random=args.random,
-            total_weight=args.total_weight,
         )
     elif args.test:
         input_files = args.input_file.split("+") if args.input_file else []
@@ -644,5 +705,4 @@ if __name__ == "__main__":
             depth=default_depth,
             testdepth=args.testdepth if args.testdepth else default_depth + 1,
             is_random=args.random,
-            total_weight=args.total_weight,
         )
