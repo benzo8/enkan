@@ -353,7 +353,7 @@ def build_folder_lists(image_dirs, ignored_dirs=None, scan_subfolders=True):
     if ignored_dirs is None:
         ignored_dirs = []
 
-    folder_data = defaultdict(lambda: {"level": 0, "weight": 100, "is_absolute": False})
+    folder_data = defaultdict(lambda: {"weight": 100, "is_absolute": False})
 
     for path, data in image_dirs.items():
         for root, dirs, files in os.walk(path):
@@ -368,7 +368,7 @@ def build_folder_lists(image_dirs, ignored_dirs=None, scan_subfolders=True):
             ]
             if images:
                 folder_data[root] = {
-                    "level": what_level_is(root),
+                    # "level": what_level_is(root),
                     "weight": data["weight"],
                     "is_absolute": data["is_absolute"],
                 }
@@ -430,31 +430,66 @@ def calculate_weights(
                             vf = truncate_path(path, depth)
                             for image in images:
                                 virtual_folders[vf].append(image)
+                    del dirs[:]
             for path, data in virtual_folders.items():
                 all_image_paths.extend(data)
                 sub_weights_edit_list.append([(assigned_weight / len(data)), len(data)])
             weights_edit_list[folder_index] = sub_weights_edit_list
         return weights_edit_list
 
+    def append_if_not_exists(dictionary, key, entry):
+        key_exists = False
+        
+        if key in dictionary:
+            for i, existing_entry in enumerate(dictionary[key]):
+                if existing_entry[0] == entry[0]:
+                    dictionary[key][i] = entry
+                    key_exists = True
+                    break
+        if not key_exists:
+            dictionary[key].append(entry)
+
     # Assign weights to image folders
     if mode[0] == "balanced":
+        
+        mode_depth = mode[1]
         if (
-            mode[1] != 0
+            mode_depth != 0
         ):  # if balanced mode is 0 then balance per entry in folder_data, otherwise...
             # each tree below this level should be equally balanced, and weighted within the tree
             sub_folder_data = defaultdict(list)
+               
             for path, data in folder_data.items():  # group trees
-                sf = truncate_path(path, mode[1])
-                sub_folder_data[sf].append(
-                    [
-                        path,
-                        {
-                            "level": what_level_is(path),
-                            "weight": data["weight"],
-                            "is_absolute": data["is_absolute"],
-                        },
-                    ]
-                )
+                if what_level_is(path) >= mode_depth:
+                    append_if_not_exists(sub_folder_data, truncate_path(path, mode_depth), 
+                        [
+                            path,
+                            {
+                                # "level": what_level_is(path),
+                                "weight": data["weight"],
+                                "is_absolute": data["is_absolute"],
+                            },
+                        ]
+                    )
+                else:
+                    for root, dirs, files in os.walk(path):
+                            for dir in dirs:
+                                if what_level_is(root) == mode_depth - 1:
+                                    full_path = os.path.join(root, dir)
+                                    if full_path+"\\" in ignored_dirs:
+                                        continue
+                                    append_if_not_exists(sub_folder_data, full_path, 
+                                        [
+                                            full_path,
+                                            {
+                                                # "level": what_level_is(dir),
+                                                "weight": data["weight"],
+                                                "is_absolute": data["is_absolute"],
+                                            },
+                                        ]
+                                    )
+                            del dirs[:]
+                            continue
 
             if not sub_folder_data:
                 raise ValueError("No folders found at the requested level.")
