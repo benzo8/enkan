@@ -39,34 +39,26 @@ from datetime import datetime
 from PIL import Image, ImageTk
 
 # Constants
-VERSION = "1.20-dev"
+VERSION = "1.30"
 TOTAL_WEIGHT = 100
 PARENT_STACK_MAX = 5
 QUEUE_LENGTH_MAX = 10
-IMAGE_FILES = (".png", ".jpg", ".jpeg", ".gif", ".bmp")
+IMAGE_FILES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff")
 TEXT_FILES = (".txt", ".lst")
-
+CX_PATTERN = re.compile(r'^(?:[BW]\d+)+$', re.IGNORECASE)
 
 # Argument parsing setup
-class ModeAction(argparse.Action):
-    def __call__(self, parser, namespace, values, option_string=None):
-        if len(values) == 1:
-            if values[0] not in ["weighted", "balanced", "flat", "plain"]:
-                parser.error(
-                    f"Invalid choice: '{values[0]}'. Choose from 'weighted', 'balanced', 'flat', 'plain'."
-                )
-            setattr(namespace, self.dest, (values[0], 0))
-        elif len(values) == 2:
-            if values[0] not in ["weighted", "balanced"]:
-                parser.error(
-                    f"Invalid choice: '{values[0]}'. Choose from 'weighted', 'balanced'."
-                )
-            try:
-                level = int(values[1])
-            except ValueError:
-                parser.error(f"Invalid level: '{values[1]}'. Must be an integer.")
-            setattr(namespace, self.dest, (values[0], level))
-
+def cx_type(s: str) -> str:
+    """
+    argparse “type” function: returns the string if it matches,
+    otherwise raises ArgumentTypeError.
+    """
+    if not CX_PATTERN.fullmatch(s):
+        msg = (f"invalid Cx string {s!r}; "
+               "must be one or more blocks of B or W followed by digits (case-insensitive), "
+               "e.g. B1, W23, B1W2B300")
+        raise argparse.ArgumentTypeError(msg)
+    return s.lower()
 
 parser = argparse.ArgumentParser(description="Create a slideshow from a list of files.")
 parser.add_argument(
@@ -75,17 +67,16 @@ parser.add_argument(
     metavar="input_file",
     nargs="+",
     type=str,
-    help="Input file or Folder to build",
+    help="Input file(s) and/or folder(s) to build or .lst file to load",
 )
 parser.add_argument(
     "-o", "--output", action="store_true", help="Write output file and exit"
 )
 parser.add_argument("--run", dest="run", action="store_true", help="Run the slideshow")
 parser.add_argument(
-    "--mode",
-    nargs="+",
-    action=ModeAction,
-    help="Set the mode: (weighted) or (balanced [x])",
+    '-m-', '--mode',
+    type=cx_type,
+    help="Mode string. One or more occurrences of B or W (case-insensitive) followed by digits, e.g. B12W3"
 )
 parser.add_argument(
     "--depth",
@@ -104,7 +95,6 @@ parser.add_argument(
 parser.add_argument("--printtree", action="store_true", help="Print the tree structure")
 parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {VERSION}")
 args = parser.parse_args()
-
 
 class ImageSlideshow:
     def __init__(self, root, image_paths, weights, defaults):
@@ -128,9 +118,9 @@ class ImageSlideshow:
 
         self.initial_mode = defaults.mode
         if defaults.is_random:
-            self.mode, self.mode_level = ("random", defaults.mode[1])
+            self.mode = "r"
         else:
-            self.mode, self.mode_level = defaults.mode
+            self.mode = resolve_mode(defaults.mode, min(defaults.mode.keys()))
 
         self.rotation_angle = 0
 
@@ -171,7 +161,7 @@ class ImageSlideshow:
     def show_image(self, image_path=None):
         if image_path is None:
             # Choose the next image based on the mode (random or weighted)
-            if self.mode == "random":
+            if self.mode == "r":
                 image_path = random.choice(self.image_paths)
             else:
                 image_path = random.choices(
@@ -350,7 +340,7 @@ class ImageSlideshow:
 
             # Build the new tree and extract images and weights
             parent_tree.build_tree(parent_image_dirs, None, defaults)
-            parent_tree.calculate_branch_weights(mode=defaults.mode[0], balance_level=1)
+            parent_tree.calculate_branch_weights(mode=defaults.mode[0], mode_str=1)
             self.image_paths, self.weights = (
                 parent_tree.extract_image_paths_and_weights_from_tree()
             )
@@ -413,7 +403,7 @@ class ImageSlideshow:
                     "weight_modifier": 100,
                     "is_percentage": True,
                     "proportion": None,
-                    "balance_level": defaults.mode[1],
+                    "mode_str": defaults.mode[1],
                     "depth": defaults.depth,
                 }
                 parent_tree.build_tree(parent_image_dirs, None, defaults)
@@ -530,10 +520,7 @@ class ImageSlideshow:
             # self.filename_label.config(text=filename_text)
             # self.filename_label.place(x=0, y=0)
 
-            if self.mode == "random":
-                mode_text = "R"
-            else:
-                mode_text = "W" if self.mode == "weighted" else "B"
+            mode_text = self.mode.upper() if self.mode else "-"
             if self.subfolder_mode:
                 mode_text += " S"
                 subfolder_number_of_images = len(
@@ -563,10 +550,10 @@ class ImageSlideshow:
             self.mode_label.place_forget()
 
     def toggle_random_mode(self, event=None):
-        if self.mode == "random":
+        if self.mode == "r":
             self.mode = self.initial_mode
         else:
-            self.mode = "random"
+            self.mode = "r"
         self.update_filename_display()
 
     def rotate_image(self, event=None):
@@ -576,7 +563,6 @@ class ImageSlideshow:
     def exit_slideshow(self, event=None):
         self.root.destroy()
 
-
 class TreeNode:
     def __init__(
         self,
@@ -585,6 +571,7 @@ class TreeNode:
         proportion=None,
         weight_modifier=100,
         is_percentage=True,
+        mode_modifier=None,
         flat=False,
         images=None,
         parent=None,
@@ -597,6 +584,8 @@ class TreeNode:
         self.is_percentage = (
             is_percentage  # Boolean to indicate if the weight is a percentage
         )
+        self.mode_modifier = mode_modifier  # Modifier for the mode of this node
+        self.mode=None  # Mode code for this node, e.g., 'B' or 'W'
         self.images = images if images else []  # List of images in this node
         self.children = []  # List of child nodes (branches)
         self.parent = parent  # Reference to the parent node
@@ -617,6 +606,12 @@ class TreeNode:
             current = current.parent
 
         return level
+    
+    @property
+    def siblings(self):
+        if self.parent:
+            return self.parent.children
+        return []
 
     def add_child(self, child_node):
         child_node.parent = self
@@ -646,7 +641,6 @@ class TreeNode:
 
         return nodes_at_level
 
-
 class Tree:
     def __init__(self):
         self.root = TreeNode("root", 0)
@@ -665,9 +659,9 @@ class Tree:
                     # Process each directory
                     self.process_directory(root, data, defaults, pbar)
 
-                # Insert proportion value if specified
+                # Insert proportion & mode if specified
                 if root in image_dirs:
-                    if image_dirs[root].get("proportion") is not None:
+                    if data.get("proportion") is not None or data.get("mode_modifier") is not None:
                         # If a proportion is specified, use it
                         self.append_overwrite_or_update(
                             root,
@@ -677,6 +671,7 @@ class Tree:
                                 "weight_modifier": data.get("weight_modifier", 100),
                                 "is_percentage": data.get("is_percentage", True),
                                 "proportion": data.get("proportion"),
+                                "mode_modifier": data.get("mode_modifier"),
                                 "images": [],
                             },
                         )
@@ -754,7 +749,7 @@ class Tree:
         images = [
             os.path.join(path, f)
             for f in valid_files
-            if f.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp"))
+            if is_imagefile(f)
         ]
 
         return images
@@ -786,31 +781,31 @@ class Tree:
             # Add a regular branch
             self.add_regular_branch(path, images, path_level, depth, data)
 
-    def flatten_branch(self, root):
-        """
-        Collect all images from the branch rooted at `root`, including subdirectories.
+    # def flatten_branch(self, root):
+    #     """
+    #     Collect all images from the branch rooted at `root`, including subdirectories.
 
-        Args:
-            root (str): The root directory of the branch.
+    #     Args:
+    #         root (str): The root directory of the branch.
 
-        Returns:
-            list: A list of full paths to all images in the branch.
-        """
-        images = []
-        for path, _, files in os.walk(root):
-            images.extend(
-                os.path.join(path, f)
-                for f in files
-                if f.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp"))
-            )
-        return images
+    #     Returns:
+    #         list: A list of full paths to all images in the branch.
+    #     """
+    #     images = []
+    #     for path, _, files in os.walk(root):
+    #         images.extend(
+    #             os.path.join(path, f)
+    #             for f in files
+    #             if is_imagefile(f)
+    #         )
+    #     return images
 
     def add_flat_branch(self, path, data):
         """
         Add a special 'flat' branch for directories with images.
         """
 
-        def flatten_branch(self, root):
+        def flatten_branch(root):
             """
             Collect all images from the branch rooted at `root`, including subdirectories.
 
@@ -825,11 +820,11 @@ class Tree:
                 images.extend(
                     os.path.join(path, f)
                     for f in files
-                    if f.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp"))
+                    if is_imagefile(f)
                 )
             return images
 
-        images = self.flatten_branch(path)
+        images = flatten_branch(path)
         level = data.get("level", self.calculate_level(path))
         depth = data.get("depth", 9999)
 
@@ -841,6 +836,7 @@ class Tree:
                 "weight_modifier": data.get("weight_modifier", 100),
                 "is_percentage": data.get("is_percentage", True),
                 "proportion": None,
+                "mode_modifier": data.get("mode_modifier"),
                 "images": images,
             },
         )
@@ -858,6 +854,7 @@ class Tree:
                 "weight_modifier": 100,
                 "is_percentage": True,
                 "proportion": None,
+                "mode_modifier": data.get("mode_modifier"),
                 "images": images,
             },
         )
@@ -865,6 +862,9 @@ class Tree:
     def add_virtual_branch(self, path, images, root_level, depth, data):
         """
         Add a virtual branch when the path depth exceeds the allowed depth.
+        
+        TODO: Fix adding images to existing virtual branches.
+        
         """
         virtual_path_level = root_level + depth
         virtual_path = os.path.join(
@@ -878,6 +878,7 @@ class Tree:
                 "weight_modifier": data.get("weight_modifier", 100),
                 "is_percentage": data.get("is_percentage", True),
                 "proportion": None,
+                "mode_modifier": data.get("mode_modifier"),
                 "images": images,
             },
         )
@@ -894,6 +895,7 @@ class Tree:
                 "weight_modifier": data.get("weight_modifier", 100),
                 "is_percentage": data.get("is_percentage", True),
                 "proportion": None,
+                "mode_modifier": data.get("mode_modifier"),
                 "images": images,
             },
         )
@@ -986,6 +988,7 @@ class Tree:
                         "weight_modifier": data.get("weight_modifier", 100),
                         "is_percentage": is_percentage,
                         "proportion": data.get("proportion", None),
+                        "mode_modifier": data.get("mode_modifier", None),
                         "images": [path]
                         * (
                             num_average_images
@@ -1025,7 +1028,8 @@ class Tree:
             node.weight_modifier = node_data["weight_modifier"]
             node.is_percentage = node_data["is_percentage"]
             node.proportion = node_data["proportion"]
-            node.images.extend(node_data["images"])
+            node.mode_modifier = node_data["mode_modifier"]
+            # node.images.extend(node_data["images"])
         else:
             # Create a new node and add it to the tree
             new_node = TreeNode(
@@ -1034,6 +1038,7 @@ class Tree:
                 weight_modifier=node_data["weight_modifier"],
                 is_percentage=node_data["is_percentage"],
                 proportion=node_data["proportion"],
+                mode_modifier=node_data["mode_modifier"],
                 images=node_data["images"],
             )
             self.add_node(new_node, tree_parent_name)
@@ -1284,115 +1289,75 @@ class Tree:
 
         return branch_count, image_count
 
-    def calculate_branch_weights(
-        self, mode="plain", balance_level=None, node=None, total_weight=TOTAL_WEIGHT
-    ):
+    def calculate_weights(self):
         """
-        Recursively calculates and normalizes the total weight for each branch in the tree,
-        ensuring weights are divided horizontally across siblings.
-
-        Args:
-            mode (str): Weighting mode. Options are "plain", "balanced", "weighted_x".
-            balance_level (int): Used for "weighted_x" mode. Specifies the level to start weighting from.
-            node (TreeNode): The current node to calculate weights for. Defaults to the root node.
-            total_weight (float): Total weight to distribute (defaults to 100%).
-
-        Returns:
-            float: The total weight for the current branch.
+        Entry point: calculate weights from the first level with a mode modifier.
         """
+        lowest_rung = min(defaults.mode.keys())
+        starting_nodes = self.get_nodes_at_level(lowest_rung) or [self.root]
 
-        def fill_missing_proportions(nodes):
-            """
-            Receives a list of nodes, calculates and fills missing proportions,
-            and returns the updated list.
-            """
-            # Calculate the sum of already set proportions
-            total_set_proportion = sum(
-                node.proportion for node in nodes if node.proportion is not None
-            )
-            # Find nodes with no set proportion
-            unset_nodes = [node for node in nodes if node.proportion is None]
-            num_unset = len(unset_nodes)
+        mode = resolve_mode(defaults.mode, lowest_rung)
 
-            # Distribute remaining proportion equally among unset nodes
-            remaining = max(0, 100 - total_set_proportion)
-            proportion_per_node = remaining / num_unset if num_unset > 0 else 0
+        starting_nodes = self._fill_missing_proportions(
+            starting_nodes,
+            mode,
+            count_fn=(lambda n: self.count_branches(n)[1]) if mode == "w" else None
+        )
 
-            for node in unset_nodes:
-                node.proportion = proportion_per_node
+        for node in starting_nodes:
+            apportioned_weight = TOTAL_WEIGHT * (node.proportion / 100)
+            self._process_node(node, apportioned_weight)
 
+    def _process_node(self, node, apportioned_weight, mode_modifier=None):
+        """
+        Assign weight to the node and recurse into children based on its mode.
+        """
+        # Apply node's weight_modifier
+        node.weight = (
+            apportioned_weight * (node.weight_modifier / 100)
+            if node.is_percentage else apportioned_weight
+        )
+
+        if not node.children:
+            return
+
+        mode_modifier = node.mode_modifier or mode_modifier
+        child_level = node.level + 1
+        child_mode = resolve_mode(defaults.mode | (node.mode_modifier or {}), child_level)
+
+        children = self._fill_missing_proportions(
+            node.children,
+            child_mode,
+            count_fn=(lambda n: self.count_branches(n)[1]) if child_mode == "w" else None
+        )
+
+        for child in children:
+            child_weight = node.weight * (child.proportion / 100)
+            self._process_node(child, child_weight, mode_modifier)
+
+    def _fill_missing_proportions(self, nodes, mode, count_fn=None):
+        """
+        Fill in missing proportions for a group of sibling nodes based on mode.
+        """
+        total_set = sum(n.proportion for n in nodes if n.proportion is not None)
+        unset_nodes = [n for n in nodes if n.proportion is None]
+        remaining = max(0, 100 - total_set)
+
+        if not unset_nodes:
             return nodes
 
-        if node is None:
-            node = self.root
-        """ TODO:
-                Implement secondary modes
-        """
-        if mode == "flat":
-            for child in node.children:
-                self.calculate_branch_weights(mode, balance_level, child, total_weight)
-        elif mode == "balanced":
-            # Weight only starts balancing at level X
-            if node.level < balance_level - 1:
-                # Propagate weights without dividing
-                for child in node.children:
-                    self.calculate_branch_weights(
-                        "balanced", balance_level, child, total_weight
-                    )
-            elif node.level == balance_level - 1:
-                children = self.get_nodes_at_level(balance_level)
-                # Treat as a new subtree
+        if mode == "b":
+            per_node = remaining / len(unset_nodes)
+            for n in unset_nodes:
+                n.proportion = per_node
 
-                children = fill_missing_proportions(children)
-                for child in children:
-                    self.calculate_branch_weights(
-                        "balanced",
-                        balance_level,
-                        child,
-                        total_weight * (child.proportion / 100),
-                    )
-            elif node.level >= balance_level:
-                node.children = fill_missing_proportions(node.children)
-                for child in node.children:
-                    self.calculate_branch_weights(
-                        "balanced",
-                        balance_level,
-                        child,
-                        total_weight * (child.proportion / 100),
-                    )
-        elif mode == "weighted":
-            # Weight only starts balancing at level X
-            if node.level >= balance_level:
-                # Treat as a new subtree
-                child_weight = total_weight
-                for child in node.children:
-                    self.calculate_branch_weights(
-                        "weighted",
-                        balance_level,
-                        child,
-                        child_weight / len(node.children),
-                    )
-            else:
-                # Propagate weights without dividing
-                for child in node.children:
-                    self.calculate_branch_weights(
-                        "weighted", balance_level, child, total_weight
-                    )
+        elif mode == "w":
+            image_counts = [count_fn(n) for n in unset_nodes]
+            total_images = sum(image_counts) or 1
+            for n, count in zip(unset_nodes, image_counts):
+                n.proportion = remaining * (count / total_images)
 
-        elif mode == "plain":
-            for children in node.children:
-                self.calculate_branch_weights(
-                    mode=mode,
-                    balance_level=balance_level,
-                    node=children,
-                    total_weight=total_weight / len(node.children),
-                )
-
-        # Assign the calculated weight to the current node
-        if node.is_percentage:
-            node.weight = total_weight * (node.weight_modifier / 100)
-        else:
-            node.weight = total_weight
+        return nodes
 
     def print_tree(self, node=None, indent="", current_depth=0, max_depth=None):
         """
@@ -1425,7 +1390,7 @@ class Defaults:
     def __init__(
         self,
         weight_modifier=100,
-        mode=("balanced", 1),
+        mode={1: "w"},
         depth=9999,
         is_random=False,
         args=None,
@@ -1439,7 +1404,7 @@ class Defaults:
         self.global_depth = None
         self.global_is_random = None
 
-        self.args_mode = args.mode if args and args.mode is not None else None
+        self.args_mode = parse_mode_string(args.mode) if args and args.mode is not None else None
         self.args_depth = args.depth if args and args.depth is not None else None
         self.args_is_random = args.random if args and args.random is not None else None
 
@@ -1467,7 +1432,7 @@ class Defaults:
 
     @property
     def is_random(self):
-        if self.args_is_random is None:
+        if self.args_is_random is not None:
             return self.args_is_random
         elif self.global_is_random is not None:
             return self.global_is_random
@@ -1623,6 +1588,24 @@ def is_textfile(file):
 def is_imagefile(file):
     return file.lower().endswith(IMAGE_FILES)
 
+def parse_mode_string(mode_str):
+    pattern = re.compile(r'([bw])(\d+)', re.IGNORECASE)
+    matches = pattern.findall(mode_str)
+    result = {int(num): char.lower() for char, num in matches}
+    return result
+
+def resolve_mode(mode_dict, number):
+    if not mode_dict:
+        return "w"  # or raise an exception if that's preferable
+
+    first_key = min(mode_dict.keys())
+
+    if number < first_key:
+        return "l"
+    elif number in mode_dict:
+        return mode_dict[number]
+    else:
+        return "w"
 
 def test_distribution(image_nodes, weights, iterations, testdepth, defaults):
     hit_counts = defaultdict(int)
@@ -1685,7 +1668,7 @@ def parse_input_line(line, defaults, recdepth):
     modifier_pattern = re.compile(r"(\[.*?\])")
     weight_modifier_pattern = re.compile(r"^\d+%?$")
     proportion_pattern = re.compile(r"^%\d+%?$")
-    balance_pattern = re.compile(r"^b\d+$", re.IGNORECASE)
+    mode_pattern = CX_PATTERN
     graft_pattern = re.compile(r"^g\d+$", re.IGNORECASE)
     group_pattern = re.compile(r"^>.*", re.IGNORECASE)
     depth_pattern = re.compile(r"^d\d+$", re.IGNORECASE)
@@ -1717,7 +1700,8 @@ def parse_input_line(line, defaults, recdepth):
     is_percentage = True
     graft_level = None
     group = None
-    balance_level = defaults.mode[1]
+    mode = defaults.mode
+    mode_modifier = None
     depth = defaults.depth
     flat = False
 
@@ -1746,9 +1730,9 @@ def parse_input_line(line, defaults, recdepth):
         elif group_pattern.match(mod_content):
             # Group
             group = mod_content[1:]
-        elif balance_pattern.match(mod_content):
+        elif mode_pattern.match(mod_content):
             # Balance level modifier, global only
-            balance_level = int(mod_content[1:])
+            mode_modifier = parse_mode_string(mod_content)
         elif depth_pattern.match(mod_content):
             # Depth modifier
             depth = int(mod_content[1:])
@@ -1759,7 +1743,7 @@ def parse_input_line(line, defaults, recdepth):
 
     # Handle directory or specific image
     if path == "*" and recdepth == 1:
-        defaults.set_global_defaults(mode=("balanced", balance_level), depth=depth)
+        defaults.set_global_defaults(mode=mode_modifier or mode, depth=depth)
         return None, None
 
     if os.path.isdir(path):
@@ -1769,6 +1753,7 @@ def parse_input_line(line, defaults, recdepth):
             "proportion": proportion,
             "graft_level": graft_level,
             "group": group,
+            "mode_modifier": mode_modifier,
             "depth": depth,
             "flat": flat,
         }
@@ -1779,6 +1764,7 @@ def parse_input_line(line, defaults, recdepth):
             "proportion": proportion,
             "graft_level": graft_level,
             "group": group,
+            "mode_modifier": mode_modifier
         }
     else:
         print(f"Path '{path}' is neither a file nor a directory.")
@@ -1912,9 +1898,7 @@ def main(input_files, defaults, test_iterations=None, testdepth=None, printtree=
         # Instantiate and build the tree
         tree = Tree()
         tree.build_tree(image_dirs, specific_images, defaults)
-        tree.calculate_branch_weights(
-            mode=defaults.mode[0], balance_level=defaults.mode[1]
-        )
+        tree.calculate_weights()
 
         # Print tree if requested
         if printtree:
