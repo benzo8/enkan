@@ -8,9 +8,8 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "args": [
-                "-i", "dancers.txt",
-                "--testdepth", "7",
-                "--printtree"]
+                "-i", "mb.txt",
+                "--run"],
         },
         {
             "name": "Run make-input-file",

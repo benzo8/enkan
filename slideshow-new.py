@@ -39,7 +39,7 @@ from datetime import datetime
 from PIL import Image, ImageTk
 
 # Constants
-VERSION = "1.30"
+VERSION = "1.31"
 TOTAL_WEIGHT = 100
 PARENT_STACK_MAX = 5
 QUEUE_LENGTH_MAX = 10
@@ -781,25 +781,6 @@ class Tree:
             # Add a regular branch
             self.add_regular_branch(path, images, path_level, depth, data)
 
-    # def flatten_branch(self, root):
-    #     """
-    #     Collect all images from the branch rooted at `root`, including subdirectories.
-
-    #     Args:
-    #         root (str): The root directory of the branch.
-
-    #     Returns:
-    #         list: A list of full paths to all images in the branch.
-    #     """
-    #     images = []
-    #     for path, _, files in os.walk(root):
-    #         images.extend(
-    #             os.path.join(path, f)
-    #             for f in files
-    #             if is_imagefile(f)
-    #         )
-    #     return images
-
     def add_flat_branch(self, path, data):
         """
         Add a special 'flat' branch for directories with images.
@@ -901,8 +882,12 @@ class Tree:
         )
 
     def handle_grafting(self, root, graft_level, group):
-        if not graft_level and not group:
+        if not group:
             return
+        else:
+            graft_level = graft_level or defaults.groups[group].get("graft_level")
+            if not graft_level:
+                return
         """
         Handle grafting by adjusting the tree structure after the directory is processed.
         """
@@ -946,6 +931,15 @@ class Tree:
                 node_to_check = parent
             else:
                 break
+            
+        # Add mode_modifiers, if present
+        group_config = defaults.groups.get(group)
+        if group_config:
+            mode_modifiers = group_config.get("mode_modifier")
+            if mode_modifiers:
+                for level, mode in mode_modifiers.items():
+                    for child in current_node.get_nodes_at_level(level):
+                        child.mode_modifier = {level: mode}
 
     def rename_children(self, parent_node, new_parent_name):
         """
@@ -1034,7 +1028,7 @@ class Tree:
             # Create a new node and add it to the tree
             new_node = TreeNode(
                 name=tree_path,
-                path=None,
+                path=path,
                 weight_modifier=node_data["weight_modifier"],
                 is_percentage=node_data["is_percentage"],
                 proportion=node_data["proportion"],
@@ -1323,7 +1317,7 @@ class Tree:
 
         mode_modifier = node.mode_modifier or mode_modifier
         child_level = node.level + 1
-        child_mode = resolve_mode(defaults.mode | (node.mode_modifier or {}), child_level)
+        child_mode = resolve_mode(defaults.mode | (node.children[0].mode_modifier or {}), child_level)
 
         children = self._fill_missing_proportions(
             node.children,
@@ -1374,12 +1368,12 @@ class Tree:
             # ANSI escape code for dark grey: \033[90m ... \033[0m
             percent_sign = "%" if node.is_percentage else ""
             print(
-                f"\033[90m{indent}{node.name} (L: {node.level}, P: {node.proportion}, M: {node.weight_modifier}{percent_sign}, W: {node.weight})\033[0m"
+                f"\033[90m{indent}{node.name} ({resolve_mode(defaults.mode | (node.mode_modifier if node.mode_modifier else {}), node.level)}{node.level}, P: {node.proportion}, M: {node.weight_modifier}{percent_sign}, W: {node.weight})\033[0m"
             )
         else:
             percent_sign = "%" if node.is_percentage else ""
             print(
-                f"{indent}{node.name} (L: {node.level}, P: {node.proportion}, M: {node.weight_modifier}{percent_sign}, W: {node.weight}, Images: {num_images})"
+                f"{indent}{node.name} ({resolve_mode(defaults.mode | (node.mode_modifier if node.mode_modifier else {}), node.level)}{node.level}, P: {node.proportion}, M: {node.weight_modifier}{percent_sign}, W: {node.weight}, Images: {num_images})"
             )
 
         for child in node.children:
@@ -1394,6 +1388,7 @@ class Defaults:
         depth=9999,
         is_random=False,
         args=None,
+        groups={}
     ):
         self._weight_modifier = weight_modifier
         self._mode = mode
@@ -1407,6 +1402,8 @@ class Defaults:
         self.args_mode = parse_mode_string(args.mode) if args and args.mode is not None else None
         self.args_depth = args.depth if args and args.depth is not None else None
         self.args_is_random = args.random if args and args.random is not None else None
+        
+        self.groups = {}
 
     @property
     def weight_modifier(self):
@@ -1741,10 +1738,14 @@ def parse_input_line(line, defaults, recdepth):
         else:
             print(f"Unknown modifier '{mod_content}' in line: {line}")
 
-    # Handle directory or specific image
-    if path == "*" and recdepth == 1:
-        defaults.set_global_defaults(mode=mode_modifier or mode, depth=depth)
-        return None, None
+        # Handle directory or specific image
+    if path == "*":
+        if group and (graft_level or mode_modifier):
+            defaults.groups[group] = {"graft_level": graft_level, "mode_modifier": mode_modifier}
+            return None, None
+        elif recdepth == 1:
+            defaults.set_global_defaults(mode=mode_modifier or mode, depth=depth)
+            return None, None
 
     if os.path.isdir(path):
         return path, {
