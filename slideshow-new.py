@@ -41,7 +41,7 @@ from PIL import Image, ImageTk
 VERSION = "1.31-dev"
 TOTAL_WEIGHT = 100
 PARENT_STACK_MAX = 5
-QUEUE_LENGTH_MAX = 10
+QUEUE_LENGTH_MAX = 25
 IMAGE_FILES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff")
 VIDEO_FILES = (".mp4", ".mkv", ".webm", ".avi", ".mov")
 TEXT_FILES = (".txt", ".lst")
@@ -102,7 +102,6 @@ parser.add_argument(
     help="Disable video playback",
 )
 parser.set_defaults(video=None)
-parser.add_argument("--mute", dest="mute", action="store_true", help="Enable mute")
 parser.add_argument(
     "--no-mute", "--nm", dest="mute", action="store_false", help="Disable mute"
 )
@@ -461,7 +460,7 @@ class ImageSlideshow:
 
             # Build the new tree and extract images and weights
             parent_tree.build_tree(parent_image_dirs, None, defaults)
-            parent_tree.calculate_branch_weights(mode=defaults.mode[0], mode_str=1)
+            parent_tree.calculate_weights()
             self.image_paths, self.weights = (
                 parent_tree.extract_image_paths_and_weights_from_tree()
             )
@@ -519,7 +518,7 @@ class ImageSlideshow:
                 self.image_paths = []
                 self.weights = []
 
-                parent_tree = Tree(defaults.mode[1])
+                parent_tree = Tree()
                 parent_image_dirs[parent_path] = {
                     "weight_modifier": 100,
                     "is_percentage": True,
@@ -528,6 +527,7 @@ class ImageSlideshow:
                     "depth": defaults.depth,
                 }
                 parent_tree.build_tree(parent_image_dirs, None, defaults)
+                parent_tree.calculate_weights()
                 self.image_paths, self.weights = (
                     parent_tree.extract_image_paths_and_weights_from_tree()
                 )
@@ -777,7 +777,7 @@ class Tree:
         with tqdm(total=0, desc="Building tree", unit="file") as pbar:
             for root, data in image_dirs.items():
                 if data.get("flat", False):
-                    self.add_flat_branch(root, data)
+                    self.add_flat_branch(root, data, pbar)
                 else:
                     # Process each directory
                     self.process_directory(root, data, defaults, pbar)
@@ -822,8 +822,9 @@ class Tree:
                 # Update the total for new files discovered
                 pbar.total += len(files)
                 pbar.desc = f"Processing {path}"
+                pbar.update(len(files))
                 pbar.refresh()
-                self.process_path(path, files, dirs, data, root_level, depth, pbar)
+                self.process_path(path, files, dirs, data, root_level, depth)
             elif filters.passes(path) == 1:
                 del dirs[:]  # Prune directories
 
@@ -880,7 +881,7 @@ class Tree:
 
         return images
 
-    def process_path(self, path, files, dirs, data, root_level, depth, pbar):
+    def process_path(self, path, files, dirs, data, root_level, depth):
         """
         Process an individual path, adding images or virtual nodes as needed.
         """
@@ -890,11 +891,6 @@ class Tree:
 
         if not images:
             return
-
-        # Dynamically update the progress bar as files are processed
-        for _ in images:
-            # Simulate processing the file
-            pbar.update(1)
 
         path_level = self.calculate_level(path)
         path_depth = path_level - root_level
@@ -909,7 +905,7 @@ class Tree:
             # Add a regular branch
             self.add_regular_branch(path, images, path_level, depth, data)
 
-    def add_flat_branch(self, path, data):
+    def add_flat_branch(self, path, data, pbar):
         """
         Add a special 'flat' branch for directories with images.
         """
@@ -934,9 +930,16 @@ class Tree:
                 )
             return images
 
+        pbar.desc = f"Flattening {path}"
+        pbar.refresh()
+
         images = flatten_branch(path)
         level = data.get("level", self.calculate_level(path))
         depth = data.get("depth", 9999)
+        
+        pbar.total += len(images)
+        pbar.update(len(images))
+        pbar.refresh()
 
         self.append_overwrite_or_update(
             path,
