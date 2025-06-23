@@ -39,7 +39,7 @@ from datetime import datetime
 from PIL import Image, ImageTk
 
 # Constants
-VERSION = "1.31-dev"
+VERSION = "1.35-dev"
 TOTAL_WEIGHT = 100
 PARENT_STACK_MAX = 5
 QUEUE_LENGTH_MAX = 25
@@ -1067,16 +1067,38 @@ class Tree:
             },
         )
 
-    def handle_grafting(self, root, graft_level, group):
-        if not group:
-            return
+    def handle_grafting(
+        self: "Tree", 
+        root: str, 
+        graft_level: int, 
+        group: str
+    ) -> None:
+        """
+        Graft a subtree to a new location in the tree at the specified level and apply group-specific configuration.
+
+        This function moves (grafts) a node and its subtree from its current parent to a new parent node at the
+        specified graft_level. It also applies any mode modifiers and proportions specified in the group configuration.
+        If the old parent becomes empty after grafting, it is pruned from the tree.
+
+        Args:
+            root (str): The original root path of the node to be grafted.
+            graft_level (int): The level in the tree to which the node should be grafted.
+            group (str): The group name used to look up group-specific configuration.
+
+        Returns:
+            None. The tree structure is modified in-place.
+        """
+        # if not group:
+        #     return
+        # else:
+        if group in defaults.groups:
+            group_graft_level = defaults.groups[group].get("graft_level")
         else:
-            graft_level = graft_level or defaults.groups[group].get("graft_level")
-            if not graft_level:
-                return
-        """
-        Handle grafting by adjusting the tree structure after the directory is processed.
-        """
+            group_graft_level = None      
+        graft_level = graft_level or group_graft_level
+        if not graft_level:
+            return
+        
         current_node_name = self.convert_path_to_tree_format(root)
         current_node = self.find_node(current_node_name)
         current_node_parent = current_node.parent
@@ -1095,7 +1117,7 @@ class Tree:
 
         # Detach from the old parent and graft to the new location
         self.detach_node(current_node)
-        current_node.name = levelled_name
+        self.rename_node_in_lookup(current_node.name, levelled_name)
         parent_node.add_child(current_node)
         current_node.path = root
 
@@ -1126,9 +1148,7 @@ class Tree:
                 for level, mode in mode_modifiers.items():
                     for child in current_node.get_nodes_at_level(level):
                         child.mode_modifier = {level: mode}
-            proportion = group_config.get("proportion")
-            if proportion is not None and current_node.parent:
-                current_node.parent.proportion = proportion
+            self.set_proportion(group, current_node)
 
     def rename_children(self, parent_node, new_parent_name):
         """
@@ -1142,14 +1162,27 @@ class Tree:
         for child in parent_node.children:
             # Calculate the new name for the child node
             child_basename = os.path.basename(child.name)
-            # old_name = child.name
-            child.name = os.path.join(new_parent_name, child_basename)
-
-            # Log the renaming
-            # print(f"Updated node: {old_name} -> {child.name}")
-
+            new_name = os.path.join(new_parent_name, child_basename)
+            self.rename_node_in_lookup(child.name, new_name)
             # Recursively update the child's subtree
-            self.rename_children(child, child.name)
+            self.rename_children(child, new_name)
+
+    def rename_node_in_lookup(
+        self: "Tree",
+        old_name: str,
+        new_name: str
+    ) -> None:
+        """
+        Rename a node in the tree and update node_lookup accordingly.
+
+        Args:
+            old_name (str): The current name (key) of the node in node_lookup.
+            new_name (str): The new name to assign to the node and as the key in node_lookup.
+        """
+        node = self.node_lookup.pop(old_name, None)
+        if node is not None:
+            node.name = new_name
+            self.node_lookup[new_name] = node
 
     def process_specific_images(self, specific_images, defaults):
         """
@@ -1286,7 +1319,10 @@ class Tree:
 
         return current_node
 
-    def convert_path_to_tree_format(self, path):
+    def convert_path_to_tree_format(
+        self: "Tree",
+        path: str
+    ) -> str:
         """
         Convert the path to match the format used in node_lookup (e.g., prefixed with 'root').
         Removes the drive letter and adds 'root' as the base.
@@ -1300,7 +1336,7 @@ class Tree:
         )
 
         # Join the components back into a single path
-        return os.path.join(*path_components)
+        return os.path.join(*path_components).lower()
 
     def set_path_to_level(self, path, level, group=None):
         """
@@ -1351,30 +1387,56 @@ class Tree:
         # No adjustment needed
         return path
 
-    def find_parent_name(self, node_name):
+    def find_parent_name(
+        self: "Tree", 
+        node_name: str
+    ) -> str:
         """
-        Find the name of the parent node.
+        Return the parent name (path) of a given node name.
+
+        This function uses os.path.dirname to extract the parent path from the given node name.
+        It is used to determine the parent node in the tree structure.
 
         Args:
-            node_name (str): The name of the current node.
+            node_name (str): The name (path) of the node whose parent is to be found.
 
         Returns:
-            str: The name of the parent node.
+            str: The parent name (path) of the given node.
         """
         return os.path.dirname(node_name)
 
-    def find_node(self, name):
-        return self.node_lookup.get(name)
-
-    def get_nodes_at_level(self, target_level):
+    def find_node(
+        self: "Tree", 
+        name: str
+    ) -> "TreeNode":
         """
-        Retrieve all nodes at a specific level, optimized to skip unnecessary traversal.
+        Retrieve a node from the tree by its name using the node lookup dictionary.
 
         Args:
-            target_level (int): The level to retrieve nodes from.
+            name (str): The name (path) of the node to find.
 
         Returns:
-            list: A list of TreeNode instances at the specified level.
+            TreeNode: The node with the specified name, or None if not found.
+        """
+        return self.node_lookup.get(name)
+
+    def get_nodes_at_level(
+        self: "Tree", 
+        target_level: int
+    ) -> list["TreeNode"]:
+        """
+        Retrieve all nodes in the tree at the specified level.
+
+        This function traverses the tree starting from the root node and collects all nodes
+        whose level matches the given target_level. Traversal stops at nodes that match the
+        target level, so their children are not included.
+
+        Args:
+            target_level (int): The level (depth) in the tree to collect nodes from.
+                The root node is typically level 1.
+
+        Returns:
+            list[TreeNode]: A list of TreeNode objects at the specified level.
         """
         nodes_at_level = []
 
@@ -1409,6 +1471,67 @@ class Tree:
         return len(
             list(filter(None, path.split(os.path.sep)))
         )  # Calculate level based on path depth
+
+    def set_proportion(
+    self: "Tree", 
+    group: str, 
+    current_node: "TreeNode"
+) -> int | None:
+        """
+        Determine the effective graft level for a group and node, and set the group's proportion
+        (if present) on the node at that level along the current_node's path.
+
+        Returns group_graft_level if it exists, otherwise the lowest of:
+        - the group's mode_modifier keys (if any)
+        - the lowest graft_level among the node's children (if any child has it set)
+
+        If group_config has a 'proportion', it is set on the node at the effective graft level.
+
+        Args:
+            group (str): The group name to look up in defaults.groups.
+            current_node (TreeNode): The node whose children may have graft_level set.
+
+        Returns:
+            int or None: The effective graft level, or None if not found.
+        """
+        group_config = defaults.groups.get(group, {})
+        if group_config is None:
+            return None
+        proportion = group_config.get("proportion", None)
+        if proportion is not None:
+            group_graft_level = group_config.get("graft_level")
+            if group_graft_level is not None:
+                effective_level = group_graft_level
+            else:
+                # Get lowest mode_modifier key if present
+                mode_modifiers = group_config.get("mode_modifier")
+                mode_modifier_level = None
+                if mode_modifiers:
+                    mode_modifier_level = min(mode_modifiers.keys())
+
+                # Get lowest graft_level among children if present
+                child_graft_levels = [
+                    getattr(child, "graft_level", None)
+                    for child in getattr(current_node, "children", [])
+                    if getattr(child, "graft_level", None) is not None
+                ]
+                child_graft_level = min(child_graft_levels) if child_graft_levels else None
+
+                # Return the lowest of mode_modifier_level and child_graft_level (if either exists)
+                candidates = [lvl for lvl in [mode_modifier_level, child_graft_level] if lvl is not None]
+                effective_level = min(candidates) if candidates else None
+
+            # Set the proportion if present
+            
+            if proportion is not None and effective_level is not None:
+                # Traverse up from current_node to the node at effective_level
+                node = current_node
+                while node is not None and node.level > effective_level:
+                    node = node.parent
+                if node is not None and node.level == effective_level:
+                    node.proportion = proportion
+
+        return effective_level
 
     def extract_image_paths_and_weights_from_tree(
         self: "Tree", 
@@ -1636,8 +1759,24 @@ class Tree:
         total = sum(n.proportion for n in nodes)
         for n in nodes:
             n.proportion = n.proportion * 100 / total if total else 0
-            
+
         return nodes
+
+    def test_node_lookup_consistency(self) -> bool:
+        """
+        Test that every entry in node_lookup has a key matching its node's name.
+        Prints mismatches and returns True if all are consistent, False otherwise.
+        """
+        all_good = True
+        for key, node in self.node_lookup.items():
+            if key != node.name:
+                print(f"Mismatch: key='{key}' != node.name='{node.name}'")
+                all_good = False
+        if all_good:
+            print("node_lookup consistency check PASSED.")
+        else:
+            print("node_lookup consistency check FAILED.")
+        return all_good
 
     def print_tree(
         self,
@@ -2143,11 +2282,11 @@ def process_inputs(input_files, defaults, recdepth=1):
                 print(f"Unknown modifier '{mod_content}' in line: {line}")
             # Handle directory or specific image
         if path == "*":
-            if group and (graft_level or mode_modifier):
+            if group:
                 defaults.groups[group] = {
                     "proportion": proportion or None,
-                    "graft_level": graft_level,
-                    "mode_modifier": mode_modifier,
+                    "graft_level": graft_level or None,
+                    "mode_modifier": mode_modifier or (),
                 }
                 return None, None
             if video is not None or mute is not None:
