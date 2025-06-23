@@ -1531,7 +1531,7 @@ class Tree:
                 if node is not None and node.level == effective_level:
                     node.proportion = proportion
 
-        return effective_level
+        return
 
     def extract_image_paths_and_weights_from_tree(
         self: "Tree", 
