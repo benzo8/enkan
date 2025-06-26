@@ -8,7 +8,7 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "args": [
-                "-i", "c:\\temp\\slideshow\\lists\\slavewife.txt",
+                "-i", "candydoll.lst", "cross.lst",
                 "--testdepth", "4",
                 "--run"],
         },

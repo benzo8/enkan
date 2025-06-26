@@ -39,7 +39,7 @@ from datetime import datetime
 from PIL import Image, ImageTk
 
 # Constants
-VERSION = "1.35-dev"
+VERSION = "1.36-dev"
 TOTAL_WEIGHT = 100
 PARENT_STACK_MAX = 5
 QUEUE_LENGTH_MAX = 25
@@ -1117,8 +1117,8 @@ class Tree:
 
         # Detach from the old parent and graft to the new location
         self.detach_node(current_node)
-        self.rename_node_in_lookup(current_node.name, levelled_name)
         parent_node.add_child(current_node)
+        self.rename_node_in_lookup(current_node.name, levelled_name)
         current_node.path = root
 
         # Rename and relevel child nodes
@@ -1217,8 +1217,7 @@ class Tree:
                 # Handle grafting after processing the directory
                 graft_level = data.get("graft_level") or level
                 group = data.get("group")
-                if (graft_level is not None and graft_level != level) or (group):
-                    self.handle_grafting(node_name, graft_level, group)
+                self.handle_grafting(node_name, graft_level, group)
 
     def append_overwrite_or_update(self, path, level, depth, node_data=None):
         """
@@ -2349,20 +2348,18 @@ def process_inputs(input_files, defaults, recdepth=1):
                                 line = line.strip()
                                 if not line or line.startswith("#"):
                                     continue
-                                parts = line.split(",")
-                                if len(parts) == 2:  # Expecting "image_path,weight"
-                                    all_images.append(parts[0])
+                                image_path, weight_str = line.rsplit(",", 1)  # Split on last comma
+                                if weight_str:  # Expecting "image_path,weight"
                                     try:
-                                        weights.append(float(parts[1]))
+                                        weights.append(float(weight_str))
+                                        all_images.append(image_path)
                                     except ValueError:
-                                        weights.append(
-                                            0.1
-                                        )  # Default weight if parsing fails
+                                        # weight_str is not a number, so it's part of the image path (comma in filename)
+                                        all_images.append(f"{image_path},{weight_str}")
+                                        weights.append(0.01)  # Default weight for single lines
                                 else:  # Probably an irfanview-style list
                                     all_images.append(line)
-                                    weights.append(
-                                        1.0
-                                    )  # Default weight for single lines
+                                    weights.append(0.01)  # Default weight for single lines
                     case ".txt":
                         with open(
                             input_filename_full, "r", buffering=65536, encoding="utf-8"
