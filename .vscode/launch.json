@@ -8,9 +8,8 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "args": [
-                "-i", "candydoll.lst", "cross.lst",
-                "--testdepth", "4",
-                "--run"],
+                "-i", "bella.txt",
+                "--printtree"],
         },
         {
             "name": "Run make-input-file",

@@ -39,12 +39,12 @@ from datetime import datetime
 from PIL import Image, ImageTk
 
 # Constants
-VERSION = "1.36-dev"
+VERSION = "1.37-dev"
 TOTAL_WEIGHT = 100
 PARENT_STACK_MAX = 5
 QUEUE_LENGTH_MAX = 25
 IMAGE_FILES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff")
-VIDEO_FILES = (".mp4", ".mkv", ".webm", ".avi", ".mov")
+VIDEO_FILES = (".mp4", ".mkv", ".webm", ".avi", ".mov", ".wmv")
 TEXT_FILES = (".txt", ".lst")
 CX_PATTERN = re.compile(r"^(?:[bw]\d+(?:,-?\d+)?(?:,-?\d+)?)+$", re.IGNORECASE)
 
@@ -1101,13 +1101,12 @@ class Tree:
         
         current_node_name = self.convert_path_to_tree_format(root)
         current_node = self.find_node(current_node_name)
-        current_node_parent = current_node.parent
-
         if not current_node:
             print(
                 f"Warning: Node '{current_node_name}' not found for grafting. Skipping."
             )
             return
+        current_node_parent = current_node.parent
 
         levelled_name = self.convert_path_to_tree_format(
             self.set_path_to_level(root, graft_level, group)
@@ -2181,10 +2180,17 @@ def process_inputs(input_files, defaults, recdepth=1):
             ),  # Fixed "lists" folder in the current working directory
         ]
 
+        # If input_filename has no extension, try .lst then .txt
+        base, ext = os.path.splitext(input_filename)
+        candidates = [input_filename]
+        if not ext:
+            candidates = [input_filename + ".lst", input_filename + ".txt"]
+
         for location in possible_locations:
-            potential_path = os.path.join(location, input_filename)
-            if os.path.isfile(potential_path):
-                return potential_path
+            for candidate in candidates:
+                potential_path = os.path.join(location, candidate)
+                if os.path.isfile(potential_path):
+                    return potential_path
 
         return None
 
@@ -2326,79 +2332,78 @@ def process_inputs(input_files, defaults, recdepth=1):
         """
         nonlocal image_dirs, specific_images
 
-        if is_textfile(entry):  # If it's a text file, parse its contents
-            additional_search_paths = [os.path.dirname(entry)]
-            input_filename_full = find_input_file(entry, additional_search_paths)
+        additional_search_paths = [os.path.dirname(entry)]
+        input_filename_full = find_input_file(entry, additional_search_paths)
 
-            if input_filename_full:
-                match os.path.splitext(entry)[1].lower():
-                    case ".lst":
-                        with open(
-                            input_filename_full, "r", buffering=65536, encoding="utf-8"
-                        ) as f:
-                            total_lines = sum(1 for _ in f)
-                            f.seek(0)
-                            for line in tqdm(
-                                f,
-                                desc=f"Parsing {os.path.basename(entry)}",
-                                unit="line",
-                                total=total_lines,
-                                disable=args.quiet,
-                            ):
-                                line = line.strip()
-                                if not line or line.startswith("#"):
-                                    continue
-                                image_path, weight_str = line.rsplit(",", 1)  # Split on last comma
-                                if weight_str:  # Expecting "image_path,weight"
-                                    try:
-                                        weights.append(float(weight_str))
-                                        all_images.append(image_path)
-                                    except ValueError:
-                                        # weight_str is not a number, so it's part of the image path (comma in filename)
-                                        all_images.append(f"{image_path},{weight_str}")
-                                        weights.append(0.01)  # Default weight for single lines
-                                else:  # Probably an irfanview-style list
-                                    all_images.append(line)
+        if input_filename_full:
+            match os.path.splitext(entry)[1].lower():
+                case ".lst":
+                    with open(
+                        input_filename_full, "r", buffering=65536, encoding="utf-8"
+                    ) as f:
+                        total_lines = sum(1 for _ in f)
+                        f.seek(0)
+                        for line in tqdm(
+                            f,
+                            desc=f"Parsing {os.path.basename(entry)}",
+                            unit="line",
+                            total=total_lines,
+                            disable=args.quiet,
+                        ):
+                            line = line.strip()
+                            if not line or line.startswith("#"):
+                                continue
+                            image_path, weight_str = line.rsplit(",", 1)  # Split on last comma
+                            if weight_str:  # Expecting "image_path,weight"
+                                try:
+                                    weights.append(float(weight_str))
+                                    all_images.append(image_path)
+                                except ValueError:
+                                    # weight_str is not a number, so it's part of the image path (comma in filename)
+                                    all_images.append(f"{image_path},{weight_str}")
                                     weights.append(0.01)  # Default weight for single lines
-                    case ".txt":
-                        with open(
-                            input_filename_full, "r", buffering=65536, encoding="utf-8"
-                        ) as f:
-                            total_lines = sum(1 for _ in f)
-                            f.seek(0)
-                            for line in tqdm(
-                                f,
-                                desc=f"Parsing {os.path.basename(entry)}",
-                                unit="line",
-                                total=total_lines,
-                                disable=args.quiet,
-                            ):
-                                line = line.strip()
-                                if not line or line.startswith(
-                                    "#"
-                                ):  # Skip comments/empty lines
-                                    continue
-                                line = line.replace(
-                                    '"', ""
-                                ).strip()  # Remove enclosing quotes
+                            else:  # Probably an irfanview-style list
+                                all_images.append(line)
+                                weights.append(0.01)  # Default weight for single lines
+                case ".txt":
+                    with open(
+                        input_filename_full, "r", buffering=65536, encoding="utf-8"
+                    ) as f:
+                        total_lines = sum(1 for _ in f)
+                        f.seek(0)
+                        for line in tqdm(
+                            f,
+                            desc=f"Parsing {os.path.basename(entry)}",
+                            unit="line",
+                            total=total_lines,
+                            disable=args.quiet,
+                        ):
+                            line = line.strip()
+                            if not line or line.startswith(
+                                "#"
+                            ):  # Skip comments/empty lines
+                                continue
+                            line = line.replace(
+                                '"', ""
+                            ).strip()  # Remove enclosing quotes
 
-                                if is_textfile(
-                                    line
-                                ):  # Recursively process nested text files
-                                    sub_image_dirs, sub_specific_images = (
-                                        process_inputs([line], defaults, recdepth + 1)
-                                    )
-                                    image_dirs.update(sub_image_dirs)
-                                    specific_images.update(sub_specific_images)
-                                else:
-                                    path, modifier_list = parse_input_line(
-                                        line, defaults, recdepth
-                                    )
-                                    if modifier_list:
-                                        if is_imagefile(path):
-                                            specific_images[path] = modifier_list
-                                        else:
-                                            image_dirs[path] = modifier_list
+                            if is_textfile(
+                                line
+                            ):  # Recursively process nested text files
+                                sub_image_dirs, sub_specific_images = (
+                                    process_inputs([line], defaults, recdepth + 1)
+                                )
+                                image_dirs.update(sub_image_dirs)
+                                specific_images.update(sub_specific_images)
+                            else:
+                                path, modifier_list = parse_input_line(
+                                    line, defaults, recdepth
+                                )
+                                if modifier_list:
+                                    if is_imagefile(path):
+                                        specific_images[path] = modifier_list
+                                    else:
+                                        image_dirs[path] = modifier_list
         else:  # Handle directories and images directly
             path, modifier_list = parse_input_line(entry, defaults, recdepth)
             if modifier_list:
