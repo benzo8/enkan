@@ -2336,7 +2336,7 @@ def process_inputs(input_files, defaults, recdepth=1):
         input_filename_full = find_input_file(entry, additional_search_paths)
 
         if input_filename_full:
-            match os.path.splitext(entry)[1].lower():
+            match os.path.splitext(input_filename_full)[1].lower():
                 case ".lst":
                     with open(
                         input_filename_full, "r", buffering=65536, encoding="utf-8"
@@ -2345,7 +2345,7 @@ def process_inputs(input_files, defaults, recdepth=1):
                         f.seek(0)
                         for line in tqdm(
                             f,
-                            desc=f"Parsing {os.path.basename(entry)}",
+                            desc=f"Parsing {input_filename_full}",
                             unit="line",
                             total=total_lines,
                             disable=args.quiet,
@@ -2373,7 +2373,7 @@ def process_inputs(input_files, defaults, recdepth=1):
                         f.seek(0)
                         for line in tqdm(
                             f,
-                            desc=f"Parsing {os.path.basename(entry)}",
+                            desc=f"Parsing {input_filename_full}",
                             unit="line",
                             total=total_lines,
                             disable=args.quiet,
