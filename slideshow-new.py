@@ -38,15 +38,11 @@ from tqdm import tqdm
 from datetime import datetime
 from PIL import Image, ImageTk
 
-# Constants
-VERSION = "1.40"
-TOTAL_WEIGHT = 100
-PARENT_STACK_MAX = 5
-QUEUE_LENGTH_MAX = 25
-IMAGE_FILES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff")
-VIDEO_FILES = (".mp4", ".mkv", ".webm", ".avi", ".mov", ".wmv")
-TEXT_FILES = (".txt", ".lst")
-CX_PATTERN = re.compile(r"^(?:[bw]\d+(?:,-?\d+)?(?:,-?\d+)?)+$", re.IGNORECASE)
+import constants
+from utils.myStack import Stack
+import utils.utils as utils
+import utils.Defaults as defaults
+from utils.Defaults import parse_mode_string, resolve_mode
 
 
 # Argument parsing setup
@@ -55,7 +51,7 @@ def cx_type(s: str) -> str:
     argparse “type” function: returns the string if it matches,
     otherwise raises ArgumentTypeError.
     """
-    if not CX_PATTERN.fullmatch(s):
+    if not constants.CX_PATTERN.fullmatch(s):
         msg = (
             f"invalid Cx string {s!r}; "
             "must be one or more blocks of B or W followed by digits (case-insensitive), "
@@ -63,7 +59,6 @@ def cx_type(s: str) -> str:
         )
         raise argparse.ArgumentTypeError(msg)
     return s.lower()
-
 
 parser = argparse.ArgumentParser(description="Create a slideshow from a list of files.")
 parser.add_argument(
@@ -117,7 +112,7 @@ parser.add_argument(
     "--testdepth", type=int, default=None, help="Depth to display test results"
 )
 parser.add_argument("--printtree", action="store_true", help="Print the tree structure")
-parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
+parser.add_argument("--version", action="version", version=f"%(prog)s {constants.VERSION}")
 args = parser.parse_args()
 
 
@@ -131,9 +126,9 @@ class ImageSlideshow:
         self.current_image_index = 0
         self.original_weights = weights
         self.subFolderStack = Stack(1)
-        self.parentFolderStack = Stack(PARENT_STACK_MAX)
-        self.history = deque(maxlen=QUEUE_LENGTH_MAX)
-        self.forward_history = deque(maxlen=QUEUE_LENGTH_MAX)
+        self.parentFolderStack = Stack(constants.PARENT_STACK_MAX)
+        self.history = deque(maxlen=constants.QUEUE_LENGTH_MAX)
+        self.forward_history = deque(maxlen=constants.QUEUE_LENGTH_MAX)
         self.subfolder_mode = False
         self.parent_mode = False
         self.show_filename = False
@@ -237,7 +232,7 @@ class ImageSlideshow:
         self.current_image_path = image_path
         self.current_image_index = self.image_paths.index(image_path)
 
-        if is_videofile(image_path):
+        if utils.is_videofile(image_path):
             self.label.config(image="")
             self.label.image = None
             self.label.pack()
@@ -431,13 +426,13 @@ class ImageSlideshow:
         # Handle navigating up the folder structure (S2)
         if not self.parent_mode:
             current_path = os.path.dirname(self.current_image_path)
-            current_path_level = level_of(current_path)
+            current_path_level = utils.level_of(current_path)
 
             # Traverse up levels until a valid parent is found
             for i in range(current_path_level - 1, 1, -1):
                 parent_level = i
-                parent_path = truncate_path(current_path, parent_level)
-                if contains_subdirectory(parent_path) > 1 or contains_files(
+                parent_path = utils.truncate_path(current_path, parent_level)
+                if utils.contains_subdirectory(parent_path) > 1 or utils.contains_files(
                     parent_path
                 ):
                     break
@@ -447,8 +442,8 @@ class ImageSlideshow:
             )
         else:  # Handle moving up a level in parent mode (S3)
             previous_path = self.parentFolderStack.read_top()
-            parent_level = level_of(previous_path) - 1
-            parent_path = truncate_path(previous_path, parent_level)
+            parent_level = utils.level_of(previous_path) - 1
+            parent_path = utils.truncate_path(previous_path, parent_level)
 
             # If we're backtracking, step backwards instead
             if parent_path == self.parentFolderStack.read_top(2):
@@ -509,10 +504,10 @@ class ImageSlideshow:
         # if not self.parent_mode: # S2
         current_path = os.path.dirname(self.current_image_path)
         current_top = self.parentFolderStack.read_top()
-        if contains_subdirectory(current_top):
-            current_path_level = level_of(current_top)
+        if utils.contains_subdirectory(current_top):
+            current_path_level = utils.level_of(current_top)
             parent_level = current_path_level + 1
-            parent_path = truncate_path(current_path, parent_level)
+            parent_path = utils.truncate_path(current_path, parent_level)
 
             if parent_path == self.parentFolderStack.read_top(2):
                 self.step_backwards()
@@ -867,7 +862,7 @@ class Tree:
         Process a single root directory and add nodes to the tree.
         Handles image processing and grafting.
         """
-        root_level = level_of(root)
+        root_level = utils.level_of(root)
         depth = data.get("depth", defaults.depth)
 
         # Traverse the directory tree
@@ -930,7 +925,7 @@ class Tree:
         images = [
             os.path.join(path, f)
             for f in valid_files
-            if is_imagefile(f) or (is_videofile(f) and is_videoallowed)
+            if utils.is_imagefile(f) or (utils.is_videofile(f) and is_videoallowed)
         ]
 
         return images
@@ -940,7 +935,7 @@ class Tree:
         Process an individual path, adding images or virtual nodes as needed.
         """
         images = self.process_files(
-            path, files, filters, is_videoallowed(data.get("video"))
+            path, files, filters, utils.is_videoallowed(data.get("video"), defaults)
         )
 
         if not images:
@@ -979,8 +974,8 @@ class Tree:
                 images.extend(
                     os.path.join(path, f)
                     for f in files
-                    if is_imagefile(f)
-                    or (is_videofile(f) and is_videoallowed(data.get("video")))
+                    if utils.is_imagefile(f)
+                    or (utils.is_videofile(f) and utils.is_videoallowed(data.get("video")))
                 )
             return images
 
@@ -1647,7 +1642,7 @@ class Tree:
         )
 
         for node in starting_nodes:
-            apportioned_weight = TOTAL_WEIGHT * (node.proportion / 100)
+            apportioned_weight = constants.TOTAL_WEIGHT * (node.proportion / 100)
             self._process_node(node, apportioned_weight)
 
     def _process_node(
@@ -1822,105 +1817,6 @@ class Tree:
             self.print_tree(child, indent + " + ", current_depth + 1, max_depth)
 
 
-class Defaults:
-    def __init__(
-        self,
-        weight_modifier=100,
-        mode={1: "w"},
-        depth=9999,
-        is_random=False,
-        args=None,
-        groups={},
-        video=True,
-        mute=True,
-    ):
-        self._weight_modifier = weight_modifier
-        self._mode = mode
-        self._depth = depth
-        self._is_random = is_random
-        self._video = video
-        self._mute = mute
-
-        self.global_mode = None
-        self.global_depth = None
-        self.global_is_random = None
-        self.global_video = None
-        self.global_mute = None
-
-        self.args_mode = (
-            parse_mode_string(args.mode) if args and args.mode is not None else None
-        )
-        self.args_depth = args.depth if args and args.depth is not None else None
-        self.args_is_random = args.random if args and args.random is not None else None
-        self.args_video = args.video if args and args.video is not None else None
-        self.args_mute = args.mute if args and args.mute is not None else None
-
-        self.groups = {}
-
-    @property
-    def weight_modifier(self):
-        return self._weight_modifier
-
-    @property
-    def mode(self):
-        if self.args_mode is not None:
-            return self.args_mode
-        elif self.global_mode is not None:
-            return self.global_mode
-        else:
-            return self._mode
-
-    @property
-    def depth(self):
-        if self.args_depth is not None:
-            return self.args_depth
-        elif self.global_depth is not None:
-            return self.global_depth
-        else:
-            return self._depth
-
-    @property
-    def is_random(self):
-        if self.args_is_random is not None:
-            return self.args_is_random
-        elif self.global_is_random is not None:
-            return self.global_is_random
-        else:
-            return self._is_random
-
-    @property
-    def video(self):
-        if self.args_video is not None:  # CLI overrides all
-            return self.args_video
-        elif self.global_video is not None:  # folder-specific config
-            return self.global_video
-        else:
-            return self._video  # built-in fallback
-
-    @property
-    def mute(self):
-        if self.args_mute is not None:
-            return self.args_mute
-        elif self.global_mute is not None:
-            return self.global_mute
-        else:
-            return self._mute
-
-    def set_global_defaults(self, mode=None, depth=None, is_random=None):
-        if mode is not None:
-            self.global_mode = mode
-        if depth is not None:
-            self.global_depth = depth
-        if is_random is not None:
-            self.global_is_random = is_random
-
-    def set_global_video(self, video=None, mute=None):
-        if video is not None:
-            self.global_video = video
-        if mute is not None:
-            self.global_mute = mute
-
-
 class Filters:
     def __init__(self):
         self.must_contain = set()
@@ -1957,164 +1853,6 @@ class Filters:
 
         return 0
 
-
-class Stack:
-    def __init__(self, max_size=None):
-        """
-        Initialize a new Stack.
-
-        Args:
-            max_size (int, optional): The maximum number of items the stack can hold.
-                                      If None, the stack size is unlimited.
-        """
-        self.max_size = max_size
-        self.stack = []
-
-    def push(self, root, listA, listB):
-        """
-        Push a pair of lists onto the stack.
-
-        Args:
-            listA (list): The first list to be pushed onto the stack.
-            listB (list): The second list to be pushed onto the stack.
-        """
-        if self.max_size is None or len(self.stack) < self.max_size:
-            self.stack.append((root, listA, listB))
-        else:
-            print("Stack is full. Cannot push more items.")
-
-    def pop(self):
-        """
-        Pop the top pair of lists off the stack.
-
-        Returns:
-            tuple: A tuple containing the two lists that were on top of the stack.
-        """
-        if self.stack:
-            return self.stack.pop()
-        else:
-            print("Stack is empty. Cannot pop items.")
-            return None, None, None  # Return empty lists if the stack is empty
-
-    def read_top(self, index=1):
-        if self.stack:
-            return self.stack[len(self.stack) - index][0]
-
-    def clear(self):
-        """Clear the stack."""
-        self.stack.clear()
-
-    def len(self):
-        return len(self.stack)
-
-    def is_empty(self):
-        """Check if the stack is empty."""
-        return len(self.stack) == 0
-
-    def is_full(self):
-        """Check if the stack is full."""
-        if self.max_size is None:
-            return False
-        return len(self.stack) >= self.max_size
-
-
-# Utility functions
-def level_of(path):
-    return len([item for item in path.split(os.sep) if item != ""])
-
-
-def truncate_path(path, levels_up):
-    """Truncate the path based on the balance level."""
-    return "\\".join(
-        path.split("\\")[
-            : ((level_of(path) - levels_up) if levels_up < 0 else levels_up)
-        ]
-    )
-
-
-def contains_subdirectory(path):
-    for root, directories, files in os.walk(path):
-        if directories:
-            return len(directories)
-    return False
-
-
-def contains_files(path):
-    for root, directories, files in os.walk(path):
-        if files:
-            return True
-    return False
-
-
-def is_textfile(file):
-    return file.lower().endswith(TEXT_FILES)
-
-
-def is_imagefile(file):
-    return file.lower().endswith(IMAGE_FILES)
-
-
-def is_videofile(file):
-    return file.lower().endswith(VIDEO_FILES)
-
-
-def is_videoallowed(data_video):
-    if data_video is False:
-        return False
-    if defaults.args_video is not None:
-        return defaults.args_video
-    else:
-        return data_video if data_video is not None else defaults.video
-
-
-def parse_mode_string(mode_str):
-    # Updated regex: ([bw])(\d+)(?:,(-?\d+))?(?:,(-?\d+))?
-    pattern = re.compile(r"([bw])(\d+)(?:,(-?\d+))?(?:,(-?\d+))?", re.IGNORECASE)
-    matches = pattern.findall(mode_str)
-    # Each match is a tuple: (mode, level, slope1, slope2)
-    # Convert level to int, slopes to int if present, else None
-    result = {}
-    for char, num, slope1, slope2 in matches:
-        level = int(num)
-        slopes = []
-        if slope1:
-            slopes.append(int(slope1))
-        else:
-            slopes.append(0)
-        if slope2:
-            slopes.append(int(slope2))
-        else:
-            slopes.append(0)
-        result[level] = (char.lower(), slopes)
-    return result
-
-
-def resolve_mode(mode_dict, number):
-    if not mode_dict:
-        return ("w", [0, 0])  # Default to weighted mode, no slope
-
-    first_key = min(mode_dict.keys())
-
-    if number < first_key:
-        return ("l", [0, 0])
-    elif number in mode_dict:
-        mode_info = mode_dict[number]
-        if isinstance(mode_info, tuple):
-            # (mode, slopes)
-            mode, slope = mode_info
-            # Ensure slopes is always a list of two ints
-            if len(slope) == 1:
-                slope = [slope[0], 0]
-            elif len(slope) == 0:
-                slope = [0, 0]
-            return (mode, slope)
-        else:
-            # Backward compatibility: just a string
-            return (mode_info, [0, 0])
-    else:
-        return ("w", [0, 0])
-
-
 def test_distribution(image_nodes, weights, iterations, testdepth, defaults):
     hit_counts = defaultdict(int)
     for _ in tqdm(range(iterations), desc="Iterating tests", disable=args.quiet):
@@ -2135,9 +1873,8 @@ def test_distribution(image_nodes, weights, iterations, testdepth, defaults):
     total_images = len(image_nodes)
     for directory, count in sorted(directory_counts.items()):  # Alphabetical order
         print(
-            f"Directory: {directory}, Hits: {count}, %age: {count / iterations * 100:.2f}%, Weight: {count / total_images * TOTAL_WEIGHT:.2f}"
+            f"Directory: {directory}, Hits: {count}, %age: {count / iterations * 100:.2f}%, Weight: {count / total_images * constants.TOTAL_WEIGHT:.2f}"
         )
-
 
 def write_image_list(all_images, weights, input_files, mode_args, output_path):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -2151,7 +1888,6 @@ def write_image_list(all_images, weights, input_files, mode_args, output_path):
         f.write("\n".join(header) + "\n")
         for img, w in zip(all_images, weights):
             f.write(f"{img},{w}\n")
-
 
 def process_inputs(input_files, defaults, recdepth=1):
     """
@@ -2198,7 +1934,7 @@ def process_inputs(input_files, defaults, recdepth=1):
         modifier_pattern = re.compile(r"(\[.*?\])")
         weight_modifier_pattern = re.compile(r"^\d+%?$")
         proportion_pattern = re.compile(r"^%\d+%?$")
-        mode_pattern = CX_PATTERN
+        mode_pattern = constants.CX_PATTERN
         graft_pattern = re.compile(r"^g\d+$", re.IGNORECASE)
         group_pattern = re.compile(r"^>.*", re.IGNORECASE)
         depth_pattern = re.compile(r"^d\d+$", re.IGNORECASE)
@@ -2387,7 +2123,7 @@ def process_inputs(input_files, defaults, recdepth=1):
                                 '"', ""
                             ).strip()  # Remove enclosing quotes
 
-                            if is_textfile(
+                            if utils.is_textfile(
                                 line
                             ):  # Recursively process nested text files
                                 sub_image_dirs, sub_specific_images = (
@@ -2400,14 +2136,14 @@ def process_inputs(input_files, defaults, recdepth=1):
                                     line, defaults, recdepth
                                 )
                                 if modifier_list:
-                                    if is_imagefile(path):
+                                    if utils.is_imagefile(path):
                                         specific_images[path] = modifier_list
                                     else:
                                         image_dirs[path] = modifier_list
         else:  # Handle directories and images directly
             path, modifier_list = parse_input_line(entry, defaults, recdepth)
             if modifier_list:
-                if is_imagefile(path):
+                if utils.is_imagefile(path):
                     specific_images[path] = modifier_list
                 else:
                     image_dirs[path] = modifier_list
@@ -2480,7 +2216,7 @@ def main(input_files, defaults, test_iterations=None, testdepth=None, printtree=
 
 
 if __name__ == "__main__":
-    defaults = Defaults(args=args)
+    defaults = defaults.Defaults(args=args)
     filters = Filters()
 
     # Use args.input_file directly as a list
