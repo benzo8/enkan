@@ -9,7 +9,7 @@
             "console": "integratedTerminal",
             "args": [
                 "-i", "[+]VIP", "test.txt",
-                "--printtree"],
+                "--run"],
         },
         {
             "name": "Run make-input-file",
