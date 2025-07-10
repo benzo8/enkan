@@ -39,7 +39,7 @@ from slideshow import constants
 from slideshow.utils import utils
 from slideshow.utils.Defaults import Defaults, parse_mode_string
 from slideshow.utils.Filters import Filters
-from slideshow.utils.tests import test_distribution
+from slideshow.utils.tests import print_tree, test_distribution
 from slideshow.tree.Tree import Tree
 from slideshow.slideshow.mySlideshow import ImageSlideshow
 
@@ -425,7 +425,7 @@ def main(input_files, defaults, test_iterations=None, testdepth=None, printtree=
 
         # Print tree if requested
         if printtree:
-            tree.print_tree(defaults, max_depth=testdepth)
+            print_tree(defaults, tree.root, max_depth=testdepth)
             return
 
         # Extract paths and weights from the tree

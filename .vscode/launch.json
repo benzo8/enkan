@@ -9,8 +9,9 @@
             "justMyCode": true,
             "console": "integratedTerminal",
             "args": [
-                "-i", "kisabiano",
-                "--run"],
+                "-i", "katie",
+                "--testdepth", "4",
+                "--printtree"],
         }
     ]
 }
