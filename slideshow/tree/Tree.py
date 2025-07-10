@@ -1,13 +1,14 @@
+# ——— Standard library ———
 import os
-import sys
+
+# ——— Third-party ———
 from tqdm import tqdm
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-from constants import TOTAL_WEIGHT
-from tree.TreeNode import TreeNode
-from utils.Defaults import resolve_mode
-from utils import utils
+# ——— Local ———
+from slideshow.constants import TOTAL_WEIGHT
+from slideshow.tree.TreeNode import TreeNode
+from slideshow.utils.Defaults import resolve_mode
+from slideshow.utils import utils
 
 class Tree:
     def __init__(self):

@@ -1,18 +1,21 @@
+# ——— Standard library ———
 import os
 import sys
+import random
 import tkinter as tk
-import vlc
 from collections import deque
 from tkinter import messagebox
 from PIL import Image, ImageTk
-import random
 
-import constants
-from utils import utils
-from utils.Defaults import resolve_mode
-from utils.myStack import Stack
+# ——— Third-party ———
+import vlc
 
-from tree.Tree import Tree
+# ——— Local ———
+from slideshow import constants
+from slideshow.utils import utils
+from slideshow.utils.Defaults import resolve_mode
+from slideshow.utils.myStack import Stack
+from slideshow.tree.Tree import Tree
 
 class ImageSlideshow:
     def __init__(self, root, image_paths, weights, defaults, filters, quiet=False):

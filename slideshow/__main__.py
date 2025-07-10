@@ -24,24 +24,24 @@
 #
 # -----------------------------------------------------------------------------
 
+# ——— Standard library ———
 import argparse
 import os
-import random
 import re
-from collections import defaultdict
-
-from tqdm import tqdm
 from datetime import datetime
 
+# ——— Third-party ———
+from tqdm import tqdm
 
-import constants
-from utils.Filters import Filters
-import utils.utils as utils
-import utils.Defaults as defaults
-from utils.Defaults import parse_mode_string
-from tree.Tree import Tree
+# ——— Local ———
+from slideshow import constants
 
-from slideshow.mySlideshow import ImageSlideshow
+from slideshow.utils import utils
+from slideshow.utils.Defaults import Defaults, parse_mode_string
+from slideshow.utils.Filters import Filters
+from slideshow.utils.tests import test_distribution
+from slideshow.tree.Tree import Tree
+from slideshow.slideshow.mySlideshow import ImageSlideshow
 
 # Argument parsing setup
 def cx_type(s: str) -> str:
@@ -113,29 +113,6 @@ parser.add_argument("--printtree", action="store_true", help="Print the tree str
 parser.add_argument("--version", action="version", version=f"%(prog)s {constants.VERSION}")
 args = parser.parse_args()
 
-
-def test_distribution(image_nodes, weights, iterations, testdepth, defaults):
-    hit_counts = defaultdict(int)
-    for _ in tqdm(range(iterations), desc="Iterating tests", disable=args.quiet):
-        if defaults.is_random:
-            image_path = random.choice(image_nodes)
-        else:
-            image_path = random.choices(image_nodes, weights=weights, k=1)[0]
-        hit_counts["\\".join(image_path.split("\\")[:testdepth])] += 1
-
-    directory_counts = defaultdict(int)
-    for path, count in hit_counts.items():
-        if os.path.isfile(path):
-            directory = os.path.dirname(path)
-        else:
-            directory = path
-        directory_counts[directory] += count
-
-    total_images = len(image_nodes)
-    for directory, count in sorted(directory_counts.items()):  # Alphabetical order
-        print(
-            f"Directory: {directory}, Hits: {count}, %age: {count / iterations * 100:.2f}%, Weight: {count / total_images * constants.TOTAL_WEIGHT:.2f}"
-        )
 
 def write_image_list(all_images, weights, input_files, mode_args, output_path):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -469,12 +446,12 @@ def main(input_files, defaults, test_iterations=None, testdepth=None, printtree=
 
     # Test or start the slideshow
     if test_iterations:
-        test_distribution(all_images, weights, test_iterations, testdepth, defaults)
+        test_distribution(all_images, weights, test_iterations, testdepth, defaults, args.quiet)
     else:
         start_slideshow(all_images, weights, defaults)
 
 if __name__ == "__main__":
-    defaults = defaults.Defaults(args=args)
+    defaults = Defaults(args=args)
     filters = Filters()
 
     # Use args.input_file directly as a list

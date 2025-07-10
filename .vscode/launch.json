@@ -2,27 +2,15 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Run Current File",
+            "name": "Python: Run slideshow as module",
             "type": "debugpy",
             "request": "launch",
-            "program": "${file}",
+            "module": "slideshow",
+            "justMyCode": true,
             "console": "integratedTerminal",
             "args": [
-                "-i", "[+]VIP", "test.txt",
+                "-i", "kisabiano",
                 "--run"],
-        },
-        {
-            "name": "Run make-input-file",
-            "type": "debugpy",
-            "request": "launch",
-            "justMyCode": false,
-            "program": "${workspaceFolder}/input-file-tests/make-input.py",
-            "cwd": "${fileDirname}",
-            "console": "integratedTerminal",
-            "args": [
-                "-n", "SofiE",
-                "-g", "b6",
-            ],
         }
     ]
 }

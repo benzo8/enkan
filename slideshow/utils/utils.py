@@ -1,5 +1,5 @@
 import os
-import constants
+from slideshow import constants
 
 def level_of(path):
     return len([item for item in path.split(os.sep) if item != ""])
