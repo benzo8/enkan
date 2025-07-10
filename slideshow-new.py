@@ -25,27 +25,29 @@
 # -----------------------------------------------------------------------------
 
 import argparse
+import sys
 import os
 import random
 import re
-
-# import sys
 import tkinter as tk
+import vlc
+import weakref
 from collections import defaultdict, deque
 from tkinter import messagebox
 from tqdm import tqdm
 from datetime import datetime
-
 from PIL import Image, ImageTk
 
 # Constants
-VERSION = "1.30"
+VERSION = "1.40"
 TOTAL_WEIGHT = 100
 PARENT_STACK_MAX = 5
-QUEUE_LENGTH_MAX = 10
+QUEUE_LENGTH_MAX = 25
 IMAGE_FILES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff")
+VIDEO_FILES = (".mp4", ".mkv", ".webm", ".avi", ".mov", ".wmv")
 TEXT_FILES = (".txt", ".lst")
-CX_PATTERN = re.compile(r'^(?:[BW]\d+)+$', re.IGNORECASE)
+CX_PATTERN = re.compile(r"^(?:[bw]\d+(?:,-?\d+)?(?:,-?\d+)?)+$", re.IGNORECASE)
+
 
 # Argument parsing setup
 def cx_type(s: str) -> str:
@@ -54,11 +56,14 @@ def cx_type(s: str) -> str:
     otherwise raises ArgumentTypeError.
     """
     if not CX_PATTERN.fullmatch(s):
-        msg = (f"invalid Cx string {s!r}; "
-               "must be one or more blocks of B or W followed by digits (case-insensitive), "
-               "e.g. B1, W23, B1W2B300")
+        msg = (
+            f"invalid Cx string {s!r}; "
+            "must be one or more blocks of B or W followed by digits (case-insensitive), "
+            "e.g. B1, W23, B1W2B300"
+        )
         raise argparse.ArgumentTypeError(msg)
     return s.lower()
+
 
 parser = argparse.ArgumentParser(description="Create a slideshow from a list of files.")
 parser.add_argument(
@@ -74,9 +79,10 @@ parser.add_argument(
 )
 parser.add_argument("--run", dest="run", action="store_true", help="Run the slideshow")
 parser.add_argument(
-    '-m-', '--mode',
+    "-m-",
+    "--mode",
     type=cx_type,
-    help="Mode string. One or more occurrences of B or W (case-insensitive) followed by digits, e.g. B12W3"
+    help="Mode string. One or more occurrences of B or W (case-insensitive) followed by digits, e.g. B12W3",
 )
 parser.add_argument(
     "--depth",
@@ -87,14 +93,33 @@ parser.add_argument(
     "--random", action="store_true", help="Start in Completely Random mode"
 )
 parser.add_argument(
+    "--video", dest="video", action="store_true", help="Enable video playback"
+)
+parser.add_argument(
+    "--no-video",
+    "--nv",
+    dest="video",
+    action="store_false",
+    help="Disable video playback",
+)
+parser.set_defaults(video=None)
+parser.add_argument(
+    "--no-mute", "--nm", dest="mute", action="store_false", help="Disable mute"
+)
+parser.set_defaults(mute=None)
+parser.add_argument(
+    "--quiet", "-q", action="store_true", help="Run in quiet mode (no output)"
+)
+parser.add_argument(
     "--test", metavar="N", type=int, help="Run the test with N iterations"
 )
 parser.add_argument(
     "--testdepth", type=int, default=None, help="Depth to display test results"
 )
 parser.add_argument("--printtree", action="store_true", help="Print the tree structure")
-parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {VERSION}")
+parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
 args = parser.parse_args()
+
 
 class ImageSlideshow:
     def __init__(self, root, image_paths, weights, defaults):
@@ -112,6 +137,11 @@ class ImageSlideshow:
         self.subfolder_mode = False
         self.parent_mode = False
         self.show_filename = False
+        self.video_muted = defaults.mute
+
+        # Add preload queue
+        self.preload_queue = deque(maxlen=3)
+        self.preloaded_images = {}
 
         self.screen_width = root.winfo_screenwidth()
         self.screen_height = root.winfo_screenheight()
@@ -120,15 +150,13 @@ class ImageSlideshow:
         if defaults.is_random:
             self.mode = "r"
         else:
-            self.mode = resolve_mode(defaults.mode, min(defaults.mode.keys()))
+            self.mode, _ = resolve_mode(defaults.mode, min(defaults.mode.keys()))
 
         self.rotation_angle = 0
 
         self.root.configure(background="black")  # Set root background to black
         self.label = tk.Label(root, bg="black")  # Set label background to black
         self.label.pack()
-
-        # self.filename_label = tk.Label(self.root, bg="black", fg="white", anchor="nw")
 
         self.filename_label = tk.Text(
             self.root,
@@ -148,6 +176,7 @@ class ImageSlideshow:
         self.root.bind("<Left>", self.previous_image)
         self.root.bind("<Right>", self.next_image_forward)
         self.root.bind("<Delete>", self.delete_image)
+        self.root.bind("<m>", self.toggle_mute)
         self.root.bind("<s>", self.toggle_subfolder_mode)
         self.root.bind("<p>", self.follow_branch_down)
         self.root.bind("<o>", self.follow_branch_up)
@@ -159,43 +188,142 @@ class ImageSlideshow:
         self.show_image()
 
     def show_image(self, image_path=None):
+        """
+        Displays an image or plays a video in the slideshow application.
+
+        If an image path is provided, displays the specified image or plays the specified video.
+        If no image path is provided, selects the next image or video to display based on the current mode
+        (random or weighted random selection). Handles updating the navigation history.
+
+        For images:
+            - Applies rotation if specified.
+            - Resizes the image to fit the screen while maintaining aspect ratio.
+            - Displays the image in the Tkinter label widget.
+
+        For videos:
+            - Stops any currently playing video.
+            - Initializes and embeds a VLC media player instance into the Tkinter frame.
+            - Plays the video and starts polling to detect when the video ends.
+
+        Also updates filename and mode display labels.
+
+        Args:
+            image_path (str, optional): The file path of the image or video to display. If None, selects the next file automatically.
+
+        Raises:
+            RuntimeError: If the platform is unsupported for video playback embedding.
+        """
+        # Stop existing video playback and clean up resources
+        if hasattr(self, "video_player") and self.video_player:
+            self.video_player.stop()
+            self.video_player.release()
+            self.video_player = None
+        if hasattr(self, "video_frame"):
+            self.video_frame.place_forget()
+
+        # If no specific path given and we have preloaded images, use one of those
         if image_path is None:
-            # Choose the next image based on the mode (random or weighted)
             if self.mode == "r":
                 image_path = random.choice(self.image_paths)
             else:
                 image_path = random.choices(
                     self.image_paths, weights=self.weights, k=1
                 )[0]
+
+            # Update history
             self.history.append(image_path)
-            self.forward_history.clear()  # Clear forward history when a new image is shown
+            self.forward_history.clear()
+
         self.current_image_path = image_path
         self.current_image_index = self.image_paths.index(image_path)
-        image = Image.open(image_path)
 
-        # Apply rotation
-        if self.rotation_angle != 0:
-            image = image.rotate(self.rotation_angle, expand=True)
+        if is_videofile(image_path):
+            self.label.config(image="")
+            self.label.image = None
+            self.label.pack()
 
-        # Resize image to fit the screen while maintaining aspect ratio
-        screen_width = self.screen_width
-        screen_height = self.screen_height
-        image_ratio = image.width / image.height
-        screen_ratio = screen_width / screen_height
+            if not hasattr(self, "video_frame"):
+                self.video_frame = tk.Frame(self.root, bg="black")
 
-        if image_ratio > screen_ratio:
-            new_width = screen_width
-            new_height = int(screen_width / image_ratio)
+            self.video_frame.place(
+                x=0, y=0, width=self.screen_width, height=self.screen_height
+            )
+
+            if not hasattr(self, "vlc_instance"):
+                self.vlc_instance = vlc.Instance("--no-video-title-show", "--quiet")
+
+            media = self.vlc_instance.media_new(image_path)
+            media.get_mrl()  # Ensure it's fully initialised
+
+            self.video_player = self.vlc_instance.media_player_new()
+            self.video_player.set_media(media)
+            self.video_player.audio_set_mute(self.video_muted)
+
+            # Embed into tkinter
+            window_id = self.video_frame.winfo_id()
+            if sys.platform.startswith("win"):
+                self.video_player.set_hwnd(window_id)
+            elif sys.platform.startswith("linux"):
+                self.video_player.set_xwindow(window_id)
+            elif sys.platform == "darwin":
+                self.video_player.set_nsobject(window_id)
+            else:
+                raise RuntimeError(f"Unsupported platform: {sys.platform}")
+
+            self.video_player.play()
+
+            # Start polling to detect end of video
+            self.root.after(500, self._check_video_ended)
+
         else:
-            new_height = screen_height
-            new_width = int(screen_height * image_ratio)
+            # Stop any video, hide video frame, and show image
+            if hasattr(self, "video_frame"):
+                self.video_frame.place_forget()
 
-        image = image.resize((new_width, new_height), Image.LANCZOS)
-        photo = ImageTk.PhotoImage(image)
-        self.label.config(image=photo)
-        self.label.image = photo
+            # Load and process the image
+            image = Image.open(image_path)
+            # Resize image to fit the screen while maintaining aspect ratio
+            screen_width = self.screen_width
+            screen_height = self.screen_height
+            image_ratio = image.width / image.height
+            screen_ratio = screen_width / screen_height
 
+            if image_ratio > screen_ratio:
+                new_width = screen_width
+                new_height = int(screen_width / image_ratio)
+            else:
+                new_height = screen_height
+                new_width = int(screen_height * image_ratio)
+
+            image = image.resize((new_width, new_height), Image.LANCZOS)
+
+            # Apply rotation if needed (after getting image from either source)
+            if self.rotation_angle != 0:
+                image = image.rotate(self.rotation_angle, expand=True)
+
+            # Convert to PhotoImage and display
+            photo = ImageTk.PhotoImage(image)
+            self.label.config(image=photo)
+            self.label.image = photo
+            self.label.pack()
+
+        self.filename_label.tkraise()
+        self.mode_label.tkraise()
         self.update_filename_display()
+
+    def _check_video_ended(self):
+        if not self.video_player:
+            return
+
+        length = self.video_player.get_length()
+        time = self.video_player.get_time()
+
+        if length > 0 and time >= length - 200:  # Account for buffering etc.
+            self.video_player.stop()
+            self.video_player.play()
+            return
+
+        self.root.after(500, self._check_video_ended)
 
     def next_image(self, event=None):
         if self.rotation_angle != 0:
@@ -233,6 +361,13 @@ class ImageSlideshow:
                     self.show_image()
                 except Exception as e:
                     messagebox.showerror("Error", f"Could not delete the image: {e}")
+
+    def toggle_mute(self, event=None):
+        if hasattr(self, "video_player") and self.video_player:
+            current_mute = self.video_player.audio_get_mute()
+            new_mute = not current_mute
+            self.video_player.audio_set_mute(new_mute)
+            self.video_muted = new_mute  # Keep state in sync
 
     def subfolder_mode_on(self):
         current_dir = os.path.dirname(self.current_image_path)
@@ -340,7 +475,7 @@ class ImageSlideshow:
 
             # Build the new tree and extract images and weights
             parent_tree.build_tree(parent_image_dirs, None, defaults)
-            parent_tree.calculate_branch_weights(mode=defaults.mode[0], mode_str=1)
+            parent_tree.calculate_weights()
             self.image_paths, self.weights = (
                 parent_tree.extract_image_paths_and_weights_from_tree()
             )
@@ -398,7 +533,7 @@ class ImageSlideshow:
                 self.image_paths = []
                 self.weights = []
 
-                parent_tree = Tree(defaults.mode[1])
+                parent_tree = Tree()
                 parent_image_dirs[parent_path] = {
                     "weight_modifier": 100,
                     "is_percentage": True,
@@ -407,6 +542,7 @@ class ImageSlideshow:
                     "depth": defaults.depth,
                 }
                 parent_tree.build_tree(parent_image_dirs, None, defaults)
+                parent_tree.calculate_weights()
                 self.image_paths, self.weights = (
                     parent_tree.extract_image_paths_and_weights_from_tree()
                 )
@@ -516,10 +652,6 @@ class ImageSlideshow:
             # Disable the text widget to prevent editing
             self.filename_label.config(state=tk.DISABLED)
 
-            # filename_text = f"{self.current_image_path}"
-            # self.filename_label.config(text=filename_text)
-            # self.filename_label.place(x=0, y=0)
-
             mode_text = self.mode.upper() if self.mode else "-"
             if self.subfolder_mode:
                 mode_text += " S"
@@ -561,9 +693,37 @@ class ImageSlideshow:
         self.show_image(self.current_image_path)
 
     def exit_slideshow(self, event=None):
+        # Clear preloaded images
+        self.preloaded_images.clear()
+        self.preload_queue.clear()
+        if hasattr(self, "video_player") and self.video_player:
+            self.video_player.stop()
+            self.video_player.release()
+            self.video_player = None
+        if hasattr(self, "vlc_instance") and self.vlc_instance:
+            self.vlc_instance.release()
+            self.vlc_instance = None
+        if hasattr(self, "video_frame"):
+            self.video_frame.destroy()
         self.root.destroy()
 
+
 class TreeNode:
+    __slots__ = (
+        "name",
+        "path",
+        "proportion",
+        "weight",
+        "weight_modifier",
+        "is_percentage",
+        "mode_modifier",
+        "flat",
+        "images",
+        "children",
+        "_parent",
+        "__weakref__",
+    )
+
     def __init__(
         self,
         name,
@@ -585,7 +745,7 @@ class TreeNode:
             is_percentage  # Boolean to indicate if the weight is a percentage
         )
         self.mode_modifier = mode_modifier  # Modifier for the mode of this node
-        self.mode=None  # Mode code for this node, e.g., 'B' or 'W'
+        self.flat = flat  # Boolean to indicate if this node is a flat branch
         self.images = images if images else []  # List of images in this node
         self.children = []  # List of child nodes (branches)
         self.parent = parent  # Reference to the parent node
@@ -606,7 +766,21 @@ class TreeNode:
             current = current.parent
 
         return level
-    
+
+    @property
+    def parent(self):
+        """
+        Get the parent node (returns None if parent was garbage collected)
+        """
+        return self._parent() if self._parent is not None else None
+
+    @parent.setter
+    def parent(self, new_parent):
+        """
+        Set the parent node using a weak reference
+        """
+        self._parent = weakref.ref(new_parent) if new_parent is not None else None
+
     @property
     def siblings(self):
         if self.parent:
@@ -641,6 +815,7 @@ class TreeNode:
 
         return nodes_at_level
 
+
 class Tree:
     def __init__(self):
         self.root = TreeNode("root", 0)
@@ -651,17 +826,22 @@ class Tree:
         Read image_dirs and specific_images and build a tree.
         """
         # Initialize tqdm progress bar
-        with tqdm(total=0, desc="Building tree", unit="file") as pbar:
+        with tqdm(
+            total=0, desc="Building tree", unit="file", disable=args.quiet
+        ) as pbar:
             for root, data in image_dirs.items():
                 if data.get("flat", False):
-                    self.add_flat_branch(root, data)
+                    self.add_flat_branch(root, data, pbar)
                 else:
                     # Process each directory
                     self.process_directory(root, data, defaults, pbar)
 
                 # Insert proportion & mode if specified
                 if root in image_dirs:
-                    if data.get("proportion") is not None or data.get("mode_modifier") is not None:
+                    if (
+                        data.get("proportion") is not None
+                        or data.get("mode_modifier") is not None
+                    ):
                         # If a proportion is specified, use it
                         self.append_overwrite_or_update(
                             root,
@@ -696,8 +876,9 @@ class Tree:
                 # Update the total for new files discovered
                 pbar.total += len(files)
                 pbar.desc = f"Processing {path}"
+                pbar.update(len(files))
                 pbar.refresh()
-                self.process_path(path, files, dirs, data, root_level, depth, pbar)
+                self.process_path(path, files, dirs, data, root_level, depth)
             elif filters.passes(path) == 1:
                 del dirs[:]  # Prune directories
 
@@ -717,7 +898,7 @@ class Tree:
             ignored_files_dirs.add(dir_path)
         return ignored_files_dirs
 
-    def process_files(self, path, files, filters):
+    def process_files(self, path, files, filters, is_videoallowed=None):
         """
         Process files in the current directory, ignoring specified files.
 
@@ -730,12 +911,12 @@ class Tree:
             list: List of valid image file paths.
         """
         # Preprocess ignored_dirs once (outside this function)
-        if not hasattr(filters, "ignored_dirs_set"):
+        if not hasattr(filters, "ignored_files_dirs"):
             filters.ignored_files_dirs = self.preprocess_ignored_files(
                 filters.ignored_files
             )
 
-        # Check if the current directory is in ignored_dirs_set
+        # Check if the current directory is in ignored_files_dirs
         if path in filters.ignored_files_dirs:
             # Filter out ignored files from the current directory
             valid_files = [
@@ -749,24 +930,21 @@ class Tree:
         images = [
             os.path.join(path, f)
             for f in valid_files
-            if is_imagefile(f)
+            if is_imagefile(f) or (is_videofile(f) and is_videoallowed)
         ]
 
         return images
 
-    def process_path(self, path, files, dirs, data, root_level, depth, pbar):
+    def process_path(self, path, files, dirs, data, root_level, depth):
         """
         Process an individual path, adding images or virtual nodes as needed.
         """
-        images = self.process_files(path, files, filters)
+        images = self.process_files(
+            path, files, filters, is_videoallowed(data.get("video"))
+        )
 
         if not images:
             return
-
-        # Dynamically update the progress bar as files are processed
-        for _ in images:
-            # Simulate processing the file
-            pbar.update(1)
 
         path_level = self.calculate_level(path)
         path_depth = path_level - root_level
@@ -781,26 +959,7 @@ class Tree:
             # Add a regular branch
             self.add_regular_branch(path, images, path_level, depth, data)
 
-    # def flatten_branch(self, root):
-    #     """
-    #     Collect all images from the branch rooted at `root`, including subdirectories.
-
-    #     Args:
-    #         root (str): The root directory of the branch.
-
-    #     Returns:
-    #         list: A list of full paths to all images in the branch.
-    #     """
-    #     images = []
-    #     for path, _, files in os.walk(root):
-    #         images.extend(
-    #             os.path.join(path, f)
-    #             for f in files
-    #             if is_imagefile(f)
-    #         )
-    #     return images
-
-    def add_flat_branch(self, path, data):
+    def add_flat_branch(self, path, data, pbar):
         """
         Add a special 'flat' branch for directories with images.
         """
@@ -821,12 +980,20 @@ class Tree:
                     os.path.join(path, f)
                     for f in files
                     if is_imagefile(f)
+                    or (is_videofile(f) and is_videoallowed(data.get("video")))
                 )
             return images
+
+        pbar.desc = f"Flattening {path}"
+        pbar.refresh()
 
         images = flatten_branch(path)
         level = data.get("level", self.calculate_level(path))
         depth = data.get("depth", 9999)
+
+        pbar.total += len(images)
+        pbar.update(len(images))
+        pbar.refresh()
 
         self.append_overwrite_or_update(
             path,
@@ -862,9 +1029,9 @@ class Tree:
     def add_virtual_branch(self, path, images, root_level, depth, data):
         """
         Add a virtual branch when the path depth exceeds the allowed depth.
-        
+
         TODO: Fix adding images to existing virtual branches.
-        
+
         """
         virtual_path_level = root_level + depth
         virtual_path = os.path.join(
@@ -900,21 +1067,46 @@ class Tree:
             },
         )
 
-    def handle_grafting(self, root, graft_level, group):
-        if not graft_level and not group:
+    def handle_grafting(
+        self: "Tree", 
+        root: str, 
+        graft_level: int, 
+        group: str
+    ) -> None:
+        """
+        Graft a subtree to a new location in the tree at the specified level and apply group-specific configuration.
+
+        This function moves (grafts) a node and its subtree from its current parent to a new parent node at the
+        specified graft_level. It also applies any mode modifiers and proportions specified in the group configuration.
+        If the old parent becomes empty after grafting, it is pruned from the tree.
+
+        Args:
+            root (str): The original root path of the node to be grafted.
+            graft_level (int): The level in the tree to which the node should be grafted.
+            group (str): The group name used to look up group-specific configuration.
+
+        Returns:
+            None. The tree structure is modified in-place.
+        """
+        # if not group:
+        #     return
+        # else:
+        if group in defaults.groups:
+            group_graft_level = defaults.groups[group].get("graft_level")
+        else:
+            group_graft_level = None      
+        graft_level = graft_level or group_graft_level
+        if not graft_level:
             return
-        """
-        Handle grafting by adjusting the tree structure after the directory is processed.
-        """
+        
         current_node_name = self.convert_path_to_tree_format(root)
         current_node = self.find_node(current_node_name)
-        current_node_parent = current_node.parent
-
         if not current_node:
             print(
                 f"Warning: Node '{current_node_name}' not found for grafting. Skipping."
             )
             return
+        current_node_parent = current_node.parent
 
         levelled_name = self.convert_path_to_tree_format(
             self.set_path_to_level(root, graft_level, group)
@@ -924,8 +1116,8 @@ class Tree:
 
         # Detach from the old parent and graft to the new location
         self.detach_node(current_node)
-        current_node.name = levelled_name
         parent_node.add_child(current_node)
+        self.rename_node_in_lookup(current_node.name, levelled_name)
         current_node.path = root
 
         # Rename and relevel child nodes
@@ -947,6 +1139,16 @@ class Tree:
             else:
                 break
 
+        # Add mode_modifiers, if present
+        group_config = defaults.groups.get(group)
+        if group_config:
+            mode_modifiers = group_config.get("mode_modifier")
+            if mode_modifiers:
+                for level, mode in mode_modifiers.items():
+                    for child in current_node.get_nodes_at_level(level):
+                        child.mode_modifier = {level: mode}
+            self.set_proportion(group, current_node)
+
     def rename_children(self, parent_node, new_parent_name):
         """
         Traverse the subtree of the parent node and update the names
@@ -959,14 +1161,27 @@ class Tree:
         for child in parent_node.children:
             # Calculate the new name for the child node
             child_basename = os.path.basename(child.name)
-            # old_name = child.name
-            child.name = os.path.join(new_parent_name, child_basename)
-
-            # Log the renaming
-            # print(f"Updated node: {old_name} -> {child.name}")
-
+            new_name = os.path.join(new_parent_name, child_basename)
+            self.rename_node_in_lookup(child.name, new_name)
             # Recursively update the child's subtree
-            self.rename_children(child, child.name)
+            self.rename_children(child, new_name)
+
+    def rename_node_in_lookup(
+        self: "Tree",
+        old_name: str,
+        new_name: str
+    ) -> None:
+        """
+        Rename a node in the tree and update node_lookup accordingly.
+
+        Args:
+            old_name (str): The current name (key) of the node in node_lookup.
+            new_name (str): The new name to assign to the node and as the key in node_lookup.
+        """
+        node = self.node_lookup.pop(old_name, None)
+        if node is not None:
+            node.name = new_name
+            self.node_lookup[new_name] = node
 
     def process_specific_images(self, specific_images, defaults):
         """
@@ -1001,27 +1216,19 @@ class Tree:
                 # Handle grafting after processing the directory
                 graft_level = data.get("graft_level") or level
                 group = data.get("group")
-                if (graft_level is not None and graft_level != level) or (group):
-                    self.handle_grafting(node_name, graft_level, group)
+                self.handle_grafting(node_name, graft_level, group)
 
     def append_overwrite_or_update(self, path, level, depth, node_data=None):
         """
         Add or update a node in the tree. If the node already exists, overwrite or update it.
         """
-
-        # # If a level override exists, truncate the path
-        # if level is not None:
-        #     path = self.set_path_to_level(path, level)
-
         # Convert path to match the format used in node_lookup
         tree_path = self.convert_path_to_tree_format(path)
 
         # Ensure all parent nodes exist
         tree_parent_name = self.find_parent_name(tree_path)
-        # tree_parent_name = self.convert_path_to_tree_format(parent_name)
         self.ensure_parent_exists(tree_parent_name)
 
-        # path_name = self.convert_path_to_tree_format(path)
         node = self.find_node(tree_path)
         if node:
             # Update node data if it exists
@@ -1029,12 +1236,15 @@ class Tree:
             node.is_percentage = node_data["is_percentage"]
             node.proportion = node_data["proportion"]
             node.mode_modifier = node_data["mode_modifier"]
+            """
+            TODO: Fix adding images to existing virtual nodes without duplicating images in other node types
+            """
             # node.images.extend(node_data["images"])
         else:
             # Create a new node and add it to the tree
             new_node = TreeNode(
                 name=tree_path,
-                path=None,
+                path=path,
                 weight_modifier=node_data["weight_modifier"],
                 is_percentage=node_data["is_percentage"],
                 proportion=node_data["proportion"],
@@ -1069,15 +1279,8 @@ class Tree:
         Raises:
             ValueError: If the parent cannot be created or added for any reason.
         """
-        # Ensure the parent exists
-
-        # tree_parent_name = self.convert_path_to_tree_format(parent_name)
-        # self.ensure_parent_exists(tree_parent_name)
-
         # Find the parent node
         parent_node = self.find_node(tree_parent_name)
-        # if not parent_node:
-        #     raise ValueError(f"Failed to create or find parent node '{parent_name}'.")
 
         # Add the new node to the parent
         parent_node.add_child(new_node)
@@ -1089,7 +1292,6 @@ class Tree:
 
         Args:
             parent_name (str): The full path of the parent node to ensure exists.
-            return_parent (bool): If True, return the parent `TreeNode`.
 
         Returns:
             TreeNode: The parent node if `return_parent` is True, otherwise None.
@@ -1115,7 +1317,10 @@ class Tree:
 
         return current_node
 
-    def convert_path_to_tree_format(self, path):
+    def convert_path_to_tree_format(
+        self: "Tree",
+        path: str
+    ) -> str:
         """
         Convert the path to match the format used in node_lookup (e.g., prefixed with 'root').
         Removes the drive letter and adds 'root' as the base.
@@ -1129,7 +1334,7 @@ class Tree:
         )
 
         # Join the components back into a single path
-        return os.path.join(*path_components)
+        return os.path.join(*path_components).lower()
 
     def set_path_to_level(self, path, level, group=None):
         """
@@ -1180,30 +1385,56 @@ class Tree:
         # No adjustment needed
         return path
 
-    def find_parent_name(self, node_name):
+    def find_parent_name(
+        self: "Tree", 
+        node_name: str
+    ) -> str:
         """
-        Find the name of the parent node.
+        Return the parent name (path) of a given node name.
+
+        This function uses os.path.dirname to extract the parent path from the given node name.
+        It is used to determine the parent node in the tree structure.
 
         Args:
-            node_name (str): The name of the current node.
+            node_name (str): The name (path) of the node whose parent is to be found.
 
         Returns:
-            str: The name of the parent node.
+            str: The parent name (path) of the given node.
         """
         return os.path.dirname(node_name)
 
-    def find_node(self, name):
-        return self.node_lookup.get(name)
-
-    def get_nodes_at_level(self, target_level):
+    def find_node(
+        self: "Tree", 
+        name: str
+    ) -> "TreeNode":
         """
-        Retrieve all nodes at a specific level, optimized to skip unnecessary traversal.
+        Retrieve a node from the tree by its name using the node lookup dictionary.
 
         Args:
-            target_level (int): The level to retrieve nodes from.
+            name (str): The name (path) of the node to find.
 
         Returns:
-            list: A list of TreeNode instances at the specified level.
+            TreeNode: The node with the specified name, or None if not found.
+        """
+        return self.node_lookup.get(name)
+
+    def get_nodes_at_level(
+        self: "Tree", 
+        target_level: int
+    ) -> list["TreeNode"]:
+        """
+        Retrieve all nodes in the tree at the specified level.
+
+        This function traverses the tree starting from the root node and collects all nodes
+        whose level matches the given target_level. Traversal stops at nodes that match the
+        target level, so their children are not included.
+
+        Args:
+            target_level (int): The level (depth) in the tree to collect nodes from.
+                The root node is typically level 1.
+
+        Returns:
+            list[TreeNode]: A list of TreeNode objects at the specified level.
         """
         nodes_at_level = []
 
@@ -1218,12 +1449,108 @@ class Tree:
         traverse(self.root)
         return nodes_at_level
 
-    def calculate_level(self, path):
+    def calculate_level(
+        self: "Tree", 
+        path: str
+    ) -> int:
+        """
+        Calculate the level (depth) of a given filesystem path.
+
+        The level is determined by splitting the path using the OS-specific path separator
+        and counting the number of non-empty components. This is used to determine the
+        depth of a node in the tree structure.
+
+        Args:
+            path (str): The filesystem path to evaluate.
+
+        Returns:
+            int: The level (depth) of the path, where the root is level 1.
+        """
         return len(
             list(filter(None, path.split(os.path.sep)))
         )  # Calculate level based on path depth
 
-    def extract_image_paths_and_weights_from_tree(self, test_iterations=None):
+    def set_proportion(
+    self: "Tree", 
+    group: str, 
+    current_node: "TreeNode"
+) -> int | None:
+        """
+        Determine the effective graft level for a group and node, and set the group's proportion
+        (if present) on the node at that level along the current_node's path.
+
+        Returns group_graft_level if it exists, otherwise the lowest of:
+        - the group's mode_modifier keys (if any)
+        - the lowest graft_level among the node's children (if any child has it set)
+
+        If group_config has a 'proportion', it is set on the node at the effective graft level.
+
+        Args:
+            group (str): The group name to look up in defaults.groups.
+            current_node (TreeNode): The node whose children may have graft_level set.
+
+        Returns:
+            int or None: The effective graft level, or None if not found.
+        """
+        group_config = defaults.groups.get(group, {})
+        if group_config is None:
+            return None
+        proportion = group_config.get("proportion", None)
+        if proportion is not None:
+            group_graft_level = group_config.get("graft_level")
+            if group_graft_level is not None:
+                effective_level = group_graft_level
+            else:
+                # Get lowest mode_modifier key if present
+                mode_modifiers = group_config.get("mode_modifier")
+                mode_modifier_level = None
+                if mode_modifiers:
+                    mode_modifier_level = min(mode_modifiers.keys())
+
+                # Get lowest graft_level among children if present
+                child_graft_levels = [
+                    getattr(child, "graft_level", None)
+                    for child in getattr(current_node, "children", [])
+                    if getattr(child, "graft_level", None) is not None
+                ]
+                child_graft_level = min(child_graft_levels) if child_graft_levels else None
+
+                # Return the lowest of mode_modifier_level and child_graft_level (if either exists)
+                candidates = [lvl for lvl in [mode_modifier_level, child_graft_level] if lvl is not None]
+                effective_level = min(candidates) if candidates else None
+
+            # Set the proportion if present
+            
+            if proportion is not None and effective_level is not None:
+                # Traverse up from current_node to the node at effective_level
+                node = current_node
+                while node is not None and node.level > effective_level:
+                    node = node.parent
+                if node is not None and node.level == effective_level:
+                    node.proportion = proportion
+
+        return
+
+    def extract_image_paths_and_weights_from_tree(
+        self: "Tree", 
+        test_iterations: int = None
+    ) -> tuple[list[str], list[float]]:
+        """
+        Recursively extract all image file paths and their associated normalized weights from the tree.
+
+        This function traverses the tree starting from the root node, collecting all image paths and
+        calculating a normalized weight for each image based on the node's weight and the number of images
+        in the node. If test_iterations is provided, the image name is used instead of the full path for testing.
+
+        Args:
+            test_iterations (int, optional): If provided, use node names instead of image paths for output
+                (useful for testing distributions). Defaults to None.
+
+        Returns:
+            tuple[list[str], list[float]]: A tuple containing:
+                - all_images (list of str): List of image file paths (or node names if test_iterations is set).
+                - weights (list of float): List of normalized weights corresponding to each image.
+        """
         all_images = []
         weights = []
 
@@ -1258,17 +1585,19 @@ class Tree:
 
         return all_images, weights
 
-    def count_branches(self, node):
+    def count_branches(
+        self, node: "TreeNode"
+    ) -> tuple[int, int]:
         """
-        Recursively count the number of branches and images in the tree.
+        Recursively count the number of branches and images in the tree starting from the given node.
 
         Args:
-            node (TreeNode): The current node.
+            node (TreeNode): The current node to start counting from.
 
         Returns:
-            tuple: (branch_count, image_count) where:
-                - branch_count is the total number of branches.
-                - image_count is the total number of images.
+            tuple[int, int]: A tuple (branch_count, image_count) where:
+                - branch_count (int): The total number of branches (nodes with images) in the subtree.
+                - image_count (int): The total number of images in the subtree.
         """
         if not node:
             return 0, 0
@@ -1289,33 +1618,60 @@ class Tree:
 
         return branch_count, image_count
 
-    def calculate_weights(self):
+    def calculate_weights(
+        self: "Tree",
+    ) -> None:
         """
-        Entry point: calculate weights from the first level with a mode modifier.
+        Calculates and assigns weights to all nodes in the tree based on the current mode and slope settings.
+
+        This function determines the starting nodes at the lowest rung (level) of the tree, applies the appropriate
+        mode and slope (as resolved from the defaults), fills in missing proportions for these nodes, and then
+        recursively processes each node to assign weights throughout the tree.
+
+        The weights are apportioned according to the calculated proportions and any weight modifiers present.
+        This ensures that the final weights reflect the desired balancing or weighting strategy for the slideshow.
+
+        Returns:
+            None. The function updates the 'weight' attribute of each node in-place.
         """
         lowest_rung = min(defaults.mode.keys())
         starting_nodes = self.get_nodes_at_level(lowest_rung) or [self.root]
 
-        mode = resolve_mode(defaults.mode, lowest_rung)
+        mode, slope = resolve_mode(defaults.mode, lowest_rung)
 
         starting_nodes = self._fill_missing_proportions(
             starting_nodes,
             mode,
-            count_fn=(lambda n: self.count_branches(n)[1]) if mode == "w" else None
+            slope,
+            count_fn=(lambda n: self.count_branches(n)[1]) if mode == "w" else None,
         )
 
         for node in starting_nodes:
             apportioned_weight = TOTAL_WEIGHT * (node.proportion / 100)
             self._process_node(node, apportioned_weight)
 
-    def _process_node(self, node, apportioned_weight, mode_modifier=None):
+    def _process_node(
+        self, node: "TreeNode", apportioned_weight: float, mode_modifier: dict = None
+    ) -> None:
         """
-        Assign weight to the node and recurse into children based on its mode.
+        Recursively assigns weights to a node and its children based on the apportioned weight and mode modifiers.
+
+        This function applies the node's weight modifier, then, if the node has children, determines the mode and slope
+        for the next level, fills missing proportions for the children, and recursively processes each child node.
+
+        Args:
+            node (TreeNode): The current node to process.
+            apportioned_weight (float): The weight apportioned to this node from its parent.
+            mode_modifier (dict, optional): Mode modifier dictionary to override or supplement the default mode.
+
+        Returns:
+            None. The function updates the 'weight' attribute of each node in-place and recurses through the tree.
         """
         # Apply node's weight_modifier
         node.weight = (
             apportioned_weight * (node.weight_modifier / 100)
-            if node.is_percentage else apportioned_weight
+            if node.is_percentage
+            else apportioned_weight
         )
 
         if not node.children:
@@ -1323,21 +1679,49 @@ class Tree:
 
         mode_modifier = node.mode_modifier or mode_modifier
         child_level = node.level + 1
-        child_mode = resolve_mode(defaults.mode | (node.mode_modifier or {}), child_level)
+        child_mode, slope = resolve_mode(
+            defaults.mode | (node.children[0].mode_modifier or {}), child_level
+        )
 
         children = self._fill_missing_proportions(
             node.children,
             child_mode,
-            count_fn=(lambda n: self.count_branches(n)[1]) if child_mode == "w" else None
+            slope,
+            count_fn=(
+                (lambda n: self.count_branches(n)[1]) if child_mode == "w" else None
+            ),
         )
 
         for child in children:
             child_weight = node.weight * (child.proportion / 100)
             self._process_node(child, child_weight, mode_modifier)
 
-    def _fill_missing_proportions(self, nodes, mode, count_fn=None):
+    def _fill_missing_proportions(
+        self: "Tree",
+        nodes: list[TreeNode],
+        mode: str,
+        slope: tuple[int, int] = (0, 0),
+        count_fn: callable = None,
+    ) -> list[TreeNode]:
         """
-        Fill in missing proportions for a group of sibling nodes based on mode.
+        Assigns proportions to nodes that do not have a set proportion, according to the specified mode.
+
+        For 'balanced' mode ("b"), all unset nodes receive an equal share of the remaining proportion.
+        For 'weighted' mode ("w"), proportions are assigned based on the number of images (or another count function)
+        in each node, with an optional slope parameter to flatten, steepen, or invert the weighting.
+
+        After assignment, all node proportions are normalized so their sum is 100.
+
+        Args:
+            nodes (list[TreeNode]): List of sibling nodes to assign proportions to.
+            mode (str): Either "b" (balanced) or "w" (weighted).
+            slope (tuple[int, int], optional): Slope parameter(s) for weighted mode, in the range -100 to 100.
+                Only the first value is used. Positive values flatten toward balanced, negative values invert weighting.
+            count_fn (callable, optional): Function to count items in a node (e.g., number of images).
+                Required for weighted mode.
+
+        Returns:
+            list[TreeNode]: The list of nodes with updated 'proportion' attributes.
         """
         total_set = sum(n.proportion for n in nodes if n.proportion is not None)
         unset_nodes = [n for n in nodes if n.proportion is None]
@@ -1347,21 +1731,70 @@ class Tree:
             return nodes
 
         if mode == "b":
+            # Assign equal share of remaining proportion to each unset node
             per_node = remaining / len(unset_nodes)
             for n in unset_nodes:
                 n.proportion = per_node
-
         elif mode == "w":
+            # Assign proportion based on count_fn and slope
+            slope_value = slope[0] if isinstance(slope, (list, tuple)) else slope
             image_counts = [count_fn(n) for n in unset_nodes]
-            total_images = sum(image_counts) or 1
-            for n, count in zip(unset_nodes, image_counts):
-                n.proportion = remaining * (count / total_images)
+            if slope_value >= 0:
+                # Flatten toward balanced as slope increases
+                exp = 1 - (slope_value / 100)
+                exp = max(0.01, exp)
+                powered = [count**exp for count in image_counts]
+            else:
+                # Inverse weighting for negative slopes
+                exp = 1 + (slope_value / 100)  # slope -100 to 0 → exp 0 to 1
+                exp = max(0.01, exp)
+                powered = [(1 / count) ** exp for count in image_counts]
+            total_powered = sum(powered) or 1
+            for n, p in zip(unset_nodes, powered):
+                n.proportion = remaining * (p / total_powered)
+
+        # Renormalize so proportions sum to 100
+        total = sum(n.proportion for n in nodes)
+        for n in nodes:
+            n.proportion = n.proportion * 100 / total if total else 0
 
         return nodes
 
-    def print_tree(self, node=None, indent="", current_depth=0, max_depth=None):
+    def test_node_lookup_consistency(self) -> bool:
         """
-        Recursively prints the tree in an ASCII hierarchical format.
+        Test that every entry in node_lookup has a key matching its node's name.
+        Prints mismatches and returns True if all are consistent, False otherwise.
+        """
+        all_good = True
+        for key, node in self.node_lookup.items():
+            if key != node.name:
+                print(f"Mismatch: key='{key}' != node.name='{node.name}'")
+                all_good = False
+        if all_good:
+            print("node_lookup consistency check PASSED.")
+        else:
+            print("node_lookup consistency check FAILED.")
+        return all_good
+
+    def print_tree(
+        self,
+        node: "TreeNode" = None,
+        indent: str = "",
+        current_depth: int = 0,
+        max_depth: int = None,
+    ) -> None:
+        """
+        Recursively prints the tree structure, displaying each node's name, mode, level,
+        proportion, weight modifier, weight, and number of images (if any).
+
+        Args:
+            node (TreeNode, optional): The node to start printing from. Defaults to the root node.
+            indent (str, optional): String used to indent child nodes for visual hierarchy. Defaults to "".
+            current_depth (int, optional): Current depth in the tree (used for recursion). Defaults to 0.
+            max_depth (int, optional): Maximum depth to print. If None, prints the entire tree.
+
+        Returns:
+            None. Prints the tree structure to the console.
         """
         if node is None:
             node = self.root
@@ -1370,16 +1803,19 @@ class Tree:
             return
 
         num_images = len(node.images) if node.images else 0
+        mode, _ = resolve_mode(
+            defaults.mode | (node.mode_modifier if node.mode_modifier else {}),
+            node.level,
+        )
+        percent_sign = "%" if node.is_percentage else ""
         if num_images == 0:
             # ANSI escape code for dark grey: \033[90m ... \033[0m
-            percent_sign = "%" if node.is_percentage else ""
             print(
-                f"\033[90m{indent}{node.name} (L: {node.level}, P: {node.proportion}, M: {node.weight_modifier}{percent_sign}, W: {node.weight})\033[0m"
+                f"\033[90m{indent}{node.name} ({mode}{node.level}, P: {node.proportion}, M: {node.weight_modifier}{percent_sign}, W: {node.weight})\033[0m"
             )
         else:
-            percent_sign = "%" if node.is_percentage else ""
             print(
-                f"{indent}{node.name} (L: {node.level}, P: {node.proportion}, M: {node.weight_modifier}{percent_sign}, W: {node.weight}, Images: {num_images})"
+                f"{indent}{node.name} ({mode}{node.level}, P: {node.proportion}, M: {node.weight_modifier}{percent_sign}, W: {node.weight}, Images: {num_images})"
             )
 
         for child in node.children:
@@ -1394,19 +1830,32 @@ class Defaults:
         depth=9999,
         is_random=False,
         args=None,
+        groups={},
+        video=True,
+        mute=True,
     ):
         self._weight_modifier = weight_modifier
         self._mode = mode
         self._depth = depth
         self._is_random = is_random
+        self._video = video
+        self._mute = mute
 
         self.global_mode = None
         self.global_depth = None
         self.global_is_random = None
+        self.global_video = None
+        self.global_mute = None
 
-        self.args_mode = parse_mode_string(args.mode) if args and args.mode is not None else None
+        self.args_mode = (
+            parse_mode_string(args.mode) if args and args.mode is not None else None
+        )
         self.args_depth = args.depth if args and args.depth is not None else None
         self.args_is_random = args.random if args and args.random is not None else None
+        self.args_video = args.video if args and args.video is not None else None
+        self.args_mute = args.mute if args and args.mute is not None else None
+
+        self.groups = {}
 
     @property
     def weight_modifier(self):
@@ -1439,6 +1888,24 @@ class Defaults:
         else:
             return self._is_random
 
+    @property
+    def video(self):
+        if self.args_video is not None:  # CLI overrides all
+            return self.args_video
+        elif self.global_video is not None:  # folder-specific config
+            return self.global_video
+        else:
+            return self._video  # built-in fallback
+
+    @property
+    def mute(self):
+        if self.args_mute is not None:
+            return self.args_mute
+        elif self.global_mute is not None:
+            return self.global_mute
+        else:
+            return self._mute
+
     def set_global_defaults(self, mode=None, depth=None, is_random=None):
         if mode is not None:
             self.global_mode = mode
@@ -1447,13 +1914,11 @@ class Defaults:
         if is_random is not None:
             self.global_is_random = is_random
 
-    def set_args_defaults(self, mode=None, depth=None, is_random=None):
-        if mode is not None:
-            self.args_mode = mode
-        if depth is not None:
-            self.args_depth = depth
-        if is_random is not None:
-            self.args_is_random = is_random
+    def set_global_video(self, video=None, mute=None):
+        if video is not None:
+            self.global_video = video
+        if mute is not None:
+            self.global_mute = mute
 
 
 class Filters:
@@ -1588,28 +2053,71 @@ def is_textfile(file):
 def is_imagefile(file):
     return file.lower().endswith(IMAGE_FILES)
 
+
+def is_videofile(file):
+    return file.lower().endswith(VIDEO_FILES)
+
+
+def is_videoallowed(data_video):
+    if data_video is False:
+        return False
+    if defaults.args_video is not None:
+        return defaults.args_video
+    else:
+        return data_video if data_video is not None else defaults.video
+
+
 def parse_mode_string(mode_str):
-    pattern = re.compile(r'([bw])(\d+)', re.IGNORECASE)
+    # Updated regex: ([bw])(\d+)(?:,(-?\d+))?(?:,(-?\d+))?
+    pattern = re.compile(r"([bw])(\d+)(?:,(-?\d+))?(?:,(-?\d+))?", re.IGNORECASE)
     matches = pattern.findall(mode_str)
-    result = {int(num): char.lower() for char, num in matches}
+    # Each match is a tuple: (mode, level, slope1, slope2)
+    # Convert level to int, slopes to int if present, else None
+    result = {}
+    for char, num, slope1, slope2 in matches:
+        level = int(num)
+        slopes = []
+        if slope1:
+            slopes.append(int(slope1))
+        else:
+            slopes.append(0)
+        if slope2:
+            slopes.append(int(slope2))
+        else:
+            slopes.append(0)
+        result[level] = (char.lower(), slopes)
     return result
+
 
 def resolve_mode(mode_dict, number):
     if not mode_dict:
-        return "w"  # or raise an exception if that's preferable
+        return ("w", [0, 0])  # Default to weighted mode, no slope
 
     first_key = min(mode_dict.keys())
 
     if number < first_key:
-        return "l"
+        return ("l", [0, 0])
     elif number in mode_dict:
-        return mode_dict[number]
+        mode_info = mode_dict[number]
+        if isinstance(mode_info, tuple):
+            # (mode, slopes)
+            mode, slope = mode_info
+            # Ensure slopes is always a list of two ints
+            if len(slope) == 1:
+                slope = [slope[0], 0]
+            elif len(slope) == 0:
+                slope = [0, 0]
+            return (mode, slope)
+        else:
+            # Backward compatibility: just a string
+            return (mode_info, [0, 0])
     else:
-        return "w"
+        return ("w", [0, 0])
+
 
 def test_distribution(image_nodes, weights, iterations, testdepth, defaults):
     hit_counts = defaultdict(int)
-    for _ in tqdm(range(iterations), desc="Iterating tests"):
+    for _ in tqdm(range(iterations), desc="Iterating tests", disable=args.quiet):
         if defaults.is_random:
             image_path = random.choice(image_nodes)
         else:
@@ -1645,133 +2153,6 @@ def write_image_list(all_images, weights, input_files, mode_args, output_path):
             f.write(f"{img},{w}\n")
 
 
-def find_input_file(input_filename, additional_search_paths=[]):
-    # List of potential directories to search
-    possible_locations = [
-        os.path.dirname(os.path.abspath(__file__)),  # Script's directory
-        os.getcwd(),  # Current working directory
-        *additional_search_paths,  # Additional paths (e.g., main input file's directory)
-        os.path.join(
-            os.getcwd(), "lists"
-        ),  # Fixed "lists" folder in the current working directory
-    ]
-
-    for location in possible_locations:
-        potential_path = os.path.join(location, input_filename)
-        if os.path.isfile(potential_path):
-            return potential_path
-
-    return None
-
-
-def parse_input_line(line, defaults, recdepth):
-    modifier_pattern = re.compile(r"(\[.*?\])")
-    weight_modifier_pattern = re.compile(r"^\d+%?$")
-    proportion_pattern = re.compile(r"^%\d+%?$")
-    mode_pattern = CX_PATTERN
-    graft_pattern = re.compile(r"^g\d+$", re.IGNORECASE)
-    group_pattern = re.compile(r"^>.*", re.IGNORECASE)
-    depth_pattern = re.compile(r"^d\d+$", re.IGNORECASE)
-    flat_pattern = re.compile(r"^f$", re.IGNORECASE)
-
-    if line.startswith("[r]"):
-        defaults.set_global_defaults(is_random=True)
-        return None, None
-
-    # Handle filters
-    if line.startswith("[+]"):
-        keyword = line[3:].strip()
-        filters.add_must_contain(keyword)
-        return None, None
-    elif line.startswith("[-]"):
-        path_or_keyword = line[3:].strip()
-        if os.path.isabs(path_or_keyword):
-            if os.path.isfile(path_or_keyword):
-                filters.add_ignored_file(path_or_keyword)
-            else:
-                filters.add_ignored_dir(path_or_keyword)
-        else:
-            filters.add_must_not_contain(path_or_keyword)
-        return None, None
-
-    # Initialize default modifiers
-    weight_modifier = 100
-    proportion = None
-    is_percentage = True
-    graft_level = None
-    group = None
-    mode = defaults.mode
-    mode_modifier = None
-    depth = defaults.depth
-    flat = False
-
-    # Extract all modifiers
-    modifiers = modifier_pattern.findall(line)
-    # Remove all modifiers from the line to get the path
-    path = modifier_pattern.sub("", line).strip()
-
-    # Process each modifier
-    for mod in modifiers:
-        mod_content = mod.strip("[]").strip()
-        if weight_modifier_pattern.match(mod_content):
-            # Weight modifier
-            if mod_content.endswith("%"):
-                weight_modifier = int(mod_content[:-1])
-                is_percentage = True
-            else:
-                weight_modifier = int(mod_content)
-                is_percentage = False
-        elif proportion_pattern.match(mod_content):
-            # Proportion
-            proportion = int(mod_content[1:-1])
-        elif graft_pattern.match(mod_content):
-            # Graft level modifier
-            graft_level = int(mod_content[1:])
-        elif group_pattern.match(mod_content):
-            # Group
-            group = mod_content[1:]
-        elif mode_pattern.match(mod_content):
-            # Balance level modifier, global only
-            mode_modifier = parse_mode_string(mod_content)
-        elif depth_pattern.match(mod_content):
-            # Depth modifier
-            depth = int(mod_content[1:])
-        elif flat_pattern.match(mod_content):
-            flat = True
-        else:
-            print(f"Unknown modifier '{mod_content}' in line: {line}")
-
-    # Handle directory or specific image
-    if path == "*" and recdepth == 1:
-        defaults.set_global_defaults(mode=mode_modifier or mode, depth=depth)
-        return None, None
-
-    if os.path.isdir(path):
-        return path, {
-            "weight_modifier": weight_modifier,
-            "is_percentage": is_percentage,
-            "proportion": proportion,
-            "graft_level": graft_level,
-            "group": group,
-            "mode_modifier": mode_modifier,
-            "depth": depth,
-            "flat": flat,
-        }
-    elif os.path.isfile(path):
-        return path, {
-            "weight_modifier": weight_modifier,
-            "is_percentage": is_percentage,
-            "proportion": proportion,
-            "graft_level": graft_level,
-            "group": group,
-            "mode_modifier": mode_modifier
-        }
-    else:
-        print(f"Path '{path}' is neither a file nor a directory.")
-
-    return None, None
-
-
 def process_inputs(input_files, defaults, recdepth=1):
     """
     Parse input files and directories to create image_dirs and specific_images dictionaries.
@@ -1788,71 +2169,241 @@ def process_inputs(input_files, defaults, recdepth=1):
     all_images = []
     weights = []
 
+    def find_input_file(input_filename, additional_search_paths=[]):
+        # List of potential directories to search
+        possible_locations = [
+            os.path.dirname(os.path.abspath(__file__)),  # Script's directory
+            os.getcwd(),  # Current working directory
+            *additional_search_paths,  # Additional paths (e.g., main input file's directory)
+            os.path.join(
+                os.getcwd(), "lists"
+            ),  # Fixed "lists" folder in the current working directory
+        ]
+
+        # If input_filename has no extension, try .lst then .txt
+        base, ext = os.path.splitext(input_filename)
+        candidates = [input_filename]
+        if not ext:
+            candidates = [input_filename + ".lst", input_filename + ".txt"]
+
+        for location in possible_locations:
+            for candidate in candidates:
+                potential_path = os.path.join(location, candidate)
+                if os.path.isfile(potential_path):
+                    return potential_path
+
+        return None
+
+    def parse_input_line(line, defaults, recdepth):
+        modifier_pattern = re.compile(r"(\[.*?\])")
+        weight_modifier_pattern = re.compile(r"^\d+%?$")
+        proportion_pattern = re.compile(r"^%\d+%?$")
+        mode_pattern = CX_PATTERN
+        graft_pattern = re.compile(r"^g\d+$", re.IGNORECASE)
+        group_pattern = re.compile(r"^>.*", re.IGNORECASE)
+        depth_pattern = re.compile(r"^d\d+$", re.IGNORECASE)
+        flat_pattern = re.compile(r"^f$", re.IGNORECASE)
+        video_pattern = re.compile(r"^v$", re.IGNORECASE)
+        no_video_pattern = re.compile(r"^nv$", re.IGNORECASE)
+        mute_pattern = re.compile(r"^m$", re.IGNORECASE)
+        no_mute_pattern = re.compile(r"^nm$", re.IGNORECASE)
+
+        if line.startswith("[r]"):
+            defaults.set_global_defaults(is_random=True)
+            return None, None
+
+        # Handle filters
+        if line.startswith("[+]"):
+            keyword = line[3:].strip()
+            filters.add_must_contain(keyword)
+            return None, None
+        elif line.startswith("[-]"):
+            path_or_keyword = line[3:].strip()
+            if os.path.isabs(path_or_keyword):
+                if os.path.isfile(path_or_keyword):
+                    filters.add_ignored_file(path_or_keyword)
+                else:
+                    filters.add_ignored_dir(path_or_keyword)
+            else:
+                filters.add_must_not_contain(path_or_keyword)
+            return None, None
+
+        # Initialize default modifiers
+        weight_modifier = 100
+        proportion = None
+        is_percentage = True
+        graft_level = None
+        group = None
+        mode = defaults.mode
+        mode_modifier = None
+        depth = defaults.depth
+        flat = False
+        video = None
+        mute = None
+
+        # Extract all modifiers
+        modifiers = modifier_pattern.findall(line)
+        # Remove all modifiers from the line to get the path
+        path = modifier_pattern.sub("", line).strip()
+
+        # Process each modifier
+        for mod in modifiers:
+            mod_content = mod.strip("[]").strip()
+            if weight_modifier_pattern.match(mod_content):
+                # Weight modifier
+                if mod_content.endswith("%"):
+                    weight_modifier = int(mod_content[:-1])
+                    is_percentage = True
+                else:
+                    weight_modifier = int(mod_content)
+                    is_percentage = False
+            elif proportion_pattern.match(mod_content):
+                # Proportion
+                proportion = int(mod_content[1:-1])
+            elif graft_pattern.match(mod_content):
+                # Graft level modifier
+                graft_level = int(mod_content[1:])
+            elif group_pattern.match(mod_content):
+                # Group
+                group = mod_content[1:]
+            elif mode_pattern.match(mod_content):
+                # Balance level modifier, global only
+                mode_modifier = parse_mode_string(mod_content)
+            elif depth_pattern.match(mod_content):
+                # Depth modifier
+                depth = int(mod_content[1:])
+            elif flat_pattern.match(mod_content):
+                flat = True
+            elif video_pattern.match(mod_content):
+                # Video modifier
+                video = True
+            elif no_video_pattern.match(mod_content):
+                video = False
+            elif mute_pattern.match(mod_content):
+                mute = True
+            elif no_mute_pattern.match(mod_content):
+                mute = False
+            else:
+                print(f"Unknown modifier '{mod_content}' in line: {line}")
+            # Handle directory or specific image
+        if path == "*":
+            if group:
+                defaults.groups[group] = {
+                    "proportion": proportion or None,
+                    "graft_level": graft_level or None,
+                    "mode_modifier": mode_modifier or (),
+                }
+                return None, None
+            if video is not None or mute is not None:
+                defaults.set_global_video(video=video, mute=mute)
+            if recdepth == 1:
+                defaults.set_global_defaults(mode=mode_modifier or mode, depth=depth)
+            return None, None
+
+        if os.path.isdir(path):
+            return path, {
+                "weight_modifier": weight_modifier,
+                "is_percentage": is_percentage,
+                "proportion": proportion,
+                "graft_level": graft_level,
+                "group": group,
+                "mode_modifier": mode_modifier,
+                "depth": depth,
+                "flat": flat,
+                "video": video,
+            }
+        elif os.path.isfile(path):
+            return path, {
+                "weight_modifier": weight_modifier,
+                "is_percentage": is_percentage,
+                "proportion": proportion,
+                "graft_level": graft_level,
+                "group": group,
+                "mode_modifier": mode_modifier,
+            }
+        else:
+            print(f"Path '{path}' is neither a file nor a directory.")
+
+        return None, None
+
     def process_entry(entry):
-        """Process a single input entry (file, directory, or image)."""
+        """
+        Process a single input entry (file, directory, or image).
+        """
         nonlocal image_dirs, specific_images
 
-        if is_textfile(entry):  # If it's a text file, parse its contents
-            additional_search_paths = [os.path.dirname(entry)]
-            input_filename_full = find_input_file(entry, additional_search_paths)
+        additional_search_paths = [os.path.dirname(entry)]
+        input_filename_full = find_input_file(entry, additional_search_paths)
 
-            if input_filename_full:
-                match os.path.splitext(entry)[1].lower():
-                    case ".lst":
-                        with open(input_filename_full, "r", encoding="utf-8") as f:
-                            lines = f.readlines()
-                            for line in tqdm(
-                                lines,
-                                desc=f"Parsing {os.path.basename(entry)}",
-                                unit="line",
-                            ):
-                                line = line.strip()
-                                if not line or line.startswith("#"):
-                                    continue
-                                parts = line.split(",")
-                                if len(parts) == 2:
-                                    all_images.append(parts[0])
-                                    try:
-                                        weights.append(float(parts[1]))
-                                    except ValueError:
-                                        weights.append(
-                                            1.0
-                                        )  # Default weight if parsing fails
-                    case ".txt":
+        if input_filename_full:
+            match os.path.splitext(input_filename_full)[1].lower():
+                case ".lst":
+                    with open(
+                        input_filename_full, "r", buffering=65536, encoding="utf-8"
+                    ) as f:
+                        total_lines = sum(1 for _ in f)
+                        f.seek(0)
+                        for line in tqdm(
+                            f,
+                            desc=f"Parsing {input_filename_full}",
+                            unit="line",
+                            total=total_lines,
+                            disable=args.quiet,
+                        ):
+                            line = line.strip()
+                            if not line or line.startswith("#"):
+                                continue
+                            image_path, weight_str = line.rsplit(",", 1)  # Split on last comma
+                            if weight_str:  # Expecting "image_path,weight"
+                                try:
+                                    weights.append(float(weight_str))
+                                    all_images.append(image_path)
+                                except ValueError:
+                                    # weight_str is not a number, so it's part of the image path (comma in filename)
+                                    all_images.append(f"{image_path},{weight_str}")
+                                    weights.append(0.01)  # Default weight for single lines
+                            else:  # Probably an irfanview-style list
+                                all_images.append(line)
+                                weights.append(0.01)  # Default weight for single lines
+                case ".txt":
+                    with open(
+                        input_filename_full, "r", buffering=65536, encoding="utf-8"
+                    ) as f:
+                        total_lines = sum(1 for _ in f)
+                        f.seek(0)
+                        for line in tqdm(
+                            f,
+                            desc=f"Parsing {input_filename_full}",
+                            unit="line",
+                            total=total_lines,
+                            disable=args.quiet,
+                        ):
+                            line = line.strip()
+                            if not line or line.startswith(
+                                "#"
+                            ):  # Skip comments/empty lines
+                                continue
+                            line = line.replace(
+                                '"', ""
+                            ).strip()  # Remove enclosing quotes
 
-                        with open(input_filename_full, "r", encoding="utf-8") as f:
-                            lines = f.readlines()
-                            for line in tqdm(
-                                lines,
-                                desc=f"Parsing {os.path.basename(entry)}",
-                                unit="line",
-                            ):
-                                line = line.strip()
-                                if not line or line.startswith(
-                                    "#"
-                                ):  # Skip comments/empty lines
-                                    continue
-                                line = line.replace(
-                                    '"', ""
-                                ).strip()  # Remove enclosing quotes
-
-                                if is_textfile(
-                                    line
-                                ):  # Recursively process nested text files
-                                    sub_image_dirs, sub_specific_images = (
-                                        process_inputs([line], defaults, recdepth + 1)
-                                    )
-                                    image_dirs.update(sub_image_dirs)
-                                    specific_images.update(sub_specific_images)
-                                else:
-                                    path, modifier_list = parse_input_line(
-                                        line, defaults, recdepth
-                                    )
-                                    if modifier_list:
-                                        if is_imagefile(path):
-                                            specific_images[path] = modifier_list
-                                        else:
-                                            image_dirs[path] = modifier_list
+                            if is_textfile(
+                                line
+                            ):  # Recursively process nested text files
+                                sub_image_dirs, sub_specific_images = (
+                                    process_inputs([line], defaults, recdepth + 1)
+                                )
+                                image_dirs.update(sub_image_dirs)
+                                specific_images.update(sub_specific_images)
+                            else:
+                                path, modifier_list = parse_input_line(
+                                    line, defaults, recdepth
+                                )
+                                if modifier_list:
+                                    if is_imagefile(path):
+                                        specific_images[path] = modifier_list
+                                    else:
+                                        image_dirs[path] = modifier_list
         else:  # Handle directories and images directly
             path, modifier_list = parse_input_line(entry, defaults, recdepth)
             if modifier_list:
