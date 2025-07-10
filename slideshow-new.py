@@ -39,7 +39,7 @@ from datetime import datetime
 from PIL import Image, ImageTk
 
 # Constants
-VERSION = "1.37-dev"
+VERSION = "1.40"
 TOTAL_WEIGHT = 100
 PARENT_STACK_MAX = 5
 QUEUE_LENGTH_MAX = 25

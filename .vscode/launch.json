@@ -8,7 +8,7 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "args": [
-                "-i", "ai",
+                "-i", "[+]VIP", "test.txt",
                 "--printtree"],
         },
         {
