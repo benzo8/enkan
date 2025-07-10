@@ -1,7 +1,7 @@
 import re
 
 # Constants
-VERSION = "1.40-refactor"
+VERSION = "1.40-main"
 TOTAL_WEIGHT = 100
 PARENT_STACK_MAX = 5
 QUEUE_LENGTH_MAX = 25
