@@ -36,7 +36,7 @@ from slideshow.utils.Defaults import Defaults
 from slideshow.utils.Filters import Filters
 from slideshow.utils.tests import print_tree, test_distribution
 from slideshow.tree.Tree import Tree
-from slideshow.slideshow.mySlideshow import ImageSlideshow
+from slideshow.mySlideshow.mySlideshow import ImageSlideshow
 
 # Argument parsing setup
 def cx_type(s: str) -> str:
