@@ -6,9 +6,10 @@ old versions/
 
 # IDE/Editor settings
 .vscode/
+.venv/
 
 # Build/packaging
-__pycache__/
+**/__pycache__/
 *.pyc
 *.pyo
 *.pyd
