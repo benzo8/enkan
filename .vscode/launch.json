@@ -10,9 +10,8 @@
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
             "args": [
-                "-i", "bella",
-                "--testdepth", "4",
-                "--printtree"],
+                "-i", "slavewife.txt",
+                "--run"],
         }
     ]
 }

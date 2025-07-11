@@ -31,7 +31,7 @@ from datetime import datetime
 
 # ——— Local ———
 from slideshow import constants
-from slideshow.utils.process_inputs import InputProcessor
+from slideshow.utils.InputProcessor import InputProcessor
 from slideshow.utils.Defaults import Defaults
 from slideshow.utils.Filters import Filters
 from slideshow.utils.tests import print_tree, test_distribution

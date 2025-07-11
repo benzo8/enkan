@@ -136,7 +136,7 @@ class Tree:
         Process an individual path, adding images or virtual nodes as needed.
         """
         images = self.process_files(
-            path, files, self.filters, utils.is_videoallowed(data.get("video"))
+            path, files, self.filters, utils.is_videoallowed(data.get("video"), self.defaults)
         )
 
         if not images:
@@ -176,7 +176,7 @@ class Tree:
                     os.path.join(path, f)
                     for f in files
                     if utils.is_imagefile(f)
-                    or (utils.is_videofile(f) and utils.is_videoallowed(data.get("video")))
+                    or (utils.is_videofile(f) and utils.is_videoallowed(data.get("video"), self.defaults))
                 )
             return images
 
