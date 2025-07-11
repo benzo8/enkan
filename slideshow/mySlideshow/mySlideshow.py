@@ -18,7 +18,7 @@ from slideshow.utils.MyStack import Stack
 from slideshow.tree.Tree import Tree
 
 class ImageSlideshow:
-    def __init__(self, root, image_paths, weights, defaults, filters, quiet=False):
+    def __init__(self, root, image_paths, weights, defaults):
         self.root = root
         self.image_paths = image_paths
         self.weights = weights
@@ -33,10 +33,7 @@ class ImageSlideshow:
         self.subfolder_mode = False
         self.parent_mode = False
         self.show_filename = False
-        self.video_muted = defaults.mute
         
-        self.defaults = defaults
-
         # Add preload queue
         self.preload_queue = deque(maxlen=3)
         self.preloaded_images = {}
@@ -44,7 +41,10 @@ class ImageSlideshow:
         self.screen_width = root.winfo_screenwidth()
         self.screen_height = root.winfo_screenheight()
 
-        self.initial_mode = defaults.mode
+        self.defaults = defaults
+        self.video_muted = self.defaults.mute
+        
+        self.initial_mode = self.defaults.mode
         if self.defaults.is_random:
             self.mode = "r"
         else:

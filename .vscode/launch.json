@@ -8,10 +8,10 @@
             "module": "slideshow",
             "justMyCode": true,
             "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
             "args": [
-                "-i", "katie",
-                "--testdepth", "4",
-                "--printtree"],
+                "-i", "slavewife.txt",
+                "--run"],
         }
     ]
 }

@@ -31,7 +31,7 @@ from datetime import datetime
 
 # ——— Local ———
 from slideshow import constants
-from slideshow.utils.process_inputs import process_inputs
+from slideshow.utils.InputProcessor import InputProcessor
 from slideshow.utils.Defaults import Defaults
 from slideshow.utils.Filters import Filters
 from slideshow.utils.tests import print_tree, test_distribution
@@ -122,7 +122,7 @@ def write_image_list(all_images, weights, input_files, mode_args, output_path):
         for img, w in zip(all_images, weights):
             f.write(f"{img},{w}\n")
 
-def start_slideshow(all_image_paths, weights, defaults):
+def start_slideshow(all_image_paths, weights):
     """
     Start the slideshow using the given paths and weights.
 
@@ -135,23 +135,22 @@ def start_slideshow(all_image_paths, weights, defaults):
     import tkinter as tk
 
     root = tk.Tk()
-    slideshow = ImageSlideshow(root, all_image_paths, weights, defaults, filters, args.quiet)  # noqa: F841
+    slideshow = ImageSlideshow(root, all_image_paths, weights, defaults)  # noqa: F841
     root.mainloop()
 
-def main(input_files, defaults, test_iterations=None, testdepth=None, printtree=None):
+def main(input_files, test_iterations=None, testdepth=None, printtree=None):
     # Parse input files and directories
-    image_dirs, specific_images, all_images, weights = process_inputs(
-        input_files, defaults, filters, args.quiet
-    )
+    processor = InputProcessor(defaults, filters, quiet=False)
+    image_dirs, specific_images, all_images, weights = processor.process_inputs(input_files)
 
     if not any([image_dirs, specific_images, all_images, weights]):
         raise ValueError("No images found in the provided input files.")
 
     if image_dirs or specific_images:
         # Instantiate and build the tree
-        tree = Tree()
-        tree.build_tree(image_dirs, specific_images, defaults, filters)
-        tree.calculate_weights(defaults=defaults)
+        tree = Tree(defaults, filters)
+        tree.build_tree(image_dirs, specific_images)
+        tree.calculate_weights()
 
         # Print tree if requested
         if printtree:
@@ -178,7 +177,7 @@ def main(input_files, defaults, test_iterations=None, testdepth=None, printtree=
     if test_iterations:
         test_distribution(all_images, weights, test_iterations, testdepth, defaults, args.quiet)
     else:
-        start_slideshow(all_images, weights, defaults)
+        start_slideshow(all_images, weights)
 
 if __name__ == "__main__":
     defaults = Defaults(args=args)
@@ -188,13 +187,12 @@ if __name__ == "__main__":
     input_files = args.input_file if args.input_file else []
 
     if args.run or args.output:
-        main(input_files, defaults)
+        main(input_files)
     elif args.printtree:
-        main(input_files, defaults, testdepth=args.testdepth, printtree=True)
+        main(input_files, testdepth=args.testdepth, printtree=True)
     elif args.test:
         main(
             input_files,
-            defaults,
             test_iterations=args.test,
             testdepth=args.testdepth if args.testdepth else defaults.depth + 1,
         )

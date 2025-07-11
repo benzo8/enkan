@@ -16,8 +16,9 @@ old versions/
 dist/
 build/
 *.egg-info/
+pyproject.toml
+setup.cfg
 
 # Optional config files
 .vscode/launch.json
 pyproject.toml
-setup.cfg

@@ -11,12 +11,13 @@ from slideshow.utils.Defaults import resolve_mode
 from slideshow.utils import utils
 
 class Tree:
-    def __init__(self):
+    def __init__(self, defaults, filters):
         self.root = TreeNode("root", 0)
         self.node_lookup = {"root": self.root}
+        self.defaults = defaults
+        self.filters = filters
         
-
-    def build_tree(self, image_dirs, specific_images, defaults, filters, quiet=False):
+    def build_tree(self, image_dirs, specific_images, quiet=False):
         """
         Read image_dirs and specific_images and build a tree.
         """
@@ -29,7 +30,7 @@ class Tree:
                     self.add_flat_branch(root, data, pbar)
                 else:
                     # Process each directory
-                    self.process_directory(root, data, defaults, filters, pbar)
+                    self.process_directory(root, data, pbar)
 
                 # Insert proportion & mode if specified
                 if root in image_dirs:
@@ -41,7 +42,7 @@ class Tree:
                         self.append_overwrite_or_update(
                             root,
                             data.get("level", self.calculate_level(root)),
-                            data.get("depth", defaults.depth),
+                            data.get("depth", self.defaults.depth),
                             {
                                 "weight_modifier": data.get("weight_modifier", 100),
                                 "is_percentage": data.get("is_percentage", True),
@@ -51,30 +52,30 @@ class Tree:
                             },
                         )
 
-                self.handle_grafting(root, data.get("graft_level"), data.get("group"), defaults=defaults)
+                self.handle_grafting(root, data.get("graft_level"), data.get("group"))
 
         # Handle specific images if provided
         if specific_images:
-            self.process_specific_images(specific_images, defaults)
+            self.process_specific_images(specific_images)
 
-    def process_directory(self, root, data, defaults, filters, pbar):
+    def process_directory(self, root, data, pbar):
         """
         Process a single root directory and add nodes to the tree.
         Handles image processing and grafting.
         """
         root_level = utils.level_of(root)
-        depth = data.get("depth", defaults.depth)
+        depth = data.get("depth", self.defaults.depth)
 
         # Traverse the directory tree
         for path, dirs, files in os.walk(root):
-            if filters.passes(path) == 0:
+            if self.filters.passes(path) == 0:
                 # Update the total for new files discovered
                 pbar.total += len(files)
                 pbar.desc = f"Processing {path}"
                 pbar.update(len(files))
                 pbar.refresh()
-                self.process_path(path, files, dirs, data, root_level, depth, defaults=defaults, filters=filters)
-            elif filters.passes(path) == 1:
+                self.process_path(path, files, dirs, data, root_level, depth)
+            elif self.filters.passes(path) == 1:
                 del dirs[:]  # Prune directories
 
     def preprocess_ignored_files(self, ignored_files):
@@ -130,12 +131,12 @@ class Tree:
 
         return images
 
-    def process_path(self, path, files, dirs, data, root_level, depth, defaults, filters):
+    def process_path(self, path, files, dirs, data, root_level, depth):
         """
         Process an individual path, adding images or virtual nodes as needed.
         """
         images = self.process_files(
-            path, files, filters, utils.is_videoallowed(data.get("video"), defaults)
+            path, files, self.filters, utils.is_videoallowed(data.get("video"), self.defaults)
         )
 
         if not images:
@@ -175,7 +176,7 @@ class Tree:
                     os.path.join(path, f)
                     for f in files
                     if utils.is_imagefile(f)
-                    or (utils.is_videofile(f) and utils.is_videoallowed(data.get("video")))
+                    or (utils.is_videofile(f) and utils.is_videoallowed(data.get("video"), self.defaults))
                 )
             return images
 
@@ -266,8 +267,7 @@ class Tree:
         self: "Tree", 
         root: str, 
         graft_level: int, 
-        group: str,
-        defaults
+        group: str
     ) -> None:
         """
         Graft a subtree to a new location in the tree at the specified level and apply group-specific configuration.
@@ -287,8 +287,8 @@ class Tree:
         # if not group:
         #     return
         # else:
-        if group in defaults.groups:
-            group_graft_level = defaults.groups[group].get("graft_level")
+        if group in self.defaults.groups:
+            group_graft_level = self.defaults.groups[group].get("graft_level")
         else:
             group_graft_level = None      
         graft_level = graft_level or group_graft_level
@@ -336,7 +336,7 @@ class Tree:
                 break
 
         # Add mode_modifiers, if present
-        group_config = defaults.groups.get(group)
+        group_config = self.defaults.groups.get(group)
         if group_config:
             mode_modifiers = group_config.get("mode_modifier")
             if mode_modifiers:
@@ -379,14 +379,14 @@ class Tree:
             node.name = new_name
             self.node_lookup[new_name] = node
 
-    def process_specific_images(self, specific_images, defaults, filters):
+    def process_specific_images(self, specific_images):
         """
         Process specific images and add them to the tree.
         """
         num_average_images = int((lambda a, b: b / a)(*self.count_branches(self.root)))
 
         for path, data in specific_images.items():
-            if filters.passes(path) == 0:
+            if self.filters.passes(path) == 0:
                 node_name = path
                 is_percentage = data.get("is_percentage", True)
                 level = data.get("level", self.calculate_level(node_name))
@@ -394,7 +394,7 @@ class Tree:
                 self.append_overwrite_or_update(
                     node_name,
                     level,
-                    defaults.depth,
+                    self.defaults.depth,
                     {
                         "weight_modifier": data.get("weight_modifier", 100),
                         "is_percentage": is_percentage,
@@ -670,7 +670,6 @@ class Tree:
     self: "Tree", 
     group: str, 
     current_node: "TreeNode",
-    defaults,
 ) -> int | None:
         """
         Determine the effective graft level for a group and node, and set the group's proportion
@@ -689,7 +688,7 @@ class Tree:
         Returns:
             int or None: The effective graft level, or None if not found.
         """
-        group_config = defaults.groups.get(group, {})
+        group_config = self.defaults.groups.get(group, {})
         if group_config is None:
             return None
         proportion = group_config.get("proportion", None)
@@ -816,8 +815,7 @@ class Tree:
         return branch_count, image_count
 
     def calculate_weights(
-        self: "Tree",
-        defaults
+        self: "Tree"
     ) -> None:
         """
         Calculates and assigns weights to all nodes in the tree based on the current mode and slope settings.
@@ -832,10 +830,10 @@ class Tree:
         Returns:
             None. The function updates the 'weight' attribute of each node in-place.
         """
-        lowest_rung = min(defaults.mode.keys())
+        lowest_rung = min(self.defaults.mode.keys())
         starting_nodes = self.get_nodes_at_level(lowest_rung) or [self.root]
 
-        mode, slope = resolve_mode(defaults.mode, lowest_rung)
+        mode, slope = resolve_mode(self.defaults.mode, lowest_rung)
 
         starting_nodes = self._fill_missing_proportions(
             starting_nodes,
@@ -846,12 +844,11 @@ class Tree:
 
         for node in starting_nodes:
             apportioned_weight = TOTAL_WEIGHT * (node.proportion / 100)
-            self._process_node(node, apportioned_weight, defaults=defaults)
+            self._process_node(node, apportioned_weight)
 
     def _process_node(
         self, node: "TreeNode", 
-        apportioned_weight: float, 
-        defaults,
+        apportioned_weight: float,
         mode_modifier: dict = None,
     ) -> None:
         """
@@ -881,7 +878,7 @@ class Tree:
         mode_modifier = node.mode_modifier or mode_modifier
         child_level = node.level + 1
         child_mode, slope = resolve_mode(
-            defaults.mode | (node.children[0].mode_modifier or {}), child_level
+            self.defaults.mode | (node.children[0].mode_modifier or {}), child_level
         )
 
         children = self._fill_missing_proportions(
@@ -895,7 +892,7 @@ class Tree:
 
         for child in children:
             child_weight = node.weight * (child.proportion / 100)
-            self._process_node(child, child_weight, defaults, mode_modifier)
+            self._process_node(child, child_weight, mode_modifier)
 
     def _fill_missing_proportions(
         self: "Tree",

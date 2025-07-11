@@ -6,48 +6,59 @@ from slideshow import constants
 from slideshow.utils import utils
 from slideshow.utils.Defaults import parse_mode_string
 
-def process_inputs(input_files, defaults, filters, quiet=False, recdepth=1):
-    """
-    Parse input files and directories to create image_dirs and specific_images dictionaries.
+class InputProcessor:
+    def __init__(self, defaults, filters, quiet=False):
+        self.defaults = defaults
+        self.filters = filters
+        self.quiet = quiet
 
-    Args:
-        input_files (list): List of input files or directories.
-        defaults (object): Defaults object containing configuration.
+    def find_input_file(self, input_filename, additional_search_paths=[]):
+            # List of potential directories to search
+            possible_locations = [
+                os.path.dirname(os.path.abspath(__file__)),  # Script's directory
+                os.getcwd(),  # Current working directory
+                *additional_search_paths,  # Additional paths (e.g., main input file's directory)
+                os.path.join(
+                    os.getcwd(), "lists"
+                ),  # Fixed "lists" folder in the current working directory
+            ]
 
-    Returns:
-        tuple: (image_dirs, specific_images)
-    """
-    image_dirs = {}
-    specific_images = {}
-    all_images = []
-    weights = []
+            # If input_filename has no extension, try .lst then .txt
+            _, ext = os.path.splitext(input_filename)
+            candidates = [input_filename]
+            if not ext:
+                candidates = [input_filename + ".lst", input_filename + ".txt"]
 
-    def find_input_file(input_filename, additional_search_paths=[]):
-        # List of potential directories to search
-        possible_locations = [
-            os.path.dirname(os.path.abspath(__file__)),  # Script's directory
-            os.getcwd(),  # Current working directory
-            *additional_search_paths,  # Additional paths (e.g., main input file's directory)
-            os.path.join(
-                os.getcwd(), "lists"
-            ),  # Fixed "lists" folder in the current working directory
-        ]
+            for location in possible_locations:
+                for candidate in candidates:
+                    potential_path = os.path.join(location, candidate)
+                    if os.path.isfile(potential_path):
+                        return potential_path
 
-        # If input_filename has no extension, try .lst then .txt
-        base, ext = os.path.splitext(input_filename)
-        candidates = [input_filename]
-        if not ext:
-            candidates = [input_filename + ".lst", input_filename + ".txt"]
+            return None
 
-        for location in possible_locations:
-            for candidate in candidates:
-                potential_path = os.path.join(location, candidate)
-                if os.path.isfile(potential_path):
-                    return potential_path
+    def process_inputs(self, input_files, recdepth=1):
+        """
+        Parse input files and directories to create image_dirs and specific_images dictionaries.
 
-        return None
+        Args:
+            input_files (list): List of input files or directories.
+            defaults (object): Defaults object containing configuration.
 
-    def parse_input_line(line, defaults, filters, recdepth):
+        Returns:
+            tuple: (image_dirs, specific_images)
+        """
+        image_dirs = {}
+        specific_images = {}
+        all_images = []
+        weights = []
+        
+        for input_entry in input_files:
+            self.process_entry(input_entry, recdepth, image_dirs, specific_images, all_images, weights)
+        return image_dirs, specific_images, all_images, weights
+        
+
+    def parse_input_line(self, line, recdepth):
         modifier_pattern = re.compile(r"(\[.*?\])")
         weight_modifier_pattern = re.compile(r"^\d+%?$")
         proportion_pattern = re.compile(r"^%\d+%?$")
@@ -62,23 +73,23 @@ def process_inputs(input_files, defaults, filters, quiet=False, recdepth=1):
         no_mute_pattern = re.compile(r"^nm$", re.IGNORECASE)
 
         if line.startswith("[r]"):
-            defaults.set_global_defaults(is_random=True)
+            self.defaults.set_global_defaults(is_random=True)
             return None, None
 
         # Handle filters
         if line.startswith("[+]"):
             keyword = line[3:].strip()
-            filters.add_must_contain(keyword)
+            self.filters.add_must_contain(keyword)
             return None, None
         elif line.startswith("[-]"):
             path_or_keyword = line[3:].strip()
             if os.path.isabs(path_or_keyword):
                 if os.path.isfile(path_or_keyword):
-                    filters.add_ignored_file(path_or_keyword)
+                    self.filters.add_ignored_file(path_or_keyword)
                 else:
-                    filters.add_ignored_dir(path_or_keyword)
+                    self.filters.add_ignored_dir(path_or_keyword)
             else:
-                filters.add_must_not_contain(path_or_keyword)
+                self.filters.add_must_not_contain(path_or_keyword)
             return None, None
 
         # Initialize default modifiers
@@ -87,9 +98,9 @@ def process_inputs(input_files, defaults, filters, quiet=False, recdepth=1):
         is_percentage = True
         graft_level = None
         group = None
-        mode = defaults.mode
+        mode = self.defaults.mode
         mode_modifier = None
-        depth = defaults.depth
+        depth = self.defaults.depth
         flat = False
         video = None
         mute = None
@@ -141,16 +152,16 @@ def process_inputs(input_files, defaults, filters, quiet=False, recdepth=1):
             # Handle directory or specific image
         if path == "*":
             if group:
-                defaults.groups[group] = {
+                self.defaults.groups[group] = {
                     "proportion": proportion or None,
                     "graft_level": graft_level or None,
                     "mode_modifier": mode_modifier or (),
                 }
                 return None, None
             if video is not None or mute is not None:
-                defaults.set_global_video(video=video, mute=mute)
+                self.defaults.set_global_video(video=video, mute=mute)
             if recdepth == 1:
-                defaults.set_global_defaults(mode=mode_modifier or mode, depth=depth)
+                self.defaults.set_global_defaults(mode=mode_modifier or mode, depth=depth)
             return None, None
 
         if os.path.isdir(path):
@@ -179,14 +190,13 @@ def process_inputs(input_files, defaults, filters, quiet=False, recdepth=1):
 
         return None, None
 
-    def process_entry(entry, defaults, filters, quiet=False):
+    def process_entry(self, entry, recdepth, image_dirs, specific_images, all_images, weights):
         """
         Process a single input entry (file, directory, or image).
         """
-        nonlocal image_dirs, specific_images
 
         additional_search_paths = [os.path.dirname(entry)]
-        input_filename_full = find_input_file(entry, additional_search_paths)
+        input_filename_full = self.find_input_file(entry, additional_search_paths)
 
         if input_filename_full:
             match os.path.splitext(input_filename_full)[1].lower():
@@ -201,7 +211,7 @@ def process_inputs(input_files, defaults, filters, quiet=False, recdepth=1):
                             desc=f"Parsing {input_filename_full}",
                             unit="line",
                             total=total_lines,
-                            disable=quiet,
+                            disable=self.quiet,
                         ):
                             line = line.strip()
                             if not line or line.startswith("#"):
@@ -229,7 +239,7 @@ def process_inputs(input_files, defaults, filters, quiet=False, recdepth=1):
                             desc=f"Parsing {input_filename_full}",
                             unit="line",
                             total=total_lines,
-                            disable=quiet,
+                            disable=self.quiet,
                         ):
                             line = line.strip()
                             if not line or line.startswith(
@@ -244,13 +254,13 @@ def process_inputs(input_files, defaults, filters, quiet=False, recdepth=1):
                                 line
                             ):  # Recursively process nested text files
                                 sub_image_dirs, sub_specific_images = (
-                                    process_inputs([line], defaults, recdepth + 1)
+                                    self.process_inputs([line], recdepth + 1)
                                 )
                                 image_dirs.update(sub_image_dirs)
                                 specific_images.update(sub_specific_images)
                             else:
-                                path, modifier_list = parse_input_line(
-                                    line, defaults, filters, recdepth
+                                path, modifier_list = self.parse_input_line(
+                                    line, recdepth
                                 )
                                 if modifier_list:
                                     if utils.is_imagefile(path):
@@ -258,15 +268,9 @@ def process_inputs(input_files, defaults, filters, quiet=False, recdepth=1):
                                     else:
                                         image_dirs[path] = modifier_list
         else:  # Handle directories and images directly
-            path, modifier_list = parse_input_line(entry, defaults, recdepth)
+            path, modifier_list = self.parse_input_line(entry, recdepth)
             if modifier_list:
                 if utils.is_imagefile(path):
                     specific_images[path] = modifier_list
                 else:
                     image_dirs[path] = modifier_list
-
-    # Process each entry in the input list
-    for input_entry in input_files:
-        process_entry(input_entry, defaults, filters, quiet)
-
-    return image_dirs, specific_images, all_images, weights
