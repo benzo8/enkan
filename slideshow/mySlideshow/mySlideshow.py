@@ -33,7 +33,6 @@ class ImageSlideshow:
         self.subfolder_mode = False
         self.parent_mode = False
         self.show_filename = False
-        self.video_muted = defaults.mute
         
         # Add preload queue
         self.preload_queue = deque(maxlen=3)
@@ -42,7 +41,10 @@ class ImageSlideshow:
         self.screen_width = root.winfo_screenwidth()
         self.screen_height = root.winfo_screenheight()
 
-        self.initial_mode = defaults.mode
+        self.defaults = defaults
+        self.video_muted = self.defaults.mute
+        
+        self.initial_mode = self.defaults.mode
         if self.defaults.is_random:
             self.mode = "r"
         else:
