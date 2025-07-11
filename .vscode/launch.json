@@ -11,7 +11,7 @@
             "cwd": "${workspaceFolder}",
             "args": [
                 "-i", "slavewife.txt",
-                "--run"],
+                "--test", "1000"],
         }
     ]
 }
