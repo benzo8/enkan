@@ -14,11 +14,11 @@ import vlc
 from slideshow import constants
 from slideshow.utils import utils
 from slideshow.utils.Defaults import resolve_mode
-from slideshow.utils.myStack import Stack
+from slideshow.utils.MyStack import Stack
 from slideshow.tree.Tree import Tree
 
 class ImageSlideshow:
-    def __init__(self, root, image_paths, weights, defaults, filters, quiet=False):
+    def __init__(self, root, image_paths, weights, defaults):
         self.root = root
         self.image_paths = image_paths
         self.weights = weights
@@ -35,8 +35,6 @@ class ImageSlideshow:
         self.show_filename = False
         self.video_muted = defaults.mute
         
-        self.defaults = defaults
-
         # Add preload queue
         self.preload_queue = deque(maxlen=3)
         self.preloaded_images = {}

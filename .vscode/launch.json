@@ -8,8 +8,9 @@
             "module": "slideshow",
             "justMyCode": true,
             "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
             "args": [
-                "-i", "katie",
+                "-i", "bella",
                 "--testdepth", "4",
                 "--printtree"],
         }

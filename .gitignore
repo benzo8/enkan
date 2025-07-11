@@ -1,3 +1,24 @@
+# Project structure
 lists/
+test_zone/
+input-file-tests/
 old versions/
+
+# IDE/Editor settings
+.vscode/
+.venv/
+
+# Build/packaging
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+dist/
+build/
+*.egg-info/
+pyproject.toml
+setup.cfg
+
+# Optional config files
 .vscode/launch.json
+pyproject.toml
