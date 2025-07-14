@@ -10,8 +10,8 @@
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
             "args": [
-                "-i", "slavewife.txt",
-                "--test", "1000"],
+                "-i", "may.txt",
+                "--run"],
         }
     ]
 }

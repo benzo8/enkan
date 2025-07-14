@@ -18,7 +18,7 @@ from slideshow.utils.MyStack import Stack
 from slideshow.tree.Tree import Tree
 
 class ImageSlideshow:
-    def __init__(self, root, image_paths, weights, defaults):
+    def __init__(self, root, image_paths, weights, defaults, filters, quiet):
         self.root = root
         self.image_paths = image_paths
         self.weights = weights
@@ -43,12 +43,15 @@ class ImageSlideshow:
 
         self.defaults = defaults
         self.video_muted = self.defaults.mute
+        self.quiet = quiet
+        
+        self.filters = filters
         
         self.initial_mode = self.defaults.mode
         if self.defaults.is_random:
             self.mode = "r"
         else:
-            self.mode, _ = resolve_mode(self.defaults.mode, min(defaults.mode.keys()))
+            self.mode, _ = resolve_mode(self.defaults.mode, min(self.defaults.mode.keys()))
 
         self.rotation_angle = 0
 
@@ -361,7 +364,7 @@ class ImageSlideshow:
             self.image_paths = []
             self.weights = []
 
-            parent_tree = Tree()  # Use newTree instead of Tree
+            parent_tree = Tree(self.defaults, self.filters)  # Use newTree instead of Tree
             parent_image_dirs = {
                 parent_path: {
                     "weight_modifier": 100,
@@ -372,7 +375,7 @@ class ImageSlideshow:
             }
 
             # Build the new tree and extract images and weights
-            parent_tree.build_tree(parent_image_dirs, None, self.defaults)
+            parent_tree.build_tree(parent_image_dirs, None, self.quiet)
             parent_tree.calculate_weights()
             self.image_paths, self.weights = (
                 parent_tree.extract_image_paths_and_weights_from_tree()
@@ -431,7 +434,7 @@ class ImageSlideshow:
                 self.image_paths = []
                 self.weights = []
 
-                parent_tree = Tree()
+                parent_tree = Tree(self.defaults, self.filters)  # Use newTree instead of Tree
                 parent_image_dirs[parent_path] = {
                     "weight_modifier": 100,
                     "is_percentage": True,
@@ -439,7 +442,7 @@ class ImageSlideshow:
                     "mode_str": self.defaults.mode[1],
                     "depth": self.defaults.depth,
                 }
-                parent_tree.build_tree(parent_image_dirs, None, self.defaults)
+                parent_tree.build_tree(parent_image_dirs, None, self.quiet)
                 parent_tree.calculate_weights()
                 self.image_paths, self.weights = (
                     parent_tree.extract_image_paths_and_weights_from_tree()

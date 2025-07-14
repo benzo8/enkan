@@ -18,7 +18,7 @@ def main(args):
     input_files = args.input_file if args.input_file else []
     
     # Parse input files and directories
-    processor = InputProcessor(defaults, filters, quiet=False)
+    processor = InputProcessor(defaults, filters, args.quiet or False)
     image_dirs, specific_images, all_images, weights = processor.process_inputs(input_files)
 
     if not any([image_dirs, specific_images, all_images, weights]):
@@ -27,7 +27,7 @@ def main(args):
     if image_dirs or specific_images:
         # Instantiate and build the tree
         tree = Tree(defaults, filters)
-        tree.build_tree(image_dirs, specific_images)
+        tree.build_tree(image_dirs, specific_images, args.quiet or False)
         tree.calculate_weights()
 
         # Print tree if requested
@@ -54,7 +54,7 @@ def main(args):
 
     # Test or start the slideshow
     if args.test:
-        test_distribution(all_images, weights, args.test, args.testdepth, defaults, args.quiet)
+        test_distribution(all_images, weights, args.test, args.testdepth, defaults, args.quiet or False)
         return
     
-    start_slideshow(all_images, weights, defaults)
+    start_slideshow(all_images, weights, defaults, filters, args.quiet or False)
