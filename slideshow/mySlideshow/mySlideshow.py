@@ -50,7 +50,8 @@ class ImageSlideshow:
         self.manager = ImageCacheManager(
             self.image_provider, 
             self.load_image_from_disk,
-            debug=False
+            debug=False,
+            background_preload=True
         )
 
         self.rotation_angle = 0
