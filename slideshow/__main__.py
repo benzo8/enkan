@@ -16,7 +16,7 @@
 #
 # Usage:
 #   python slideshow-new.py --input_file <file_or_folder> [options]
-#
+# 
 # Dependencies:
 #   - Python 3.8+
 #   - Pillow

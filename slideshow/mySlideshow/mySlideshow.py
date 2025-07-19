@@ -3,7 +3,6 @@ import os
 import sys
 import random
 import tkinter as tk
-from collections import deque
 from tkinter import messagebox
 from PIL import Image, ImageTk
 
@@ -15,6 +14,7 @@ from slideshow import constants
 from slideshow.utils import utils
 from slideshow.utils.Defaults import resolve_mode
 from slideshow.utils.MyStack import Stack
+from slideshow.cache.ImageCacheManager import ImageCacheManager
 from slideshow.tree.Tree import Tree
 
 class ImageSlideshow:
@@ -28,15 +28,9 @@ class ImageSlideshow:
         self.original_weights = weights
         self.subFolderStack = Stack(1)
         self.parentFolderStack = Stack(constants.PARENT_STACK_MAX)
-        self.history = deque(maxlen=constants.QUEUE_LENGTH_MAX)
-        self.forward_history = deque(maxlen=constants.QUEUE_LENGTH_MAX)
         self.subfolder_mode = False
         self.parent_mode = False
         self.show_filename = False
-        
-        # Add preload queue
-        self.preload_queue = deque(maxlen=3)
-        self.preloaded_images = {}
 
         self.screen_width = root.winfo_screenwidth()
         self.screen_height = root.winfo_screenheight()
@@ -52,6 +46,12 @@ class ImageSlideshow:
             self.mode = "r"
         else:
             self.mode, _ = resolve_mode(self.defaults.mode, min(self.defaults.mode.keys()))
+
+        self.manager = ImageCacheManager(
+            self.image_provider, 
+            self.load_image_from_disk,
+            debug=False
+        )
 
         self.rotation_angle = 0
 
@@ -88,7 +88,19 @@ class ImageSlideshow:
         self.root.bind("<r>", self.rotate_image)
         self.show_image()
 
-    def show_image(self, image_path=None):
+    def image_provider(self):
+        if self.mode == "r":
+            image_path = random.choice(self.image_paths)
+        else:
+            image_path = random.choices(
+                self.image_paths, weights=self.weights, k=1
+            )[0]
+        return image_path
+    
+    def load_image_from_disk(self, path):
+        return Image.open(path)
+
+    def show_image(self, image_path=None, record_history=True):
         """
         Displays an image or plays a video in the slideshow application.
 
@@ -122,23 +134,43 @@ class ImageSlideshow:
         if hasattr(self, "video_frame"):
             self.video_frame.place_forget()
 
-        # If no specific path given and we have preloaded images, use one of those
-        if image_path is None:
-            if self.mode == "r":
-                image_path = random.choice(self.image_paths)
-            else:
-                image_path = random.choices(
-                    self.image_paths, weights=self.weights, k=1
-                )[0]
-
-            # Update history
-            self.history.append(image_path)
-            self.forward_history.clear()
+        image_path, image = self.manager.get_next(image_path, record_history=record_history)
 
         self.current_image_path = image_path
         self.current_image_index = self.image_paths.index(image_path)
 
-        if utils.is_videofile(image_path):
+        if image:
+            # Stop any video, hide video frame, and show image
+            if hasattr(self, "video_frame"):
+                self.video_frame.place_forget()
+
+            # Load and process the image
+            image = Image.open(image_path)
+            # Resize image to fit the screen while maintaining aspect ratio
+            screen_width = self.screen_width
+            screen_height = self.screen_height
+            image_ratio = image.width / image.height
+            screen_ratio = screen_width / screen_height
+
+            if image_ratio > screen_ratio:
+                new_width = screen_width
+                new_height = int(screen_width / image_ratio)
+            else:
+                new_height = screen_height
+                new_width = int(screen_height * image_ratio)
+
+            image = image.resize((new_width, new_height), Image.LANCZOS)
+
+            # Apply rotation if needed
+            if self.rotation_angle != 0:
+                image = image.rotate(self.rotation_angle, expand=True)
+
+            # Convert to PhotoImage and display
+            photo = ImageTk.PhotoImage(image)
+            self.label.config(image=photo)
+            self.label.image = photo
+            self.label.pack()
+        else:           
             self.label.config(image="")
             self.label.image = None
             self.label.pack()
@@ -175,39 +207,7 @@ class ImageSlideshow:
 
             # Start polling to detect end of video
             self.root.after(500, self._check_video_ended)
-
-        else:
-            # Stop any video, hide video frame, and show image
-            if hasattr(self, "video_frame"):
-                self.video_frame.place_forget()
-
-            # Load and process the image
-            image = Image.open(image_path)
-            # Resize image to fit the screen while maintaining aspect ratio
-            screen_width = self.screen_width
-            screen_height = self.screen_height
-            image_ratio = image.width / image.height
-            screen_ratio = screen_width / screen_height
-
-            if image_ratio > screen_ratio:
-                new_width = screen_width
-                new_height = int(screen_width / image_ratio)
-            else:
-                new_height = screen_height
-                new_width = int(screen_height * image_ratio)
-
-            image = image.resize((new_width, new_height), Image.LANCZOS)
-
-            # Apply rotation if needed (after getting image from either source)
-            if self.rotation_angle != 0:
-                image = image.rotate(self.rotation_angle, expand=True)
-
-            # Convert to PhotoImage and display
-            photo = ImageTk.PhotoImage(image)
-            self.label.config(image=photo)
-            self.label.image = photo
-            self.label.pack()
-
+            
         self.filename_label.tkraise()
         self.mode_label.tkraise()
         self.update_filename_display()
@@ -232,19 +232,18 @@ class ImageSlideshow:
         self.show_image()
 
     def previous_image(self, event=None):
-        if len(self.history) > 1:
-            self.forward_history.appendleft(self.history.pop())
+        image_path, image_obj = self.manager.back()
+        if image_path:
             if self.rotation_angle != 0:
                 self.rotation_angle = 0
-            self.show_image(self.history[-1])
+            self.show_image(image_path, record_history=False)
 
     def next_image_forward(self, event=None):
-        if self.forward_history:
-            image_path = self.forward_history.popleft()
-            self.history.append(image_path)
+        image_path, image_obj = self.manager.forward()
+        if image_path:
             if self.rotation_angle != 0:
                 self.rotation_angle = 0
-            self.show_image(image_path)
+            self.show_image(image_path, record_history=False)
 
     def delete_image(self, event=None):
         if self.current_image_path:
@@ -258,7 +257,7 @@ class ImageSlideshow:
                     index = self.image_paths.index(self.current_image_path)
                     self.image_paths.pop(index)
                     self.weights.pop(index)
-                    self.history.pop()  # Remove the current image from history
+                    self.manager.history_manager.remove(self.current_image_path)
                     self.show_image()
                 except Exception as e:
                     messagebox.showerror("Error", f"Could not delete the image: {e}")
@@ -291,6 +290,7 @@ class ImageSlideshow:
             self.image_paths
         )  # Update the number of images for the subfolder
         self.current_image_index = self.image_paths.index(self.current_image_path)
+        
         self.subfolder_mode = True
 
     def subfolder_mode_off(self):
@@ -308,6 +308,7 @@ class ImageSlideshow:
             self.subfolder_mode_on()
         else:
             self.subfolder_mode_off()
+        self.manager.reset()
         self.show_image(self.current_image_path)
         self.update_filename_display()
 
@@ -387,6 +388,8 @@ class ImageSlideshow:
             self.parent_mode = True
             self.subfolder_mode = False
             self.subFolderStack.clear()
+            
+            self.manager.reset()
 
             self.show_image(self.current_image_path)
             self.update_filename_display()
@@ -457,6 +460,8 @@ class ImageSlideshow:
                 self.subfolder_mode = False
                 self.subFolderStack.clear()
 
+                self.manager.reset()
+
                 self.show_image(self.current_image_path)
                 self.update_filename_display()
         else:
@@ -478,6 +483,8 @@ class ImageSlideshow:
         if self.parentFolderStack.is_empty():
             self.parent_mode = False
         self.subfolder_mode = False
+        
+        self.manager.reset()
 
         self.show_image(self.current_image_path)
         self.update_filename_display()
@@ -501,6 +508,10 @@ class ImageSlideshow:
             self.parentFolderStack.clear()
             self.parent_mode = False
             self.subfolder_mode = False
+            
+            self.manager.lru_cache.clear()
+            self.manager.preload_queue.clear()
+            self.manager.history_manager.clear()
 
             self.show_image(self.current_image_path)
             self.update_filename_display()
@@ -594,17 +605,25 @@ class ImageSlideshow:
         self.show_image(self.current_image_path)
 
     def exit_slideshow(self, event=None):
-        # Clear preloaded images
-        self.preloaded_images.clear()
-        self.preload_queue.clear()
+        # Clear preloaded images and cache
+        self.manager.lru_cache.clear()
+        self.manager.preload_queue.clear()
+
+        # Stop and release video player
         if hasattr(self, "video_player") and self.video_player:
             self.video_player.stop()
             self.video_player.release()
             self.video_player = None
+
+        # Release VLC instance
         if hasattr(self, "vlc_instance") and self.vlc_instance:
             self.vlc_instance.release()
             self.vlc_instance = None
+
+        # Destroy video frame
         if hasattr(self, "video_frame"):
             self.video_frame.destroy()
+
+        # Exit Tkinter main loop
         self.root.destroy()
 

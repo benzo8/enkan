@@ -11,6 +11,7 @@
             "cwd": "${workspaceFolder}",
             "args": [
                 "-i", "may.txt",
+                "--nv",
                 "--run"],
         }
     ]
