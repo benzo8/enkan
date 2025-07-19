@@ -1,5 +1,8 @@
 import os
+from datetime import datetime
+
 from slideshow import constants
+
 
 def level_of(path):
     return len([item for item in path.split(os.sep) if item != ""])
@@ -41,4 +44,17 @@ def is_videoallowed(data_video, defaults):
         return defaults.args_video
     else:
         return data_video if data_video is not None else defaults.video
+    
+def write_image_list(all_images, weights, input_files, mode_args, output_path):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    header = [
+        f"# Written: {now}",
+        f"# Input files: {', '.join(input_files)}",
+        f"# Mode arguments: {mode_args}",
+        "# Format: image_path,weight",
+    ]
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(header) + "\n")
+        for img, w in zip(all_images, weights):
+            f.write(f"{img},{w}\n")
 

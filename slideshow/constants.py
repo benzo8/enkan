@@ -1,7 +1,7 @@
 import re
 
 # Constants
-VERSION = "1.41-main"
+VERSION = "1.51"
 TOTAL_WEIGHT = 100
 PARENT_STACK_MAX = 5
 QUEUE_LENGTH_MAX = 25
