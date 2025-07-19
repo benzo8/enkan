@@ -57,4 +57,4 @@ def main(args):
         test_distribution(all_images, weights, args.test, args.testdepth, defaults, args.quiet or False)
         return
     
-    start_slideshow(all_images, weights, defaults, filters, args.quiet or False)
+    start_slideshow(all_images, weights, defaults, filters, args.quiet or False, args.interval)

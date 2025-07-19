@@ -4,6 +4,7 @@ import sys
 import random
 import tkinter as tk
 from tkinter import messagebox
+import tkinter.font as tkFont
 from PIL import Image, ImageTk
 
 # ——— Third-party ———
@@ -18,7 +19,7 @@ from slideshow.cache.ImageCacheManager import ImageCacheManager
 from slideshow.tree.Tree import Tree
 
 class ImageSlideshow:
-    def __init__(self, root, image_paths, weights, defaults, filters, quiet):
+    def __init__(self, root, image_paths, weights, defaults, filters, quiet, interval):
         self.root = root
         self.image_paths = image_paths
         self.weights = weights
@@ -38,6 +39,7 @@ class ImageSlideshow:
         self.defaults = defaults
         self.video_muted = self.defaults.mute
         self.quiet = quiet
+        self.interval = interval
         
         self.filters = filters
         
@@ -57,7 +59,7 @@ class ImageSlideshow:
         self.rotation_angle = 0
 
         self.root.configure(background="black")  # Set root background to black
-        self.label = tk.Label(root, bg="black")  # Set label background to black
+        self.label = tk.Label(root, bg="black", anchor="ne", justify=tk.RIGHT)  # Set label background to black
         self.label.pack()
 
         self.filename_label = tk.Text(
@@ -70,7 +72,22 @@ class ImageSlideshow:
             highlightthickness=0,
         )
         self.filename_label.config(state=tk.DISABLED)
-        self.mode_label = tk.Label(self.root, bg="black", fg="white", anchor="ne")
+        self.mode_label = tk.Text(
+            self.root,
+            bg="black",
+            height=1,
+            wrap="none",
+            bd=0,
+            highlightthickness=0
+        )
+        self.mode_label.config(padx=0, pady=0)
+        self.mode_label.config(borderwidth=0)
+        self.mode_label.config(highlightthickness=0)
+        self.mode_label.config(spacing1=0, spacing2=0, spacing3=0)
+        self.mode_label.tag_configure('tag-right', justify='right')
+        self.mode_font = tkFont.nametofont("TkDefaultFont")
+        self.mode_label.configure(font=self.mode_font)
+        self.mode_label.config(state=tk.DISABLED)
 
         self.root.attributes("-fullscreen", True)
         self.root.bind("<space>", self.next_image)
@@ -80,6 +97,7 @@ class ImageSlideshow:
         self.root.bind("<Delete>", self.delete_image)
         self.root.bind("<m>", self.toggle_mute)
         self.root.bind("<s>", self.toggle_subfolder_mode)
+        self.root.bind("<h>", self.toggle_auto_advance)
         self.root.bind("<p>", self.follow_branch_down)
         self.root.bind("<o>", self.follow_branch_up)
         self.root.bind("<i>", self.step_backwards)
@@ -88,6 +106,51 @@ class ImageSlideshow:
         self.root.bind("<c>", self.toggle_random_mode)
         self.root.bind("<r>", self.rotate_image)
         self.show_image()
+        if interval:
+            self.auto_advance_interval = interval
+            self._schedule_next_image()
+            self.auto_advance_running = True
+        
+    def toggle_auto_advance(self, event=None, interval=None):
+        """
+        Toggle the automatic slideshow on/off.
+        If enabling, optionally provide a new interval (ms).
+        """
+        if getattr(self, "auto_advance_running", False):
+            # Stop auto-advance
+            if getattr(self, "auto_advance_id", None) is not None:
+                self.root.after_cancel(self.auto_advance_id)
+            self.auto_advance_id = None
+            self.auto_advance_running = False
+            print("[DEBUG] Auto-advance stopped.")
+        else:
+            # Start auto-advance
+            if interval is not None:
+                self.auto_advance_interval = interval
+            if not hasattr(self, "auto_advance_interval"):
+                self.auto_advance_interval = 5000  # Default 5 seconds
+            self._schedule_next_image()
+            self.auto_advance_running = True
+            print(f"[DEBUG] Auto-advance started ({self.auto_advance_interval} ms).")
+
+        self.update_filename_display()
+
+    def _schedule_next_image(self):
+        if getattr(self, "auto_advance_id", None) is not None:
+            self.root.after_cancel(self.auto_advance_id)
+        self.auto_advance_id = self.root.after(
+            self.auto_advance_interval, self._advance_image
+        )
+        self.auto_advance_running = True  # Mark as running
+
+    def _advance_image(self):
+        """Advance the slideshow by one image and reschedule."""
+        self.show_image()
+        self._schedule_next_image()
+
+    def reset_auto_advance(self):
+        if getattr(self, "auto_advance_running", False):
+            self._schedule_next_image()
 
     def image_provider(self):
         if self.mode == "r":
@@ -228,9 +291,8 @@ class ImageSlideshow:
         self.root.after(500, self._check_video_ended)
 
     def next_image(self, event=None):
-        if self.rotation_angle != 0:
-            self.rotation_angle = 0
         self.show_image()
+        self.reset_auto_advance()
 
     def previous_image(self, event=None):
         image_path, image_obj = self.manager.back()
@@ -238,6 +300,7 @@ class ImageSlideshow:
             if self.rotation_angle != 0:
                 self.rotation_angle = 0
             self.show_image(image_path, record_history=False)
+            self.reset_auto_advance()
 
     def next_image_forward(self, event=None):
         image_path, image_obj = self.manager.forward()
@@ -245,6 +308,7 @@ class ImageSlideshow:
             if self.rotation_angle != 0:
                 self.rotation_angle = 0
             self.show_image(image_path, record_history=False)
+            self.reset_auto_advance()
 
     def delete_image(self, event=None):
         if self.current_image_path:
@@ -525,22 +589,20 @@ class ImageSlideshow:
         if self.show_filename:
             fixed_colour = None
             self.filename_label.config(state=tk.NORMAL)
-            # Clear the previous text
-            self.filename_label.delete("1.0", tk.END)
+            self.filename_label.delete("1.0", tk.END)  # Clear old text
 
-            # Determine the filename display text and color scheme
+            # --------- Left-side filename display ---------
             if self.subfolder_mode:
                 fixed_path = self.subFolderStack.read_top()
                 fixed_colour = "tomato"
             elif self.parent_mode:
-                fixed_path = (
-                    self.parentFolderStack.read_top()
-                )  # The "fixed" portion of the path
+                fixed_path = self.parentFolderStack.read_top()
                 fixed_colour = "gold"
+
             if fixed_colour:
                 if self.current_image_path.startswith(fixed_path):
                     fixed_portion = fixed_path
-                    remaining_portion = self.current_image_path[len(fixed_path) :]
+                    remaining_portion = self.current_image_path[len(fixed_path):]
                 else:
                     fixed_portion = ""
                     remaining_portion = self.current_image_path
@@ -548,51 +610,55 @@ class ImageSlideshow:
                 self.filename_label.insert(tk.END, fixed_portion, "fixed")
                 self.filename_label.insert(tk.END, remaining_portion, "normal")
             else:
-                # In normal mode, the entire filename is in white
                 self.filename_label.insert(tk.END, self.current_image_path, "normal")
                 fixed_colour = "white"
 
-            # Apply the tags for coloring
             self.filename_label.tag_configure("fixed", foreground=fixed_colour)
             self.filename_label.tag_configure("normal", foreground="white")
-
-            # Set the filename label position
             self.filename_label.place(x=0, y=0)
             self.filename_label.config(
                 height=1, width=len(self.current_image_path) + 10, bg="black"
             )
-
-            # Disable the text widget to prevent editing
             self.filename_label.config(state=tk.DISABLED)
 
+            # --------- Right-side mode/interval display ---------
+            # Determine mode_text
             mode_text = self.mode.upper() if self.mode else "-"
             if self.subfolder_mode:
                 mode_text += " S"
-                subfolder_number_of_images = len(
-                    self.image_paths
-                )  # Number of images in the subfolder
-                subfolder_current_image_index = (
-                    self.image_paths.index(self.current_image_path) + 1
-                )  # Current index in the subfolder
-                mode_text = f"({subfolder_current_image_index}/{subfolder_number_of_images}) {mode_text}"
+                count = len(self.image_paths)
+                idx = self.image_paths.index(self.current_image_path) + 1
+                mode_text = f"({idx}/{count}) {mode_text}"
             elif self.parent_mode:
-                mode_text += " P" + str(self.parentFolderStack.len())
-                # mode_text = "(" + str(self.parentFolderStack.read_top()) +") " + mode_text + " P" + str(self.parentFolderStack.len())
-                parent_number_of_images = len(
-                    self.image_paths
-                )  # Number of images in the subfolder
-                parent_current_image_index = (
-                    self.image_paths.index(self.current_image_path) + 1
-                )  # Current index in the subfolder
-                mode_text = f"({parent_current_image_index}/{parent_number_of_images}) {mode_text}"
+                mode_text += f" P{self.parentFolderStack.len()}"
+                count = len(self.image_paths)
+                idx = self.image_paths.index(self.current_image_path) + 1
+                mode_text = f"({idx}/{count}) {mode_text}"
             else:
                 mode_text = f"({self.current_image_index + 1}/{self.number_of_images}) {mode_text}"
 
-            self.mode_label.config(text=mode_text)
+            # Clear and rebuild right-side label with interval + mode_text
+            self.mode_label.config(state=tk.NORMAL)
+            self.mode_label.delete("1.0", tk.END)
+
+            # Interval part
+            if hasattr(self, "auto_advance_interval") and self.auto_advance_interval > 0:
+                interval_color = "white" if getattr(self, "auto_advance_id", None) else "grey"
+                self.mode_label.insert(tk.END, f"{self.auto_advance_interval}ms  ", "interval")
+                self.mode_label.tag_configure("interval", foreground=interval_color)
+
+            # Mode part
+            self.mode_label.insert(tk.END, mode_text, "mode")
+            self.mode_label.tag_configure("mode", foreground="white")
+
+            # Final placement and disabling
             self.mode_label.place(x=self.root.winfo_screenwidth(), y=0, anchor="ne")
+            self.mode_label.config(state=tk.DISABLED)
+
         else:
             self.filename_label.place_forget()
             self.mode_label.place_forget()
+
 
     def toggle_random_mode(self, event=None):
         if self.mode == "r":
