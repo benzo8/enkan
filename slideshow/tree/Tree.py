@@ -14,6 +14,7 @@ class Tree:
     def __init__(self, defaults, filters):
         self.root = TreeNode("root", 0)
         self.node_lookup = {"root": self.root}
+        self.path_lookup = {"root": self.root}
         self.defaults = defaults
         self.filters = filters
         
@@ -26,11 +27,14 @@ class Tree:
             total=0, desc="Building tree", unit="file", disable=quiet
         ) as pbar:
             for root, data in image_dirs.items():
-                if data.get("flat", False):
-                    self.add_flat_branch(root, data, pbar)
-                else:
-                    # Process each directory
-                    self.process_directory(root, data, pbar)
+                
+                if not self.find_node(root, lookup_dict=self.path_lookup):
+                
+                    if data.get("flat", False):
+                        self.add_flat_branch(root, data, pbar)
+                    else:
+                        # Process each directory
+                        self.process_directory(root, data, pbar)
 
                 # Insert proportion & mode if specified
                 if root in image_dirs:
@@ -138,14 +142,10 @@ class Tree:
         images = self.process_files(
             path, files, self.filters, utils.is_videoallowed(data.get("video"), self.defaults)
         )
-
-        if not images:
-            return
-
         path_level = self.calculate_level(path)
         path_depth = path_level - root_level
-
-        if dirs:
+        
+        if dirs and images:
             # Create a special "images" branch for directories with images
             self.add_images_branch(path, images, path_level + 1, depth, data)
         elif path_depth > depth:
@@ -154,7 +154,7 @@ class Tree:
         else:
             # Add a regular branch
             self.add_regular_branch(path, images, path_level, depth, data)
-
+            
     def add_flat_branch(self, path, data, pbar):
         """
         Add a special 'flat' branch for directories with images.
@@ -358,6 +358,7 @@ class Tree:
             # Calculate the new name for the child node
             child_basename = os.path.basename(child.name)
             new_name = os.path.join(new_parent_name, child_basename)
+            child.name = new_name
             self.rename_node_in_lookup(child.name, new_name)
             # Recursively update the child's subtree
             self.rename_children(child, new_name)
@@ -419,13 +420,15 @@ class Tree:
         Add or update a node in the tree. If the node already exists, overwrite or update it.
         """
         # Convert path to match the format used in node_lookup
-        tree_path = self.convert_path_to_tree_format(path)
+        # tree_path = self.convert_path_to_tree_format(path)
 
         # Ensure all parent nodes exist
-        tree_parent_name = self.find_parent_name(tree_path)
-        self.ensure_parent_exists(tree_parent_name)
+        parent_path = self.find_parent_name(path)
+        self.ensure_parent_exists(parent_path)
 
-        node = self.find_node(tree_path)
+        node_name = self.convert_path_to_tree_format(path)
+        parent_node_name = self.convert_path_to_tree_format(parent_path)
+        node = self.find_node(node_name)
         if node:
             # Update node data if it exists
             node.weight_modifier = node_data["weight_modifier"]
@@ -439,7 +442,7 @@ class Tree:
         else:
             # Create a new node and add it to the tree
             new_node = TreeNode(
-                name=tree_path,
+                name=node_name,
                 path=path,
                 weight_modifier=node_data["weight_modifier"],
                 is_percentage=node_data["is_percentage"],
@@ -447,7 +450,7 @@ class Tree:
                 mode_modifier=node_data["mode_modifier"],
                 images=node_data["images"],
             )
-            self.add_node(new_node, tree_parent_name)
+            self.add_node(new_node, parent_node_name)
 
     def detach_node(self, node):
         """
@@ -464,7 +467,7 @@ class Tree:
             # Clear the node's parent reference
             node.parent = None
 
-    def add_node(self, new_node, tree_parent_name):
+    def add_node(self, new_node, parent_node_name):
         """
         Add a new node to the tree, ensuring the parent exists.
 
@@ -476,40 +479,42 @@ class Tree:
             ValueError: If the parent cannot be created or added for any reason.
         """
         # Find the parent node
-        parent_node = self.find_node(tree_parent_name)
+        parent_node = self.find_node(parent_node_name)
 
         # Add the new node to the parent
         parent_node.add_child(new_node)
         self.node_lookup[new_node.name] = new_node
+        self.path_lookup[new_node.path] = new_node
 
-    def ensure_parent_exists(self, parent_name):
+    def ensure_parent_exists(self, path):
         """
         Iteratively ensure all parent nodes exist from the root down to the specified parent_name.
 
         Args:
-            parent_name (str): The full path of the parent node to ensure exists.
+            path (str): The full path of the parent node to ensure exists.
 
         Returns:
             TreeNode: The parent node if `return_parent` is True, otherwise None.
         """
-        path_components = parent_name.split(os.path.sep)
-        current_path = "root"
+        path_components = path.split(os.path.sep)
+        current_node_path = utils.get_drive_or_root(path_components[0])
         current_node = self.root
 
         for component in path_components[1:]:  # Skip the "root" component
-            next_path = os.path.join(current_path, component)
-
-            if next_path not in self.node_lookup:
+            next_node_path = os.path.join(current_node_path, component)
+            next_node_name = self.convert_path_to_tree_format(next_node_path)
+            if next_node_name not in self.node_lookup:
                 # Create the next node if it doesn't exist
-                new_node = TreeNode(name=next_path, path=None)
+                new_node = TreeNode(name=next_node_name, path=next_node_path)
                 current_node.add_child(new_node)
-                self.node_lookup[next_path] = new_node
+                self.node_lookup[next_node_name] = new_node
+                self.path_lookup[next_node_path] = new_node
                 current_node = new_node
             else:
                 # Move to the existing node
-                current_node = self.node_lookup[next_path]
+                current_node = self.node_lookup[next_node_name]
 
-            current_path = next_path
+            current_node_path = next_node_path
 
         return current_node
 
@@ -600,19 +605,23 @@ class Tree:
         return os.path.dirname(node_name)
 
     def find_node(
-        self: "Tree", 
-        name: str
+        self: "Tree",
+        name: str,
+        lookup_dict: dict = None
     ) -> "TreeNode":
         """
-        Retrieve a node from the tree by its name using the node lookup dictionary.
+        Retrieve a node from the tree by its name using the specified lookup dictionary.
 
         Args:
-            name (str): The name (path) of the node to find.
+            name (str): The name (or path) of the node to find.
+            lookup_dict (dict): The dictionary to search (defaults to node_lookup).
 
         Returns:
             TreeNode: The node with the specified name, or None if not found.
         """
-        return self.node_lookup.get(name)
+        if lookup_dict is None:
+            lookup_dict = self.node_lookup
+        return lookup_dict.get(name)
 
     def get_nodes_at_level(
         self: "Tree", 

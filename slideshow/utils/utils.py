@@ -15,6 +15,17 @@ def truncate_path(path, levels_up):
         ]
     )
     
+def get_drive_or_root(path):
+    drive, tail = os.path.splitdrive(path)
+    if drive:      # Windows case, drive letter present
+        return drive + os.path.sep   # E.g., 'C:\\'
+    else:
+        # Unix case
+        if path.startswith(os.path.sep):
+            return os.path.sep       # Root
+        else:
+            return ''                # Relative path, no explicit root
+    
 def contains_subdirectory(path):
     for root, directories, files in os.walk(path):
         if directories:

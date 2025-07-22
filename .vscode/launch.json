@@ -10,8 +10,7 @@
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
             "args": [
-                "-i", "may.txt",
-                "--nv",
+                "-i", "vintage.txt",
                 "--run"],
         }
     ]

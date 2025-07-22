@@ -95,16 +95,16 @@ class ImageSlideshow:
         self.root.bind("<Left>", self.previous_image)
         self.root.bind("<Right>", self.next_image_forward)
         self.root.bind("<Delete>", self.delete_image)
-        self.root.bind("<m>", self.toggle_mute)
-        self.root.bind("<s>", self.toggle_subfolder_mode)
-        self.root.bind("<h>", self.toggle_auto_advance)
-        self.root.bind("<p>", self.follow_branch_down)
-        self.root.bind("<o>", self.follow_branch_up)
-        self.root.bind("<i>", self.step_backwards)
-        self.root.bind("<u>", self.reset_parent_mode)
-        self.root.bind("<n>", self.toggle_filename_display)
+        self.root.bind("<a>", self.toggle_auto_advance)
         self.root.bind("<c>", self.toggle_random_mode)
+        self.root.bind("<i>", self.step_backwards)
+        self.root.bind("<m>", self.toggle_mute)
+        self.root.bind("<n>", self.toggle_filename_display)
+        self.root.bind("<o>", self.follow_branch_up)
+        self.root.bind("<p>", self.follow_branch_down)
         self.root.bind("<r>", self.rotate_image)
+        self.root.bind("<s>", self.toggle_subfolder_mode)
+        self.root.bind("<u>", self.reset_parent_mode)
         self.show_image()
         if interval:
             self.auto_advance_interval = interval
@@ -659,7 +659,6 @@ class ImageSlideshow:
             self.filename_label.place_forget()
             self.mode_label.place_forget()
 
-
     def toggle_random_mode(self, event=None):
         if self.mode == "r":
             self.mode = self.initial_mode
@@ -693,4 +692,3 @@ class ImageSlideshow:
 
         # Exit Tkinter main loop
         self.root.destroy()
-
