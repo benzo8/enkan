@@ -253,7 +253,7 @@ class InputProcessor:
                             if utils.is_textfile(
                                 line
                             ):  # Recursively process nested text files
-                                sub_image_dirs, sub_specific_images = (
+                                sub_image_dirs, sub_specific_images, _, _ = (
                                     self.process_inputs([line], recdepth + 1)
                                 )
                                 image_dirs.update(sub_image_dirs)

@@ -10,6 +10,7 @@ from slideshow.utils.tests import (
     test_distribution
 )
 from slideshow.tree.Tree import Tree
+from slideshow.tree.TreeBuilder import TreeBuilder
 from slideshow.tree.tree_logic import (
     calculate_weights, 
     extract_image_paths_and_weights_from_tree
@@ -36,7 +37,8 @@ def main(args):
     if image_dirs or specific_images:
         # Instantiate and build the tree
         tree = Tree(defaults, filters)
-        tree.build_tree(image_dirs, specific_images, args.quiet or False)
+        builder = TreeBuilder(tree)
+        builder.build_tree(image_dirs, specific_images, args.quiet or False)
         calculate_weights(tree)
 
         # Print tree if requested

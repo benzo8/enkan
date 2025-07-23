@@ -10,8 +10,8 @@
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
             "args": [
-                "-i", "bella.txt",
-                "--run"],
+                "-i", "gayslave.txt",
+                "--printtree"],
         }
     ]
 }
