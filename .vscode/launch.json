@@ -10,7 +10,7 @@
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
             "args": [
-                "-i", "vintage.txt",
+                "-i", "bella.txt",
                 "--run"],
         }
     ]

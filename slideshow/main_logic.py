@@ -5,14 +5,23 @@ import os
 from slideshow.utils.InputProcessor import InputProcessor
 from slideshow.utils.Defaults import Defaults
 from slideshow.utils.Filters import Filters
-from slideshow.utils.tests import print_tree, test_distribution
+from slideshow.utils.tests import (
+    print_tree, 
+    test_distribution
+)
 from slideshow.tree.Tree import Tree
+from slideshow.tree.tree_logic import (
+    calculate_weights, 
+    extract_image_paths_and_weights_from_tree
+)
 from slideshow.mySlideshow.start_slideshow import start_slideshow
+
 
 def main(args):
     
     defaults = Defaults(args=args)
     filters = Filters()
+    filters.preprocess_ignored_files()
 
     # Use args.input_file directly as a list
     input_files = args.input_file if args.input_file else []
@@ -28,7 +37,7 @@ def main(args):
         # Instantiate and build the tree
         tree = Tree(defaults, filters)
         tree.build_tree(image_dirs, specific_images, args.quiet or False)
-        tree.calculate_weights()
+        calculate_weights(tree)
 
         # Print tree if requested
         if args.printtree:
@@ -37,7 +46,7 @@ def main(args):
 
         # Extract paths and weights from the tree
         extracted_images, extracted_weights = (
-            tree.extract_image_paths_and_weights_from_tree(args.test)
+            extract_image_paths_and_weights_from_tree(tree, args.test)
         ) 
         all_images.extend(extracted_images)
         weights.extend(extracted_weights)

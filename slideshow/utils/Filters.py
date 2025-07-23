@@ -6,6 +6,12 @@ class Filters:
         self.must_not_contain = set()
         self.ignored_dirs = set()
         self.ignored_files = set()
+        self.ignored_files_dirs = set()
+        
+    def preprocess_ignored_files(self):
+        for ignored in self.ignored_files:
+            dir_path = os.path.dirname(ignored)
+            self.ignored_files_dirs.add(dir_path)
 
     def add_must_contain(self, keyword):
         self.must_contain.add(keyword)
