@@ -435,8 +435,7 @@ class ImageSlideshow:
                 parent_path: {
                     "weight_modifier": 100,
                     "is_percentage": True,
-                    "proportion": None,
-                    "depth": self.defaults.depth,
+                    "proportion": None
                 }
             }
 
@@ -507,8 +506,7 @@ class ImageSlideshow:
                     "weight_modifier": 100,
                     "is_percentage": True,
                     "proportion": None,
-                    "mode_str": self.defaults.mode[1],
-                    "depth": self.defaults.depth,
+                    "mode_str": self.defaults.mode[1]
                 }
                 parent_tree.build_tree(parent_image_dirs, None, self.quiet)
                 parent_tree.calculate_weights()

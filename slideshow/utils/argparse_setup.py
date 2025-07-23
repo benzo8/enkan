@@ -46,11 +46,6 @@ def get_arg_parser() -> argparse.ArgumentParser:
         help="Mode string. One or more occurrences of B or W (case-insensitive) followed by digits, e.g. B12W3",
     )
     parser.add_argument(
-        "--depth",
-        type=int,
-        help="Depth below which to combine all folders into one",
-    )
-    parser.add_argument(
         "--random", action="store_true", help="Start in Completely Random mode"
     )
     parser.add_argument(

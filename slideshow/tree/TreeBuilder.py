@@ -34,7 +34,6 @@ class TreeBuilder:
                         self.tree.append_overwrite_or_update(
                             root,
                             data.get("level", self.tree.calculate_level(root)),
-                            data.get("depth", self.tree.defaults.depth),
                             {
                                 "weight_modifier": data.get("weight_modifier", 100),
                                 "is_percentage": data.get("is_percentage", True),
@@ -58,7 +57,6 @@ class TreeBuilder:
         Handles image processing and grafting.
         """
         root_level = utils.level_of(root)
-        depth = data.get("depth", self.tree.defaults.depth)
 
         # Traverse the directory tree
         for path, dirs, files in os.walk(root):
@@ -68,11 +66,11 @@ class TreeBuilder:
                 pbar.desc = f"Processing {path}"
                 pbar.update(len(files))
                 pbar.refresh()
-                self.process_path(path, files, dirs, data, root_level, depth)
+                self.process_path(path, files, dirs, data, root_level)
             elif self.tree.filters.passes(path) == 1:
                 del dirs[:]  # Prune directories
 
-    def process_path(self, path, files, dirs, data, root_level, depth):
+    def process_path(self, path, files, dirs, data, root_level):
         """
         Process an individual path, adding images or virtual nodes as needed.
         """
@@ -83,17 +81,13 @@ class TreeBuilder:
             utils.is_videoallowed(data.get("video"), self.tree.defaults),
         )
         path_level = self.tree.calculate_level(path)
-        path_depth = path_level - root_level
 
         if dirs and images:
             # Create a special "images" branch for directories with images
-            self.add_images_branch(path, images, path_level + 1, depth, data)
-        elif path_depth > depth:
-            # Truncate to a virtual path
-            self.add_virtual_branch(path, images, root_level, depth, data)
+            self.add_images_branch(path, images, path_level + 1, data)
         else:
             # Add a regular branch
-            self.add_regular_branch(path, images, path_level, depth, data)
+            self.add_regular_branch(path, images, path_level, data)
 
     def add_flat_branch(self, path, data, pbar):
         """
@@ -128,7 +122,6 @@ class TreeBuilder:
 
         images = flatten_branch(path)
         level = data.get("level", self.tree.calculate_level(path))
-        depth = data.get("depth", 9999)
 
         pbar.total += len(images)
         pbar.update(len(images))
@@ -137,7 +130,6 @@ class TreeBuilder:
         self.tree.append_overwrite_or_update(
             path,
             level,
-            depth,
             {
                 "weight_modifier": data.get("weight_modifier", 100),
                 "is_percentage": data.get("is_percentage", True),
@@ -147,7 +139,7 @@ class TreeBuilder:
             },
         )
 
-    def add_images_branch(self, path, images, level, depth, data):
+    def add_images_branch(self, path, images, level, data):
         """
         Add a special 'images' branch for directories with images.
         """
@@ -155,7 +147,6 @@ class TreeBuilder:
         self.tree.append_overwrite_or_update(
             images_path,
             level,
-            depth,
             {
                 "weight_modifier": 100,
                 "is_percentage": True,
@@ -165,38 +156,14 @@ class TreeBuilder:
             },
         )
 
-    def add_virtual_branch(self, path, images, root_level, depth, data):
-        """
-        Add a virtual branch when the path depth exceeds the allowed depth.
 
-        TODO: Fix adding images to existing virtual branches.
-
-        """
-        virtual_path_level = root_level + depth
-        virtual_path = os.path.join(
-            *path.split(os.path.sep)[: virtual_path_level - 1], "Virtual"
-        )
-        self.tree.append_overwrite_or_update(
-            virtual_path,
-            virtual_path_level,
-            depth,
-            {
-                "weight_modifier": data.get("weight_modifier", 100),
-                "is_percentage": data.get("is_percentage", True),
-                "proportion": None,
-                "mode_modifier": data.get("mode_modifier"),
-                "images": images,
-            },
-        )
-
-    def add_regular_branch(self, path, images, level, depth, data):
+    def add_regular_branch(self, path, images, level, data):
         """
         Add a regular branch for paths that don't need truncation.
         """
         self.tree.append_overwrite_or_update(
             path,
             level,
-            depth,
             {
                 "weight_modifier": data.get("weight_modifier", 100),
                 "is_percentage": data.get("is_percentage", True),
@@ -221,7 +188,6 @@ class TreeBuilder:
                 self.tree.append_overwrite_or_update(
                     node_name,
                     level,
-                    self.tree.defaults.depth,
                     {
                         "weight_modifier": data.get("weight_modifier", 100),
                         "is_percentage": is_percentage,

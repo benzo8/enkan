@@ -122,7 +122,7 @@ class Tree:
             node.name = new_name
             self.node_lookup[new_name] = node
 
-    def append_overwrite_or_update(self, path, level, depth, node_data=None):
+    def append_overwrite_or_update(self, path, level, node_data=None):
         """
         Add or update a node in the tree. If the node already exists, overwrite or update it.
         """

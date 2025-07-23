@@ -65,7 +65,6 @@ class InputProcessor:
         mode_pattern = constants.CX_PATTERN
         graft_pattern = re.compile(r"^g\d+$", re.IGNORECASE)
         group_pattern = re.compile(r"^>.*", re.IGNORECASE)
-        depth_pattern = re.compile(r"^d\d+$", re.IGNORECASE)
         flat_pattern = re.compile(r"^f$", re.IGNORECASE)
         video_pattern = re.compile(r"^v$", re.IGNORECASE)
         no_video_pattern = re.compile(r"^nv$", re.IGNORECASE)
@@ -100,7 +99,6 @@ class InputProcessor:
         group = None
         mode = self.defaults.mode
         mode_modifier = None
-        depth = self.defaults.depth
         flat = False
         video = None
         mute = None
@@ -133,9 +131,6 @@ class InputProcessor:
             elif mode_pattern.match(mod_content):
                 # Balance level modifier, global only
                 mode_modifier = parse_mode_string(mod_content)
-            elif depth_pattern.match(mod_content):
-                # Depth modifier
-                depth = int(mod_content[1:])
             elif flat_pattern.match(mod_content):
                 flat = True
             elif video_pattern.match(mod_content):
@@ -161,7 +156,7 @@ class InputProcessor:
             if video is not None or mute is not None:
                 self.defaults.set_global_video(video=video, mute=mute)
             if recdepth == 1:
-                self.defaults.set_global_defaults(mode=mode_modifier or mode, depth=depth)
+                self.defaults.set_global_defaults(mode=mode_modifier or mode)
             return None, None
 
         if os.path.isdir(path):
@@ -172,7 +167,6 @@ class InputProcessor:
                 "graft_level": graft_level,
                 "group": group,
                 "mode_modifier": mode_modifier,
-                "depth": depth,
                 "flat": flat,
                 "video": video,
             }

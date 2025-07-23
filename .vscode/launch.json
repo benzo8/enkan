@@ -11,7 +11,7 @@
             "cwd": "${workspaceFolder}",
             "args": [
                 "-i", "gayslave.txt",
-                "--printtree"],
+                "--run"],
         }
     ]
 }

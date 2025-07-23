@@ -52,7 +52,6 @@ class Defaults:
         self,
         weight_modifier=100,
         mode={1: "w"},
-        depth=9999,
         is_random=False,
         args=None,
         groups={},
@@ -62,13 +61,11 @@ class Defaults:
         self.args = args
         self._weight_modifier = weight_modifier
         self._mode = mode
-        self._depth = depth
         self._is_random = is_random
         self._video = video
         self._mute = mute
 
         self.global_mode = None
-        self.global_depth = None
         self.global_is_random = None
         self.global_video = None
         self.global_mute = None
@@ -76,7 +73,6 @@ class Defaults:
         self.args_mode = (
             parse_mode_string(args.mode) if args and args.mode is not None else None
         )
-        self.args_depth = args.depth if args and args.depth is not None else None
         self.args_is_random = args.random if args and args.random is not None else None
         self.args_video = args.video if args and args.video is not None else None
         self.args_mute = args.mute if args and args.mute is not None else None
@@ -95,15 +91,6 @@ class Defaults:
             return self.global_mode
         else:
             return self._mode
-
-    @property
-    def depth(self):
-        if self.args_depth is not None:
-            return self.args_depth
-        elif self.global_depth is not None:
-            return self.global_depth
-        else:
-            return self._depth
 
     @property
     def is_random(self):
@@ -132,11 +119,9 @@ class Defaults:
         else:
             return self._mute
 
-    def set_global_defaults(self, mode=None, depth=None, is_random=None):
+    def set_global_defaults(self, mode=None, is_random=None):
         if mode is not None:
             self.global_mode = mode
-        if depth is not None:
-            self.global_depth = depth
         if is_random is not None:
             self.global_is_random = is_random
 
