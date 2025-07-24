@@ -1,5 +1,6 @@
 import re
 
+
 def parse_mode_string(mode_str):
     # Updated regex: ([bw])(\d+)(?:,(-?\d+))?(?:,(-?\d+))?
     pattern = re.compile(r"([bw])(\d+)(?:,(-?\d+))?(?:,(-?\d+))?", re.IGNORECASE)
@@ -20,6 +21,7 @@ def parse_mode_string(mode_str):
             slopes.append(0)
         result[level] = (char.lower(), slopes)
     return result
+
 
 def resolve_mode(mode_dict, number):
     if not mode_dict:
@@ -53,6 +55,7 @@ class Defaults:
         weight_modifier=100,
         mode={1: "w"},
         is_random=False,
+        dont_recurse=False,
         args=None,
         groups={},
         video=True,
@@ -62,11 +65,13 @@ class Defaults:
         self._weight_modifier = weight_modifier
         self._mode = mode
         self._is_random = is_random
+        self._dont_recurse = dont_recurse
         self._video = video
         self._mute = mute
 
         self.global_mode = None
         self.global_is_random = None
+        self.global_dont_recurse = None
         self.global_video = None
         self.global_mute = None
 
@@ -74,6 +79,7 @@ class Defaults:
             parse_mode_string(args.mode) if args and args.mode is not None else None
         )
         self.args_is_random = args.random if args and args.random is not None else None
+        self.args_dont_recurse = args.dont_recurse if args and args.dont_recurse is not None else None
         self.args_video = args.video if args and args.video is not None else None
         self.args_mute = args.mute if args and args.mute is not None else None
 
@@ -102,6 +108,15 @@ class Defaults:
             return self._is_random
 
     @property
+    def dont_recurse(self):
+        if self.args_dont_recurse is not None:
+            return self.args_dont_recurse
+        elif self.global_dont_recurse is not None:
+            return self.global_dont_recurse
+        else:
+            return self._dont_recurse
+
+    @property
     def video(self):
         if self.args_video is not None:  # CLI overrides all
             return self.args_video
@@ -119,11 +134,13 @@ class Defaults:
         else:
             return self._mute
 
-    def set_global_defaults(self, mode=None, is_random=None):
+    def set_global_defaults(self, mode=None, is_random=None, dont_recurse=None):
         if mode is not None:
             self.global_mode = mode
         if is_random is not None:
             self.global_is_random = is_random
+        if dont_recurse is not None:
+            self.global_dont_recurse = dont_recurse
 
     def set_global_video(self, video=None, mute=None):
         if video is not None:

@@ -59,16 +59,18 @@ class TreeBuilder:
         root_level = utils.level_of(root)
 
         # Traverse the directory tree
-        for path, dirs, files in os.walk(root):
-            if self.tree.filters.passes(path) == 0:
+        for path, dirs, files in os.walk(root, topdown=True):
+            result = self.tree.filters.passes(path)
+            if result in (0, 3):
                 # Update the total for new files discovered
                 pbar.total += len(files)
                 pbar.desc = f"Processing {path}"
                 pbar.update(len(files))
                 pbar.refresh()
                 self.process_path(path, files, dirs, data, root_level)
-            elif self.tree.filters.passes(path) == 1:
-                del dirs[:]  # Prune directories
+            if result in (1, 3) or self.tree.defaults.dont_recurse:  # Prune directories for both 1 and 3
+                del dirs[:]
+
 
     def process_path(self, path, files, dirs, data, root_level):
         """

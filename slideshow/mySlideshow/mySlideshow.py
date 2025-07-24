@@ -43,11 +43,11 @@ class ImageSlideshow:
         
         self.filters = filters
         
-        self.initial_mode = self.defaults.mode
         if self.defaults.is_random:
             self.mode = "r"
         else:
             self.mode, _ = resolve_mode(self.defaults.mode, min(self.defaults.mode.keys()))
+        self.initial_mode = self.mode
 
         self.manager = ImageCacheManager(
             self.image_provider, 
@@ -97,6 +97,7 @@ class ImageSlideshow:
         self.root.bind("<Delete>", self.delete_image)
         self.root.bind("<a>", self.toggle_auto_advance)
         self.root.bind("<c>", self.toggle_random_mode)
+        self.root.bind("<Control-c>", lambda e: e.widget.event_generate("<<Copy>>"))
         self.root.bind("<i>", self.step_backwards)
         self.root.bind("<m>", self.toggle_mute)
         self.root.bind("<n>", self.toggle_filename_display)
@@ -162,7 +163,12 @@ class ImageSlideshow:
         return image_path
     
     def load_image_from_disk(self, path):
-        return Image.open(path)
+        with Image.open(path) as img:
+            img_copy = img.copy()  # Loads image data into memory
+        return img_copy  # The file is now closed; safe to delete `path`
+    
+    # def load_image_from_disk(self, path):
+    #     return Image.open(path)
 
     def show_image(self, image_path=None, record_history=True):
         """
@@ -208,8 +214,6 @@ class ImageSlideshow:
             if hasattr(self, "video_frame"):
                 self.video_frame.place_forget()
 
-            # Load and process the image
-            image = Image.open(image_path)
             # Resize image to fit the screen while maintaining aspect ratio
             screen_width = self.screen_width
             screen_height = self.screen_height
@@ -324,6 +328,7 @@ class ImageSlideshow:
                     self.weights.pop(index)
                     self.manager.history_manager.remove(self.current_image_path)
                     self.show_image()
+                    self.manager.reset()
                 except Exception as e:
                     messagebox.showerror("Error", f"Could not delete the image: {e}")
 

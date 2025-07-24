@@ -23,4 +23,3 @@ setup.cfg
 # Optional config files
 .vscode/launch.json
 pyproject.toml
-

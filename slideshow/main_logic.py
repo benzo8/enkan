@@ -39,6 +39,9 @@ def main(args):
         tree = Tree(defaults, filters)
         builder = TreeBuilder(tree)
         builder.build_tree(image_dirs, specific_images, args.quiet or False)
+        _, num_images = tree.count_branches(tree.root)
+        if num_images == 0:
+            raise ValueError("No images found in the provided input files.")
         calculate_weights(tree)
 
         # Print tree if requested

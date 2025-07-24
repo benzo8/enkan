@@ -7,6 +7,7 @@ class Filters:
         self.ignored_dirs = set()
         self.ignored_files = set()
         self.ignored_files_dirs = set()
+        self.dont_recurse_beyond = set()
         
     def preprocess_ignored_files(self):
         for ignored in self.ignored_files:
@@ -24,6 +25,9 @@ class Filters:
 
     def add_ignored_file(self, file):
         self.ignored_files.add(file)
+        
+    def add_dont_recurse_beyond_folder(self, folder):
+        self.dont_recurse_beyond.add(folder)
 
     def passes(self, path):
         if any(
@@ -39,5 +43,10 @@ class Filters:
             keyword in path for keyword in self.must_contain
         ):
             return 2
+        if any(
+            os.path.normpath(path) == os.path.normpath(dont_recurse_beyond_dir)
+            for dont_recurse_beyond_dir in self.dont_recurse_beyond
+        ):
+            return 3
 
         return 0

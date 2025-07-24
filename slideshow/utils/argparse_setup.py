@@ -57,6 +57,14 @@ def get_arg_parser() -> argparse.ArgumentParser:
         help="Time in seconds for automated slide changes",
     )
     parser.add_argument(
+        "--no-recurse",
+        "--nr",
+        dest="dont_recurse",
+        action="store_true",
+        help="Do not recurse through folders",
+    )
+    parser.set_defaults(dont_recurse=None)
+    parser.add_argument(
         "--video", dest="video", action="store_true", help="Enable video playback"
     )
     parser.add_argument(
