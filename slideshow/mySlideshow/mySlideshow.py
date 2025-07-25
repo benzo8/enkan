@@ -18,6 +18,7 @@ from slideshow.utils.MyStack import Stack
 from slideshow.cache.ImageCacheManager import ImageCacheManager
 from slideshow.tree.Tree import Tree
 
+
 class ImageSlideshow:
     def __init__(self, root, image_paths, weights, defaults, filters, quiet, interval):
         self.root = root
@@ -40,21 +41,30 @@ class ImageSlideshow:
         self.video_muted = self.defaults.mute
         self.quiet = quiet
         self.interval = interval
-        
+
         self.filters = filters
-        
+
         if self.defaults.is_random:
             self.mode = "r"
         else:
-            self.mode, _ = resolve_mode(self.defaults.mode, min(self.defaults.mode.keys()))
+            self.mode, _ = resolve_mode(
+                self.defaults.mode, min(self.defaults.mode.keys())
+            )
         self.previous_mode = self.mode
 
-        self.select_manager(mode=self.mode)
+        self.select_manager(
+            mode=self.mode,
+            image_paths=image_paths,
+            weights=weights,
+            index=self.current_image_index,
+        )
 
         self.rotation_angle = 0
 
         self.root.configure(background="black")  # Set root background to black
-        self.label = tk.Label(root, bg="black", anchor="ne", justify=tk.RIGHT)  # Set label background to black
+        self.label = tk.Label(
+            root, bg="black", anchor="ne", justify=tk.RIGHT
+        )  # Set label background to black
         self.label.pack()
         self.filename_label = tk.Text(
             self.root,
@@ -67,18 +77,13 @@ class ImageSlideshow:
         )
         self.filename_label.config(state=tk.DISABLED)
         self.mode_label = tk.Text(
-            self.root,
-            bg="black",
-            height=1,
-            wrap="none",
-            bd=0,
-            highlightthickness=0
+            self.root, bg="black", height=1, wrap="none", bd=0, highlightthickness=0
         )
         self.mode_label.config(padx=0, pady=0)
         self.mode_label.config(borderwidth=0)
         self.mode_label.config(highlightthickness=0)
         self.mode_label.config(spacing1=0, spacing2=0, spacing3=0)
-        self.mode_label.tag_configure('tag-right', justify='right')
+        self.mode_label.tag_configure("tag-right", justify="right")
         self.mode_font = tkFont.nametofont("TkDefaultFont")
         self.mode_label.configure(font=self.mode_font)
         self.mode_label.config(state=tk.DISABLED)
@@ -103,48 +108,42 @@ class ImageSlideshow:
         self.root.bind("<r>", self.rotate_image)
         self.root.bind("<s>", self.toggle_subfolder_mode)
         self.root.bind("<u>", self.reset_parent_mode)
-        
+
         self.show_image()
         if interval:
             self.auto_advance_interval = interval
             self._schedule_next_image()
             self.auto_advance_running = True
-            
-    def select_manager(self, mode="default"):
+
+    def select_manager(self, image_paths, weights=None, index=None, mode="default"):
         provider_choices = {
-            "r": self.image_provider_random,
-            "l": self.image_provider_linear,
+            "r": self.image_provider_random(image_paths),
+            "l": self.image_provider_linear(image_paths, start_index=index),
         }
-        image_provider = provider_choices.get(mode, self.image_provider_weighted)
+        image_provider = provider_choices.get(
+            mode, self.image_provider_weighted(image_paths, weights)
+        )
 
         self.manager = ImageCacheManager(
-            image_provider, 
+            image_provider,
             self.load_image_from_disk,
             self.current_image_index,
             debug=True,
-            background_preload=False
+            background_preload=False,
         )
-            
-    def image_provider_weighted(self, index=None, *args, **kwargs):
-        image_path = random.choices(
-            self.image_paths, weights=self.weights, k=1
-        )[0]
-        return image_path
 
-    def image_provider_random(self, index=None, *args, **kwargs):
-        image_path = random.choice(self.image_paths)
-        return image_path
+    def image_provider_linear(self, image_paths, start_index=0):
+        for path in image_paths[start_index:]:
+            yield path
 
-    def image_provider_linear(self, index=None, *args, **kwargs):
-        if index is None:
-            next_image_index = self.current_image_index + 1
-        else:
-            next_image_index = index
-        if 0 <= next_image_index < len(self.image_paths):
-            return self.image_paths[next_image_index]
-        else:
-            return None
-        
+    def image_provider_random(self, image_paths):
+        while True:  # Infinite generator, stop when queue is full!
+            yield random.choice(image_paths)
+
+    def image_provider_weighted(self, image_paths, weights):
+        while True:
+            yield random.choices(image_paths, weights=weights, k=1)[0]
+
     def toggle_auto_advance(self, event=None, interval=None):
         """
         Toggle the automatic slideshow on/off.
@@ -185,7 +184,7 @@ class ImageSlideshow:
     def reset_auto_advance(self):
         if getattr(self, "auto_advance_running", False):
             self._schedule_next_image()
-    
+
     def load_image_from_disk(self, path):
         with Image.open(path) as img:
             img_copy = img.copy()  # Loads image data into memory
@@ -225,7 +224,9 @@ class ImageSlideshow:
         if hasattr(self, "video_frame"):
             self.video_frame.place_forget()
 
-        image_path, image = self.manager.get_next(image_path, record_history=record_history)
+        image_path, image = self.manager.get_next(
+            image_path, record_history=record_history
+        )
 
         self.current_image_path = image_path
         self.current_image_index = self.image_paths.index(image_path)
@@ -259,7 +260,7 @@ class ImageSlideshow:
             self.label.config(image=photo)
             self.label.image = photo
             self.label.pack()
-        else:           
+        else:
             self.label.config(image="")
             self.label.image = None
             self.label.pack()
@@ -296,7 +297,7 @@ class ImageSlideshow:
 
             # Start polling to detect end of video
             self.root.after(500, self._check_video_ended)
-            
+
         self.filename_label.tkraise()
         self.mode_label.tkraise()
         self.update_filename_display()
@@ -336,21 +337,21 @@ class ImageSlideshow:
                 self.rotation_angle = 0
             self.show_image(image_path, record_history=False)
             self.reset_auto_advance()
-            
+
     def next_image_linear(self, event=None):
         image_path = self.image_paths[self.current_image_index + 1]
         if self.rotation_angle != 0:
             self.rotation_angle = 0
         self.show_image(image_path)
         self.reset_auto_advance()
-        
+
     def previous_image_linear(self, event=None):
         image_path = self.image_paths[self.current_image_index - 1]
         if self.rotation_angle != 0:
             self.rotation_angle = 0
         self.show_image(image_path)
         self.reset_auto_advance()
-        
+
     def delete_image(self, event=None):
         if self.current_image_path:
             confirm = messagebox.askyesno(
@@ -396,8 +397,10 @@ class ImageSlideshow:
         self.number_of_images = len(
             self.image_paths
         )  # Update the number of images for the subfolder
-        self.current_image_index = self.image_paths.index(self.current_image_path)
-        
+        self.current_image_index = self.image_paths.index(
+            self.current_image_path
+        )
+        self.select_manager(self.image_paths, self.weights, index=self.current_image_index, mode=self.mode)
         self.subfolder_mode = True
 
     def subfolder_mode_off(self):
@@ -408,6 +411,7 @@ class ImageSlideshow:
         self.current_image_index = self.image_paths.index(
             self.current_image_path
         )  # Update to the current image index
+        self.select_manager(self.image_paths, self.weights, index=self.current_image_index + 1, mode=self.mode)
         self.subfolder_mode = False
 
     def toggle_subfolder_mode(self, event=None):
@@ -415,7 +419,6 @@ class ImageSlideshow:
             self.subfolder_mode_on()
         else:
             self.subfolder_mode_off()
-        self.manager.reset()
         self.show_image(self.current_image_path)
         self.update_filename_display()
 
@@ -472,12 +475,14 @@ class ImageSlideshow:
             self.image_paths = []
             self.weights = []
 
-            parent_tree = Tree(self.defaults, self.filters)  # Use newTree instead of Tree
+            parent_tree = Tree(
+                self.defaults, self.filters
+            )  # Use newTree instead of Tree
             parent_image_dirs = {
                 parent_path: {
                     "weight_modifier": 100,
                     "is_percentage": True,
-                    "proportion": None
+                    "proportion": None,
                 }
             }
 
@@ -494,7 +499,7 @@ class ImageSlideshow:
             self.parent_mode = True
             self.subfolder_mode = False
             self.subFolderStack.clear()
-            
+
             self.manager.reset()
 
             self.show_image(self.current_image_path)
@@ -543,12 +548,14 @@ class ImageSlideshow:
                 self.image_paths = []
                 self.weights = []
 
-                parent_tree = Tree(self.defaults, self.filters)  # Use newTree instead of Tree
+                parent_tree = Tree(
+                    self.defaults, self.filters
+                )  # Use newTree instead of Tree
                 parent_image_dirs[parent_path] = {
                     "weight_modifier": 100,
                     "is_percentage": True,
                     "proportion": None,
-                    "mode_str": self.defaults.mode[1]
+                    "mode_str": self.defaults.mode[1],
                 }
                 parent_tree.build_tree(parent_image_dirs, None, self.quiet)
                 parent_tree.calculate_weights()
@@ -588,7 +595,7 @@ class ImageSlideshow:
         if self.parentFolderStack.is_empty():
             self.parent_mode = False
         self.subfolder_mode = False
-        
+
         self.manager.reset()
 
         self.show_image(self.current_image_path)
@@ -613,7 +620,7 @@ class ImageSlideshow:
             self.parentFolderStack.clear()
             self.parent_mode = False
             self.subfolder_mode = False
-            
+
             self.manager.lru_cache.clear()
             self.manager.preload_queue.clear()
             self.manager.history_manager.clear()
@@ -642,7 +649,7 @@ class ImageSlideshow:
             if fixed_colour:
                 if self.current_image_path.startswith(fixed_path):
                     fixed_portion = fixed_path
-                    remaining_portion = self.current_image_path[len(fixed_path):]
+                    remaining_portion = self.current_image_path[len(fixed_path) :]
                 else:
                     fixed_portion = ""
                     remaining_portion = self.current_image_path
@@ -682,9 +689,16 @@ class ImageSlideshow:
             self.mode_label.delete("1.0", tk.END)
 
             # Interval part
-            if hasattr(self, "auto_advance_interval") and self.auto_advance_interval > 0:
-                interval_color = "white" if getattr(self, "auto_advance_id", None) else "grey"
-                self.mode_label.insert(tk.END, f"{self.auto_advance_interval}ms  ", "interval")
+            if (
+                hasattr(self, "auto_advance_interval")
+                and self.auto_advance_interval > 0
+            ):
+                interval_color = (
+                    "white" if getattr(self, "auto_advance_id", None) else "grey"
+                )
+                self.mode_label.insert(
+                    tk.END, f"{self.auto_advance_interval}ms  ", "interval"
+                )
                 self.mode_label.tag_configure("interval", foreground=interval_color)
 
             # Mode part
@@ -694,25 +708,32 @@ class ImageSlideshow:
             # Final placement and disabling
             self.mode_label.place(x=self.root.winfo_screenwidth(), y=0, anchor="ne")
             self.mode_label.config(state=tk.DISABLED)
-
         else:
             self.filename_label.place_forget()
             self.mode_label.place_forget()
+        self.root.update_idletasks()
 
     def toggle_random_mode(self, event=None):
         if self.mode == "r":
             self.mode = self.previous_mode
         else:
+            self.previous_mode = self.mode
             self.mode = "r"
-        self.select_manager(self.mode)
+        self.select_manager(mode=self.mode, image_paths=self.image_paths)
         self.update_filename_display()
-        
+
     def toggle_linear_mode(self, event=None):
         if self.mode == "l":
             self.mode = self.previous_mode
         else:
+            self.previous_mode = self.mode
             self.mode = "l"
-        self.select_manager(self.mode)
+
+        self.select_manager(
+            mode=self.mode,
+            image_paths=self.image_paths,
+            index=self.current_image_index + 1,
+        )
         self.update_filename_display
 
     def rotate_image(self, event=None):

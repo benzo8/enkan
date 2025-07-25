@@ -46,19 +46,18 @@ class ImageCacheManager:
 
     def _preload_refill(self):
         """Fill preload queue fully."""
-        preload_index = self.current_image_index + 1
         while len(self.preload_queue) < self.preload_queue.max_size:
-            image_path = self.image_provider(index=preload_index)
+            try:
+                image_path = next(self.image_provider)
+            except StopIteration:
+                break  # For linear/sequential provider; random providers never stop
             if image_path is None:
                 break
             if image_path in self.preload_queue:
-                preload_index += 1
                 continue
             image_obj = self._load_image(image_path)
             self.preload_queue.push(image_path, image_obj)
             self._log(f"Preloaded: {image_path}")
-            preload_index += 1
-        self.current_image_index = preload_index - 1
 
     def _background_refill(self):
         """Start a background refill thread if not already running."""
