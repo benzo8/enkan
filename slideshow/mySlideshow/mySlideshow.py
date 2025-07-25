@@ -47,21 +47,15 @@ class ImageSlideshow:
             self.mode = "r"
         else:
             self.mode, _ = resolve_mode(self.defaults.mode, min(self.defaults.mode.keys()))
-        self.initial_mode = self.mode
+        self.previous_mode = self.mode
 
-        self.manager = ImageCacheManager(
-            self.image_provider, 
-            self.load_image_from_disk,
-            debug=False,
-            background_preload=True
-        )
+        self.select_manager(mode=self.mode)
 
         self.rotation_angle = 0
 
         self.root.configure(background="black")  # Set root background to black
         self.label = tk.Label(root, bg="black", anchor="ne", justify=tk.RIGHT)  # Set label background to black
         self.label.pack()
-
         self.filename_label = tk.Text(
             self.root,
             bg="black",
@@ -92,13 +86,16 @@ class ImageSlideshow:
         self.root.attributes("-fullscreen", True)
         self.root.bind("<space>", self.next_image)
         self.root.bind("<Escape>", self.exit_slideshow)
-        self.root.bind("<Left>", self.previous_image)
-        self.root.bind("<Right>", self.next_image_forward)
+        self.root.bind("<Left>", self.previous_image_history)
+        self.root.bind("<Right>", self.next_image_history)
+        self.root.bind("<Up>", self.next_image_linear)
+        self.root.bind("<Down>", self.previous_image_linear)
         self.root.bind("<Delete>", self.delete_image)
         self.root.bind("<a>", self.toggle_auto_advance)
         self.root.bind("<c>", self.toggle_random_mode)
         self.root.bind("<Control-c>", lambda e: e.widget.event_generate("<<Copy>>"))
         self.root.bind("<i>", self.step_backwards)
+        self.root.bind("<l>", self.toggle_linear_mode)
         self.root.bind("<m>", self.toggle_mute)
         self.root.bind("<n>", self.toggle_filename_display)
         self.root.bind("<o>", self.follow_branch_up)
@@ -106,11 +103,47 @@ class ImageSlideshow:
         self.root.bind("<r>", self.rotate_image)
         self.root.bind("<s>", self.toggle_subfolder_mode)
         self.root.bind("<u>", self.reset_parent_mode)
+        
         self.show_image()
         if interval:
             self.auto_advance_interval = interval
             self._schedule_next_image()
             self.auto_advance_running = True
+            
+    def select_manager(self, mode="default"):
+        provider_choices = {
+            "r": self.image_provider_random,
+            "l": self.image_provider_linear,
+        }
+        image_provider = provider_choices.get(mode, self.image_provider_weighted)
+
+        self.manager = ImageCacheManager(
+            image_provider, 
+            self.load_image_from_disk,
+            self.current_image_index,
+            debug=True,
+            background_preload=False
+        )
+            
+    def image_provider_weighted(self, index=None, *args, **kwargs):
+        image_path = random.choices(
+            self.image_paths, weights=self.weights, k=1
+        )[0]
+        return image_path
+
+    def image_provider_random(self, index=None, *args, **kwargs):
+        image_path = random.choice(self.image_paths)
+        return image_path
+
+    def image_provider_linear(self, index=None, *args, **kwargs):
+        if index is None:
+            next_image_index = self.current_image_index + 1
+        else:
+            next_image_index = index
+        if 0 <= next_image_index < len(self.image_paths):
+            return self.image_paths[next_image_index]
+        else:
+            return None
         
     def toggle_auto_advance(self, event=None, interval=None):
         """
@@ -152,23 +185,11 @@ class ImageSlideshow:
     def reset_auto_advance(self):
         if getattr(self, "auto_advance_running", False):
             self._schedule_next_image()
-
-    def image_provider(self):
-        if self.mode == "r":
-            image_path = random.choice(self.image_paths)
-        else:
-            image_path = random.choices(
-                self.image_paths, weights=self.weights, k=1
-            )[0]
-        return image_path
     
     def load_image_from_disk(self, path):
         with Image.open(path) as img:
             img_copy = img.copy()  # Loads image data into memory
         return img_copy  # The file is now closed; safe to delete `path`
-    
-    # def load_image_from_disk(self, path):
-    #     return Image.open(path)
 
     def show_image(self, image_path=None, record_history=True):
         """
@@ -295,10 +316,12 @@ class ImageSlideshow:
         self.root.after(500, self._check_video_ended)
 
     def next_image(self, event=None):
+        if self.rotation_angle != 0:
+            self.rotation_angle = 0
         self.show_image()
         self.reset_auto_advance()
 
-    def previous_image(self, event=None):
+    def previous_image_history(self, event=None):
         image_path, image_obj = self.manager.back()
         if image_path:
             if self.rotation_angle != 0:
@@ -306,14 +329,28 @@ class ImageSlideshow:
             self.show_image(image_path, record_history=False)
             self.reset_auto_advance()
 
-    def next_image_forward(self, event=None):
+    def next_image_history(self, event=None):
         image_path, image_obj = self.manager.forward()
         if image_path:
             if self.rotation_angle != 0:
                 self.rotation_angle = 0
             self.show_image(image_path, record_history=False)
             self.reset_auto_advance()
-
+            
+    def next_image_linear(self, event=None):
+        image_path = self.image_paths[self.current_image_index + 1]
+        if self.rotation_angle != 0:
+            self.rotation_angle = 0
+        self.show_image(image_path)
+        self.reset_auto_advance()
+        
+    def previous_image_linear(self, event=None):
+        image_path = self.image_paths[self.current_image_index - 1]
+        if self.rotation_angle != 0:
+            self.rotation_angle = 0
+        self.show_image(image_path)
+        self.reset_auto_advance()
+        
     def delete_image(self, event=None):
         if self.current_image_path:
             confirm = messagebox.askyesno(
@@ -664,10 +701,19 @@ class ImageSlideshow:
 
     def toggle_random_mode(self, event=None):
         if self.mode == "r":
-            self.mode = self.initial_mode
+            self.mode = self.previous_mode
         else:
             self.mode = "r"
+        self.select_manager(self.mode)
         self.update_filename_display()
+        
+    def toggle_linear_mode(self, event=None):
+        if self.mode == "l":
+            self.mode = self.previous_mode
+        else:
+            self.mode = "l"
+        self.select_manager(self.mode)
+        self.update_filename_display
 
     def rotate_image(self, event=None):
         self.rotation_angle = (self.rotation_angle - 90) % 360

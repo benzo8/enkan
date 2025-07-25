@@ -13,12 +13,13 @@ class ImageCacheManager:
     Supports background preloading of images.
     """
 
-    def __init__(self, image_provider, load_image_from_disk, debug=False, background_preload=True):
+    def __init__(self, image_provider, load_image_from_disk, current_image_index, debug=False, background_preload=True):
         self.lru_cache = LRUCache(constants.CACHE_SIZE)
         self.preload_queue = PreloadQueue(constants.PRELOAD_QUEUE_LENGTH)
         self.history_manager = HistoryManager(constants.HISTORY_QUEUE_LENGTH)
         self.image_provider = image_provider
         self.load_image_from_disk = load_image_from_disk
+        self.current_image_index = current_image_index
         self.debug = debug
         self.background_preload = background_preload
 
@@ -45,15 +46,19 @@ class ImageCacheManager:
 
     def _preload_refill(self):
         """Fill preload queue fully."""
+        preload_index = self.current_image_index + 1
         while len(self.preload_queue) < self.preload_queue.max_size:
-            image_path = self.image_provider()
+            image_path = self.image_provider(index=preload_index)
             if image_path is None:
                 break
             if image_path in self.preload_queue:
+                preload_index += 1
                 continue
             image_obj = self._load_image(image_path)
             self.preload_queue.push(image_path, image_obj)
             self._log(f"Preloaded: {image_path}")
+            preload_index += 1
+        self.current_image_index = preload_index - 1
 
     def _background_refill(self):
         """Start a background refill thread if not already running."""
