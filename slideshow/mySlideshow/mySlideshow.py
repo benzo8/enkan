@@ -15,7 +15,7 @@ from slideshow import constants
 from slideshow.utils import utils
 from slideshow.utils.Defaults import resolve_mode
 from slideshow.utils.MyStack import Stack
-from slideshow.cache.ImageCacheManager import ImageCacheManager
+from slideshow.mySlideshow.ImageProviders import ImageProviders
 from slideshow.tree.Tree import Tree
 
 
@@ -43,21 +43,6 @@ class ImageSlideshow:
         self.interval = interval
 
         self.filters = filters
-
-        if self.defaults.is_random:
-            self.mode = "r"
-        else:
-            self.mode, _ = resolve_mode(
-                self.defaults.mode, min(self.defaults.mode.keys())
-            )
-        self.previous_mode = self.mode
-
-        self.select_manager(
-            mode=self.mode,
-            image_paths=image_paths,
-            weights=weights,
-            index=self.current_image_index,
-        )
 
         self.rotation_angle = 0
 
@@ -97,10 +82,10 @@ class ImageSlideshow:
         self.root.bind("<Down>", self.previous_image_linear)
         self.root.bind("<Delete>", self.delete_image)
         self.root.bind("<a>", self.toggle_auto_advance)
-        self.root.bind("<c>", self.toggle_random_mode)
+        self.root.bind("<c>", self.select_random_mode)
         self.root.bind("<Control-c>", lambda e: e.widget.event_generate("<<Copy>>"))
         self.root.bind("<i>", self.step_backwards)
-        self.root.bind("<l>", self.toggle_linear_mode)
+        self.root.bind("<l>", self.select_linear_mode)
         self.root.bind("<m>", self.toggle_mute)
         self.root.bind("<n>", self.toggle_filename_display)
         self.root.bind("<o>", self.follow_branch_up)
@@ -108,6 +93,14 @@ class ImageSlideshow:
         self.root.bind("<r>", self.rotate_image)
         self.root.bind("<s>", self.toggle_subfolder_mode)
         self.root.bind("<u>", self.reset_parent_mode)
+        self.root.bind("<w>", self.select_weighted_mode)
+
+        self.providers = ImageProviders(self.load_image_from_disk)
+        if self.defaults.is_random:
+            self.set_provider("random")
+        else:
+            self.set_provider("weighted", weights=[1] * len(self.image_paths))
+        self.mode, _ = resolve_mode(self.defaults.mode, min(self.defaults.mode.keys()))
 
         self.show_image()
         if interval:
@@ -115,34 +108,15 @@ class ImageSlideshow:
             self._schedule_next_image()
             self.auto_advance_running = True
 
-    def select_manager(self, image_paths, weights=None, index=None, mode="default"):
-        provider_choices = {
-            "r": self.image_provider_random(image_paths),
-            "l": self.image_provider_linear(image_paths, start_index=index),
-        }
-        image_provider = provider_choices.get(
-            mode, self.image_provider_weighted(image_paths, weights)
-        )
-
-        self.manager = ImageCacheManager(
-            image_provider,
-            self.load_image_from_disk,
-            self.current_image_index,
-            debug=True,
-            background_preload=False,
-        )
-
-    def image_provider_linear(self, image_paths, start_index=0):
-        for path in image_paths[start_index:]:
-            yield path
-
-    def image_provider_random(self, image_paths):
-        while True:  # Infinite generator, stop when queue is full!
-            yield random.choice(image_paths)
-
-    def image_provider_weighted(self, image_paths, weights):
-        while True:
-            yield random.choices(image_paths, weights=weights, k=1)[0]
+    def set_provider(self, provider_name, **provider_kwargs):
+        # Easily switch to any provider by name/key
+        self.current_provider = provider_name
+        self.manager = self.providers.select_manager(
+                image_paths=self.image_paths,
+                provider_name=provider_name,
+                **provider_kwargs
+            )
+        self.update_filename_display()
 
     def toggle_auto_advance(self, event=None, interval=None):
         """
@@ -400,18 +374,28 @@ class ImageSlideshow:
         self.current_image_index = self.image_paths.index(
             self.current_image_path
         )
-        self.select_manager(self.image_paths, self.weights, index=self.current_image_index, mode=self.mode)
+        self.manager = self.providers.reset_manager(
+            image_paths=self.image_paths,
+            provider_name=self.providers.get_current_provider_name(),
+            weights=self.weights, 
+            index=self.current_image_index
+        )
         self.subfolder_mode = True
 
     def subfolder_mode_off(self):
-        current_dir, self.image_paths, self.weights = self.subFolderStack.pop()
+        _, self.image_paths, self.weights = self.subFolderStack.pop()
         self.number_of_images = len(
             self.image_paths
         )  # Update the number of images for the full set
         self.current_image_index = self.image_paths.index(
             self.current_image_path
         )  # Update to the current image index
-        self.select_manager(self.image_paths, self.weights, index=self.current_image_index + 1, mode=self.mode)
+        self.manager = self.providers.reset_manager(
+            image_paths=self.image_paths, 
+            provider_name=self.providers.get_current_provider_name(),
+            weights=self.weights, 
+            index=self.current_image_index + 1
+        )
         self.subfolder_mode = False
 
     def toggle_subfolder_mode(self, event=None):
@@ -670,7 +654,7 @@ class ImageSlideshow:
 
             # --------- Right-side mode/interval display ---------
             # Determine mode_text
-            mode_text = self.mode.upper() if self.mode else "-"
+            mode_text = self.providers.get_current_provider_name()[0].upper() if self.mode else "-"
             if self.subfolder_mode:
                 mode_text += " S"
                 count = len(self.image_paths)
@@ -713,28 +697,14 @@ class ImageSlideshow:
             self.mode_label.place_forget()
         self.root.update_idletasks()
 
-    def toggle_random_mode(self, event=None):
-        if self.mode == "r":
-            self.mode = self.previous_mode
-        else:
-            self.previous_mode = self.mode
-            self.mode = "r"
-        self.select_manager(mode=self.mode, image_paths=self.image_paths)
-        self.update_filename_display()
+    def select_random_mode(self, event=None):
+        self.set_provider("random")
 
-    def toggle_linear_mode(self, event=None):
-        if self.mode == "l":
-            self.mode = self.previous_mode
-        else:
-            self.previous_mode = self.mode
-            self.mode = "l"
+    def select_linear_mode(self, event=None):
+        self.set_provider("linear", index=self.current_image_index + 1)
 
-        self.select_manager(
-            mode=self.mode,
-            image_paths=self.image_paths,
-            index=self.current_image_index + 1,
-        )
-        self.update_filename_display
+    def select_weighted_mode(self, event=None):
+        self.set_provider("weighted", weights=self.weights)
 
     def rotate_image(self, event=None):
         self.rotation_angle = (self.rotation_angle - 90) % 360
