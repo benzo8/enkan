@@ -7,7 +7,7 @@ class ImageProviders:
         self.manager = None
         # Provider registry: key → provider factory function
         self.providers = {
-            "linear": self.image_provider_linear,
+            "sequential": self.image_provider_sequential,
             "random": self.image_provider_random,
             "weighted": self.image_provider_weighted,
         }
@@ -16,7 +16,7 @@ class ImageProviders:
     def register_provider(self, name, func):
         self.providers[name] = func
 
-    def select_manager(self, image_paths, provider_name="linear", **kwargs):
+    def select_manager(self, image_paths, provider_name="sequential", **kwargs):
         # Look up provider by name
         provider_func = self.providers.get(provider_name)
         if not provider_func:
@@ -43,10 +43,10 @@ class ImageProviders:
         If provider_name is not specified, uses the current one.
         """
         if provider_name is None:
-            provider_name = self.current_provider_name or "linear"
+            provider_name = self.current_provider_name or "sequential"
         return self.select_manager(image_paths, provider_name, **kwargs)
     
-    def image_provider_linear(self, image_paths, index=0, **kwargs):
+    def image_provider_sequential(self, image_paths, index=0, **kwargs):
         for path in image_paths[index:]:
             yield path
 

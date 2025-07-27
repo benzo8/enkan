@@ -3,8 +3,7 @@ import os
 import sys
 import random
 import tkinter as tk
-from tkinter import messagebox
-import tkinter.font as tkFont
+from tkinter import messagebox 
 from PIL import Image, ImageTk
 
 # ——— Third-party ———
@@ -17,7 +16,6 @@ from slideshow.utils.Defaults import resolve_mode
 from slideshow.utils.MyStack import Stack
 from slideshow.mySlideshow.ImageProviders import ImageProviders
 from slideshow.tree.Tree import Tree
-
 
 class ImageSlideshow:
     def __init__(self, root, image_paths, weights, defaults, filters, quiet, interval):
@@ -38,18 +36,15 @@ class ImageSlideshow:
         self.screen_height = root.winfo_screenheight()
 
         self.defaults = defaults
+        self.filters = filters
         self.video_muted = self.defaults.mute
         self.quiet = quiet
         self.interval = interval
 
-        self.filters = filters
-
         self.rotation_angle = 0
 
         self.root.configure(background="black")  # Set root background to black
-        self.label = tk.Label(
-            root, bg="black", anchor="ne", justify=tk.RIGHT
-        )  # Set label background to black
+        self.label = tk.Label(root, bg="black")  # Set label background to black
         self.label.pack()
         self.filename_label = tk.Text(
             self.root,
@@ -61,40 +56,34 @@ class ImageSlideshow:
             highlightthickness=0,
         )
         self.filename_label.config(state=tk.DISABLED)
-        self.mode_label = tk.Text(
-            self.root, bg="black", height=1, wrap="none", bd=0, highlightthickness=0
-        )
-        self.mode_label.config(padx=0, pady=0)
-        self.mode_label.config(borderwidth=0)
-        self.mode_label.config(highlightthickness=0)
-        self.mode_label.config(spacing1=0, spacing2=0, spacing3=0)
-        self.mode_label.tag_configure("tag-right", justify="right")
-        self.mode_font = tkFont.nametofont("TkDefaultFont")
-        self.mode_label.configure(font=self.mode_font)
-        self.mode_label.config(state=tk.DISABLED)
+        self.mode_label = tk.Label(self.root, bg="black", fg="white", anchor="ne")
 
         self.root.attributes("-fullscreen", True)
         self.root.bind("<space>", self.next_image)
         self.root.bind("<Escape>", self.exit_slideshow)
-        self.root.bind("<Left>", self.previous_image_history)
-        self.root.bind("<Right>", self.next_image_history)
-        self.root.bind("<Up>", self.next_image_linear)
-        self.root.bind("<Down>", self.previous_image_linear)
-        self.root.bind("<Delete>", self.delete_image)
-        self.root.bind("<a>", self.toggle_auto_advance)
-        self.root.bind("<c>", self.select_random_mode)
+        
+        for key in ["<Left>", "<Right>"]:
+            self.root.bind(key, self.navigate_image_history)
+        for key in ["<Up>", "<Down>"]:
+            self.root.bind(key, self.navigate_image_sequential)
+        for key in ["<c>", "<w>", "<l>"]:
+            self.root.bind(key , self.select_mode)
+            
         self.root.bind("<Control-c>", lambda e: e.widget.event_generate("<<Copy>>"))
-        self.root.bind("<i>", self.step_backwards)
-        self.root.bind("<l>", self.select_linear_mode)
-        self.root.bind("<m>", self.toggle_mute)
-        self.root.bind("<n>", self.toggle_filename_display)
+
+        self.root.bind("<u>", self.reset_parent_mode)
         self.root.bind("<o>", self.follow_branch_up)
         self.root.bind("<p>", self.follow_branch_down)
+        self.root.bind("<i>", self.step_backwards)
+        
         self.root.bind("<r>", self.rotate_image)
+        self.root.bind("<Delete>", self.delete_image)
+        
+        self.root.bind("<m>", self.toggle_mute)
+        self.root.bind("<n>", self.toggle_filename_display)
         self.root.bind("<s>", self.toggle_subfolder_mode)
-        self.root.bind("<u>", self.reset_parent_mode)
-        self.root.bind("<w>", self.select_weighted_mode)
-
+        self.root.bind("<a>", self.toggle_auto_advance)
+        
         self.providers = ImageProviders(self.load_image_from_disk)
         if self.defaults.is_random:
             self.set_provider("random")
@@ -296,31 +285,24 @@ class ImageSlideshow:
         self.show_image()
         self.reset_auto_advance()
 
-    def previous_image_history(self, event=None):
-        image_path, image_obj = self.manager.back()
+    def navigate_image_history(self, event=None):
+        match event.keysym:
+            case "Left":
+                image_path, image_obj = self.manager.back()
+            case "Right":
+                image_path, image_obj = self.manager.forward()
         if image_path:
             if self.rotation_angle != 0:
                 self.rotation_angle = 0
             self.show_image(image_path, record_history=False)
             self.reset_auto_advance()
 
-    def next_image_history(self, event=None):
-        image_path, image_obj = self.manager.forward()
-        if image_path:
-            if self.rotation_angle != 0:
-                self.rotation_angle = 0
-            self.show_image(image_path, record_history=False)
-            self.reset_auto_advance()
-
-    def next_image_linear(self, event=None):
-        image_path = self.image_paths[self.current_image_index + 1]
-        if self.rotation_angle != 0:
-            self.rotation_angle = 0
-        self.show_image(image_path)
-        self.reset_auto_advance()
-
-    def previous_image_linear(self, event=None):
-        image_path = self.image_paths[self.current_image_index - 1]
+    def navigate_image_sequential(self, event=None):
+        match event.keysym:
+            case "Up":
+                image_path = self.image_paths[self.current_image_index + 1]
+            case "Down":
+                image_path = self.image_paths[self.current_image_index - 1]
         if self.rotation_angle != 0:
             self.rotation_angle = 0
         self.show_image(image_path)
@@ -654,9 +636,9 @@ class ImageSlideshow:
 
             # --------- Right-side mode/interval display ---------
             # Determine mode_text
-            mode_text = self.providers.get_current_provider_name()[0].upper() if self.mode else "-"
+            mode_text = self.providers.get_current_provider_name()[0:3].upper() if self.mode else "-"
             if self.subfolder_mode:
-                mode_text += " S"
+                mode_text += " SUB"
                 count = len(self.image_paths)
                 idx = self.image_paths.index(self.current_image_path) + 1
                 mode_text = f"({idx}/{count}) {mode_text}"
@@ -668,43 +650,36 @@ class ImageSlideshow:
             else:
                 mode_text = f"({self.current_image_index + 1}/{self.number_of_images}) {mode_text}"
 
-            # Clear and rebuild right-side label with interval + mode_text
-            self.mode_label.config(state=tk.NORMAL)
-            self.mode_label.delete("1.0", tk.END)
-
-            # Interval part
+            # Build display string: (interval if present) + mode_text
+            display_text = mode_text
             if (
-                hasattr(self, "auto_advance_interval")
+                hasattr(self, "auto_advance_running")
+                and self.auto_advance_running
+                and hasattr(self, "auto_advance_interval")
                 and self.auto_advance_interval > 0
             ):
-                interval_color = (
-                    "white" if getattr(self, "auto_advance_id", None) else "grey"
-                )
-                self.mode_label.insert(
-                    tk.END, f"{self.auto_advance_interval}ms  ", "interval"
-                )
-                self.mode_label.tag_configure("interval", foreground=interval_color)
+                display_text = f"AUTO ({self.auto_advance_interval}ms)   {mode_text}"
 
-            # Mode part
-            self.mode_label.insert(tk.END, mode_text, "mode")
-            self.mode_label.tag_configure("mode", foreground="white")
-
-            # Final placement and disabling
+            # Set text and color for label (single foreground color only)
+            self.mode_label.config(
+                text=display_text,
+                fg="white",  # or whatever color you prefer
+                # bg=...      # optionally your label background color
+            )
             self.mode_label.place(x=self.root.winfo_screenwidth(), y=0, anchor="ne")
-            self.mode_label.config(state=tk.DISABLED)
         else:
             self.filename_label.place_forget()
             self.mode_label.place_forget()
         self.root.update_idletasks()
 
-    def select_random_mode(self, event=None):
-        self.set_provider("random")
-
-    def select_linear_mode(self, event=None):
-        self.set_provider("linear", index=self.current_image_index + 1)
-
-    def select_weighted_mode(self, event=None):
-        self.set_provider("weighted", weights=self.weights)
+    def select_mode(self, event=None):
+        match event.char.upper():
+            case "C":
+                self.set_provider("random")
+            case "L":
+                self.set_provider("sequential", index=self.current_image_index + 1)
+            case "W":
+                self.set_provider("weighted", weights=self.weights)
 
     def rotate_image(self, event=None):
         self.rotation_angle = (self.rotation_angle - 90) % 360
