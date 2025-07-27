@@ -1,6 +1,6 @@
 from .mySlideshow import ImageSlideshow
 
-def start_slideshow(all_image_paths, weights, defaults, filters, quiet):
+def start_slideshow(all_image_paths, weights, defaults, filters, quiet, interval):
     """
     Start the slideshow using the given paths and weights.
 
@@ -13,5 +13,5 @@ def start_slideshow(all_image_paths, weights, defaults, filters, quiet):
     import tkinter as tk
 
     root = tk.Tk()
-    _ = ImageSlideshow(root, all_image_paths, weights, defaults, filters, quiet)
+    _ = ImageSlideshow(root, all_image_paths, weights, defaults, filters, quiet, interval)
     root.mainloop()

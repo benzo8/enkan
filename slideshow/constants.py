@@ -1,10 +1,12 @@
 import re
 
 # Constants
-VERSION = "1.51"
+VERSION = "1.85-dev"
 TOTAL_WEIGHT = 100
 PARENT_STACK_MAX = 5
-QUEUE_LENGTH_MAX = 25
+HISTORY_QUEUE_LENGTH = 25
+CACHE_SIZE = 10
+PRELOAD_QUEUE_LENGTH = 3
 IMAGE_FILES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff")
 VIDEO_FILES = (".mp4", ".mkv", ".webm", ".avi", ".mov", ".wmv")
 TEXT_FILES = (".txt", ".lst")

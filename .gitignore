@@ -3,6 +3,7 @@ lists/
 test_zone/
 input-file-tests/
 old versions/
+slideshow/TODO.md
 
 # IDE/Editor settings
 .vscode/

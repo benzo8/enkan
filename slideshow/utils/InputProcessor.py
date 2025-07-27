@@ -13,29 +13,29 @@ class InputProcessor:
         self.quiet = quiet
 
     def find_input_file(self, input_filename, additional_search_paths=[]):
-            # List of potential directories to search
-            possible_locations = [
-                os.path.dirname(os.path.abspath(__file__)),  # Script's directory
-                os.getcwd(),  # Current working directory
-                *additional_search_paths,  # Additional paths (e.g., main input file's directory)
-                os.path.join(
-                    os.getcwd(), "lists"
-                ),  # Fixed "lists" folder in the current working directory
-            ]
+        # List of potential directories to search
+        possible_locations = [
+            os.path.dirname(os.path.abspath(__file__)),  # Script's directory
+            os.getcwd(),  # Current working directory
+            *additional_search_paths,  # Additional paths (e.g., main input file's directory)
+            os.path.join(
+                os.getcwd(), "lists"
+            ),  # Fixed "lists" folder in the current working directory
+        ]
 
-            # If input_filename has no extension, try .lst then .txt
-            _, ext = os.path.splitext(input_filename)
-            candidates = [input_filename]
-            if not ext:
-                candidates = [input_filename + ".lst", input_filename + ".txt"]
+        # If input_filename has no extension, try .lst then .txt
+        _, ext = os.path.splitext(input_filename)
+        candidates = [input_filename]
+        if not ext:
+            candidates = [input_filename + ".lst", input_filename + ".txt"]
 
-            for location in possible_locations:
-                for candidate in candidates:
-                    potential_path = os.path.join(location, candidate)
-                    if os.path.isfile(potential_path):
-                        return potential_path
+        for location in possible_locations:
+            for candidate in candidates:
+                potential_path = os.path.join(location, candidate)
+                if os.path.isfile(potential_path):
+                    return potential_path
 
-            return None
+        return None
 
     def process_inputs(self, input_files, recdepth=1):
         """
@@ -52,11 +52,12 @@ class InputProcessor:
         specific_images = {}
         all_images = []
         weights = []
-        
+
         for input_entry in input_files:
-            self.process_entry(input_entry, recdepth, image_dirs, specific_images, all_images, weights)
+            self.process_entry(
+                input_entry, recdepth, image_dirs, specific_images, all_images, weights
+            )
         return image_dirs, specific_images, all_images, weights
-        
 
     def parse_input_line(self, line, recdepth):
         modifier_pattern = re.compile(r"(\[.*?\])")
@@ -65,12 +66,12 @@ class InputProcessor:
         mode_pattern = constants.CX_PATTERN
         graft_pattern = re.compile(r"^g\d+$", re.IGNORECASE)
         group_pattern = re.compile(r"^>.*", re.IGNORECASE)
-        depth_pattern = re.compile(r"^d\d+$", re.IGNORECASE)
         flat_pattern = re.compile(r"^f$", re.IGNORECASE)
         video_pattern = re.compile(r"^v$", re.IGNORECASE)
         no_video_pattern = re.compile(r"^nv$", re.IGNORECASE)
         mute_pattern = re.compile(r"^m$", re.IGNORECASE)
         no_mute_pattern = re.compile(r"^nm$", re.IGNORECASE)
+        dont_recurse_pattern = re.compile(r"^/$", re.IGNORECASE)
 
         if line.startswith("[r]"):
             self.defaults.set_global_defaults(is_random=True)
@@ -100,7 +101,7 @@ class InputProcessor:
         group = None
         mode = self.defaults.mode
         mode_modifier = None
-        depth = self.defaults.depth
+        dont_recurse = None
         flat = False
         video = None
         mute = None
@@ -133,9 +134,6 @@ class InputProcessor:
             elif mode_pattern.match(mod_content):
                 # Balance level modifier, global only
                 mode_modifier = parse_mode_string(mod_content)
-            elif depth_pattern.match(mod_content):
-                # Depth modifier
-                depth = int(mod_content[1:])
             elif flat_pattern.match(mod_content):
                 flat = True
             elif video_pattern.match(mod_content):
@@ -147,6 +145,9 @@ class InputProcessor:
                 mute = True
             elif no_mute_pattern.match(mod_content):
                 mute = False
+            elif dont_recurse_pattern.match(mod_content):
+                dont_recurse = True
+                self.filters.add_dont_recurse_beyond_folder(path)
             else:
                 print(f"Unknown modifier '{mod_content}' in line: {line}")
             # Handle directory or specific image
@@ -161,7 +162,7 @@ class InputProcessor:
             if video is not None or mute is not None:
                 self.defaults.set_global_video(video=video, mute=mute)
             if recdepth == 1:
-                self.defaults.set_global_defaults(mode=mode_modifier or mode, depth=depth)
+                self.defaults.set_global_defaults(mode=mode_modifier or mode, dont_recurse=dont_recurse)
             return None, None
 
         if os.path.isdir(path):
@@ -172,7 +173,6 @@ class InputProcessor:
                 "graft_level": graft_level,
                 "group": group,
                 "mode_modifier": mode_modifier,
-                "depth": depth,
                 "flat": flat,
                 "video": video,
             }
@@ -190,7 +190,9 @@ class InputProcessor:
 
         return None, None
 
-    def process_entry(self, entry, recdepth, image_dirs, specific_images, all_images, weights):
+    def process_entry(
+        self, entry, recdepth, image_dirs, specific_images, all_images, weights
+    ):
         """
         Process a single input entry (file, directory, or image).
         """
@@ -216,7 +218,9 @@ class InputProcessor:
                             line = line.strip()
                             if not line or line.startswith("#"):
                                 continue
-                            image_path, weight_str = line.rsplit(",", 1)  # Split on last comma
+                            image_path, weight_str = line.rsplit(
+                                ",", 1
+                            )  # Split on last comma
                             if weight_str:  # Expecting "image_path,weight"
                                 try:
                                     weights.append(float(weight_str))
@@ -224,7 +228,9 @@ class InputProcessor:
                                 except ValueError:
                                     # weight_str is not a number, so it's part of the image path (comma in filename)
                                     all_images.append(f"{image_path},{weight_str}")
-                                    weights.append(0.01)  # Default weight for single lines
+                                    weights.append(
+                                        0.01
+                                    )  # Default weight for single lines
                             else:  # Probably an irfanview-style list
                                 all_images.append(line)
                                 weights.append(0.01)  # Default weight for single lines
@@ -253,7 +259,7 @@ class InputProcessor:
                             if utils.is_textfile(
                                 line
                             ):  # Recursively process nested text files
-                                sub_image_dirs, sub_specific_images = (
+                                sub_image_dirs, sub_specific_images, _, _ = (
                                     self.process_inputs([line], recdepth + 1)
                                 )
                                 image_dirs.update(sub_image_dirs)
