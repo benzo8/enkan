@@ -1,9 +1,9 @@
 import random
 from slideshow.cache.ImageCacheManager import ImageCacheManager
 
+
 class ImageProviders:
-    def __init__(self, load_image_from_disk):
-        self.load_image_from_disk = load_image_from_disk
+    def __init__(self):
         self.manager = None
         # Provider registry: key → provider factory function
         self.providers = {
@@ -26,10 +26,9 @@ class ImageProviders:
         image_provider = provider_func(image_paths, **kwargs)
         self.manager = ImageCacheManager(
             image_provider,
-            self.load_image_from_disk,
             kwargs.get("index", 0),
-            debug=True,
-            background_preload=False,
+            debug=kwargs.get("debug", False),
+            background_preload=kwargs.get("background", True)
         )
         self.current_provider_name = provider_name
         return self.manager

@@ -83,7 +83,14 @@ def get_arg_parser() -> argparse.ArgumentParser:
         "--quiet", "-q", action="store_true", help="Run in quiet mode (no output)"
     )
     parser.add_argument(
+        "--no_background", "--nbg", action="store_false", help="Force queue/cache loading into foreground"
+    )
+    parser.set_defaults(no_background=False)
+    parser.add_argument(
         "--test", metavar="N", type=int, help="Run the test with N iterations"
+    )
+    parser.add_argument(
+        "--debug", action="store_true"
     )
     parser.add_argument(
         "--testdepth", type=int, default=None, help="Depth to display test results"

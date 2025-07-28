@@ -57,7 +57,6 @@ class Defaults:
         is_random=False,
         dont_recurse=False,
         args=None,
-        groups={},
         video=True,
         mute=True,
     ):
@@ -82,6 +81,9 @@ class Defaults:
         self.args_dont_recurse = args.dont_recurse if args and args.dont_recurse is not None else None
         self.args_video = args.video if args and args.video is not None else None
         self.args_mute = args.mute if args and args.mute is not None else None
+
+        self.debug = args.debug
+        self.background = not args.no_background
 
         self.groups = {}
 

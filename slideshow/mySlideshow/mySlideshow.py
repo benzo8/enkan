@@ -14,7 +14,7 @@ from slideshow import constants
 from slideshow.utils import utils
 from slideshow.utils.Defaults import resolve_mode
 from slideshow.utils.MyStack import Stack
-from slideshow.mySlideshow.ImageProviders import ImageProviders
+from slideshow.plugables.ImageProviders import ImageProviders
 from slideshow.tree.Tree import Tree
 
 class ImageSlideshow:
@@ -84,7 +84,7 @@ class ImageSlideshow:
         self.root.bind("<s>", self.toggle_subfolder_mode)
         self.root.bind("<a>", self.toggle_auto_advance)
         
-        self.providers = ImageProviders(self.load_image_from_disk)
+        self.providers = ImageProviders()
         if self.defaults.is_random:
             self.set_provider("random")
         else:
@@ -103,6 +103,8 @@ class ImageSlideshow:
         self.manager = self.providers.select_manager(
                 image_paths=self.image_paths,
                 provider_name=provider_name,
+                debug=self.defaults.debug,
+                background_preload=self.defaults.background,
                 **provider_kwargs
             )
         self.update_filename_display()
@@ -202,9 +204,14 @@ class ImageSlideshow:
             # Resize image to fit the screen while maintaining aspect ratio
             screen_width = self.screen_width
             screen_height = self.screen_height
+            
+            # Apply rotation before resizing
+            if hasattr(self, 'rotation_angle') and self.rotation_angle:
+                image = image.rotate(self.rotation_angle, expand=True)
+
+            # Get correct image size after rotation
             image_ratio = image.width / image.height
             screen_ratio = screen_width / screen_height
-
             if image_ratio > screen_ratio:
                 new_width = screen_width
                 new_height = int(screen_width / image_ratio)
@@ -213,10 +220,6 @@ class ImageSlideshow:
                 new_width = int(screen_height * image_ratio)
 
             image = image.resize((new_width, new_height), Image.LANCZOS)
-
-            # Apply rotation if needed
-            if self.rotation_angle != 0:
-                image = image.rotate(self.rotation_angle, expand=True)
 
             # Convert to PhotoImage and display
             photo = ImageTk.PhotoImage(image)
