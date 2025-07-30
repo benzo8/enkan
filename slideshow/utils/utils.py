@@ -67,6 +67,10 @@ def is_videoallowed(data_video, defaults):
     else:
         return data_video if data_video is not None else defaults.video
     
+def log(message, debug):
+    if debug:
+        print(f"[DEBUG] {message}")
+
 
 def filter_valid_files(path, files, ignored_files, is_videoallowed=None):
     if path in {os.path.dirname(f) for f in ignored_files}:
@@ -78,6 +82,31 @@ def filter_valid_files(path, files, ignored_files, is_videoallowed=None):
         for f in valid_files
         if is_imagefile(f) or (is_videofile(f) and is_videoallowed)
     ]
+
+def find_input_file(input_filename, additional_search_paths=[]):
+    # List of potential directories to search
+    possible_locations = [
+        os.path.dirname(os.path.abspath(__file__)),  # Script's directory
+        os.getcwd(),  # Current working directory
+        *additional_search_paths,  # Additional paths (e.g., main input file's directory)
+        os.path.join(
+            os.getcwd(), "lists"
+        ),  # Fixed "lists" folder in the current working directory
+    ]
+
+    # If input_filename has no extension, try .lst then .txt
+    _, ext = os.path.splitext(input_filename)
+    candidates = [input_filename]
+    if not ext:
+        candidates = [input_filename + ".lst", input_filename + ".txt"]
+
+    for location in possible_locations:
+        for candidate in candidates:
+            potential_path = os.path.join(location, candidate)
+            if os.path.isfile(potential_path):
+                return potential_path
+
+    return None
 
 def write_image_list(all_images, weights, input_files, mode_args, output_path):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

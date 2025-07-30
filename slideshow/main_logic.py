@@ -9,10 +9,8 @@ from slideshow.utils.tests import (
     print_tree, 
     test_distribution
 )
-from slideshow.tree.Tree import Tree
-from slideshow.tree.TreeBuilder import TreeBuilder
 from slideshow.tree.tree_logic import (
-    calculate_weights, 
+    build_tree,
     extract_image_paths_and_weights_from_tree
 )
 from slideshow.mySlideshow.start_slideshow import start_slideshow
@@ -36,13 +34,7 @@ def main(args):
 
     if image_dirs or specific_images:
         # Instantiate and build the tree
-        tree = Tree(defaults, filters)
-        builder = TreeBuilder(tree)
-        builder.build_tree(image_dirs, specific_images, args.quiet or False)
-        _, num_images = tree.count_branches(tree.root)
-        if num_images == 0:
-            raise ValueError("No images found in the provided input files.")
-        calculate_weights(tree)
+        tree = build_tree(defaults, filters, image_dirs, specific_images, quiet=False)
 
         # Print tree if requested
         if args.printtree:
@@ -71,4 +63,4 @@ def main(args):
         test_distribution(all_images, weights, args.test, args.testdepth, defaults, args.quiet or False)
         return
     
-    start_slideshow(all_images, weights, defaults, filters, args.quiet or False, args.interval)
+    start_slideshow(tree, all_images, weights, defaults, filters, args.quiet or False, args.interval)

@@ -15,11 +15,15 @@ from slideshow.utils import utils
 from slideshow.utils.Defaults import resolve_mode
 from slideshow.utils.MyStack import Stack
 from slideshow.plugables.ImageProviders import ImageProviders
-from slideshow.tree.Tree import Tree
+from slideshow.tree.tree_logic import (
+    build_tree, 
+    extract_image_paths_and_weights_from_tree
+)
 
 class ImageSlideshow:
-    def __init__(self, root, image_paths, weights, defaults, filters, quiet, interval):
+    def __init__(self, root, tree, image_paths, weights, defaults, filters, quiet, interval):
         self.root = root
+        self.original_tree = tree
         self.image_paths = image_paths
         self.weights = weights
         self.original_image_paths = image_paths
@@ -30,6 +34,7 @@ class ImageSlideshow:
         self.parentFolderStack = Stack(constants.PARENT_STACK_MAX)
         self.subfolder_mode = False
         self.parent_mode = False
+        self.navigation_mode = "folder"
         self.show_filename = False
 
         self.screen_width = root.winfo_screenwidth()
@@ -71,6 +76,7 @@ class ImageSlideshow:
             
         self.root.bind("<Control-c>", lambda e: e.widget.event_generate("<<Copy>>"))
 
+        self.root.bind("<t>", self.toggle_navigation_mode)
         self.root.bind("<u>", self.reset_parent_mode)
         self.root.bind("<o>", self.follow_branch_up)
         self.root.bind("<p>", self.follow_branch_down)
@@ -149,11 +155,6 @@ class ImageSlideshow:
     def reset_auto_advance(self):
         if getattr(self, "auto_advance_running", False):
             self._schedule_next_image()
-
-    def load_image_from_disk(self, path):
-        with Image.open(path) as img:
-            img_copy = img.copy()  # Loads image data into memory
-        return img_copy  # The file is now closed; safe to delete `path`
 
     def show_image(self, image_path=None, record_history=True):
         """
@@ -391,9 +392,17 @@ class ImageSlideshow:
         self.show_image(self.current_image_path)
         self.update_filename_display()
 
-    """ TODO:
-            Fix follow_branch_down and follow_branch_up
-    """
+    def toggle_navigation_mode(self, event=None):
+        if self.navigation_mode == "branch":
+            self.navigation_mode = "folder"
+        else:
+            if self.original_tree.find_node(os.path.dirname(self.current_image_path), self.original_tree.path_lookup):
+                self.navigation_mode = "branch"
+                self.reset_parent_mode()
+            else:
+                utils.log(f"Cannot change mode - {self.current_image_path} not in tree", self.defaults.debug)
+                return
+        self.update_filename_display()
 
     def follow_branch_down(self, event=None):
         """Move down one level in the folder structure, build a new tree, and update the slideshow."""
@@ -444,9 +453,6 @@ class ImageSlideshow:
             self.image_paths = []
             self.weights = []
 
-            parent_tree = Tree(
-                self.defaults, self.filters
-            )  # Use newTree instead of Tree
             parent_image_dirs = {
                 parent_path: {
                     "weight_modifier": 100,
@@ -456,10 +462,9 @@ class ImageSlideshow:
             }
 
             # Build the new tree and extract images and weights
-            parent_tree.build_tree(parent_image_dirs, None, self.quiet)
-            parent_tree.calculate_weights()
+            parent_tree = build_tree(self.defaults, self.filters, parent_image_dirs, None, self.quiet)
             self.image_paths, self.weights = (
-                parent_tree.extract_image_paths_and_weights_from_tree()
+                extract_image_paths_and_weights_from_tree(parent_tree)
             )
 
             # Update slideshow state
@@ -469,7 +474,12 @@ class ImageSlideshow:
             self.subfolder_mode = False
             self.subFolderStack.clear()
 
-            self.manager.reset()
+            self.manager = self.providers.reset_manager(
+                image_paths=self.image_paths,
+                provider_name=self.providers.get_current_provider_name(),
+                weights=self.weights, 
+                index=self.current_image_index
+        )
 
             self.show_image(self.current_image_path)
             self.update_filename_display()
@@ -503,7 +513,7 @@ class ImageSlideshow:
                 return
 
             self.parentFolderStack.push(
-                parent_path, self.original_image_paths, self.original_weights
+                parent_path, self.image_paths, self.weights
             )
             # else: # S3
             #     previous_path = self.parentFolderStack.read_top()
@@ -516,20 +526,17 @@ class ImageSlideshow:
                 parent_image_dirs = {}
                 self.image_paths = []
                 self.weights = []
-
-                parent_tree = Tree(
-                    self.defaults, self.filters
-                )  # Use newTree instead of Tree
+                
                 parent_image_dirs[parent_path] = {
                     "weight_modifier": 100,
                     "is_percentage": True,
                     "proportion": None,
-                    "mode_str": self.defaults.mode[1],
+                    # "mode_str": self.defaults.mode[1],
                 }
-                parent_tree.build_tree(parent_image_dirs, None, self.quiet)
-                parent_tree.calculate_weights()
+                # Build the new tree and extract images and weights
+                parent_tree = build_tree(self.defaults, self.filters, parent_image_dirs, None, self.quiet)
                 self.image_paths, self.weights = (
-                    parent_tree.extract_image_paths_and_weights_from_tree()
+                    extract_image_paths_and_weights_from_tree(parent_tree)
                 )
                 self.number_of_images = len(
                     self.image_paths
@@ -541,7 +548,12 @@ class ImageSlideshow:
                 self.subfolder_mode = False
                 self.subFolderStack.clear()
 
-                self.manager.reset()
+                self.manager = self.providers.reset_manager(
+                    image_paths=self.image_paths,
+                    provider_name=self.providers.get_current_provider_name(),
+                    weights=self.weights, 
+                    index=self.current_image_index
+            )
 
                 self.show_image(self.current_image_path)
                 self.update_filename_display()
@@ -564,8 +576,13 @@ class ImageSlideshow:
         if self.parentFolderStack.is_empty():
             self.parent_mode = False
         self.subfolder_mode = False
-
-        self.manager.reset()
+        
+        self.manager = self.providers.reset_manager(
+            image_paths=self.image_paths,
+            provider_name=self.providers.get_current_provider_name(),
+            weights=self.weights, 
+            index=self.current_image_index
+        )
 
         self.show_image(self.current_image_path)
         self.update_filename_display()
@@ -590,9 +607,12 @@ class ImageSlideshow:
             self.parent_mode = False
             self.subfolder_mode = False
 
-            self.manager.lru_cache.clear()
-            self.manager.preload_queue.clear()
-            self.manager.history_manager.clear()
+            self.manager = self.providers.reset_manager(
+                image_paths=self.image_paths,
+                provider_name=self.providers.get_current_provider_name(),
+                weights=self.weights, 
+                index=self.current_image_index
+            )
 
             self.show_image(self.current_image_path)
             self.update_filename_display()
@@ -604,8 +624,11 @@ class ImageSlideshow:
     def update_filename_display(self):
         if self.show_filename:
             fixed_colour = None
+            fixed_path = None
             self.filename_label.config(state=tk.NORMAL)
             self.filename_label.delete("1.0", tk.END)  # Clear old text
+            
+            label_path = self.current_image_path
 
             # --------- Left-side filename display ---------
             if self.subfolder_mode:
@@ -614,26 +637,31 @@ class ImageSlideshow:
             elif self.parent_mode:
                 fixed_path = self.parentFolderStack.read_top()
                 fixed_colour = "gold"
+                
+            if self.navigation_mode == "branch":
+                label_path = os.path.join(self.original_tree.find_node(os.path.dirname(label_path), self.original_tree.path_lookup).name,os.path.basename(label_path))
+                if fixed_path:
+                    fixed_path = self.original_tree.convert_path_to_tree_format(fixed_path)
 
             if fixed_colour:
-                if self.current_image_path.startswith(fixed_path):
+                if label_path.startswith(fixed_path):
                     fixed_portion = fixed_path
-                    remaining_portion = self.current_image_path[len(fixed_path) :]
+                    remaining_portion = label_path[len(fixed_path) :]
                 else:
                     fixed_portion = ""
-                    remaining_portion = self.current_image_path
+                    remaining_portion = label_path
 
                 self.filename_label.insert(tk.END, fixed_portion, "fixed")
                 self.filename_label.insert(tk.END, remaining_portion, "normal")
             else:
-                self.filename_label.insert(tk.END, self.current_image_path, "normal")
+                self.filename_label.insert(tk.END, label_path, "normal")
                 fixed_colour = "white"
 
             self.filename_label.tag_configure("fixed", foreground=fixed_colour)
             self.filename_label.tag_configure("normal", foreground="white")
             self.filename_label.place(x=0, y=0)
             self.filename_label.config(
-                height=1, width=len(self.current_image_path) + 10, bg="black"
+                height=1, width=len(label_path) + 10, bg="black"
             )
             self.filename_label.config(state=tk.DISABLED)
 

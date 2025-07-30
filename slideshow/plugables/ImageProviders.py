@@ -43,7 +43,9 @@ class ImageProviders:
         """
         if provider_name is None:
             provider_name = self.current_provider_name or "sequential"
-        return self.select_manager(image_paths, provider_name, **kwargs)
+        new_manager = self.select_manager(image_paths, provider_name, **kwargs)
+        new_manager.reset()
+        return new_manager
     
     def image_provider_sequential(self, image_paths, index=0, **kwargs):
         for path in image_paths[index:]:
