@@ -5,15 +5,10 @@ import os
 from slideshow.utils.InputProcessor import InputProcessor
 from slideshow.utils.Defaults import Defaults
 from slideshow.utils.Filters import Filters
-from slideshow.utils.tests import (
-    print_tree, 
-    test_distribution
-)
 from slideshow.tree.tree_logic import (
     build_tree,
     extract_image_paths_and_weights_from_tree
 )
-from slideshow.mySlideshow.start_slideshow import start_slideshow
 
 
 def main(args):
@@ -38,6 +33,7 @@ def main(args):
 
         # Print tree if requested
         if args.printtree:
+            from slideshow.utils.tests import print_tree
             print_tree(defaults, tree.root, max_depth=args.test or 9999)
             return
 
@@ -60,7 +56,9 @@ def main(args):
 
     # Test or start the slideshow
     if args.test:
+        from slideshow.utils.tests import test_distribution
         test_distribution(all_images, weights, args.test, args.testdepth, defaults, args.quiet or False)
         return
     
+    from slideshow.mySlideshow.start_slideshow import start_slideshow
     start_slideshow(tree, all_images, weights, defaults, filters, args.quiet or False, args.interval)

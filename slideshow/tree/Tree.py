@@ -320,6 +320,44 @@ class Tree:
             lookup_dict = self.node_lookup
         return lookup_dict.get(name)
 
+    def copy_subtree_as_tree(self, start_node):
+        """
+        Return a new Tree that is a deep copy of the subtree starting at the given node.
+        The root of the new Tree will be a copy of the supplied node and its descendants.
+        """
+        # start_node = self.find_node(start_node_name)
+        # if not start_node:
+        #     raise ValueError(f"Node '{start_node_name}' not found in the tree.")
+
+        # Recursive function to copy nodes
+        def deep_copy_node(node):
+            new_node = TreeNode(
+                name=node.name,
+                path=node.path,
+                weight_modifier=getattr(node, 'weight_modifier', None),
+                is_percentage=getattr(node, 'is_percentage', None),
+                proportion=getattr(node, 'proportion', None),
+                mode_modifier=getattr(node, 'mode_modifier', None),
+                images=list(node.images) if hasattr(node, 'images') else [],
+            )
+            # Copy children recursively
+            for child in node.children:
+                child_copy = deep_copy_node(child)
+                new_node.add_child(child_copy)
+            return new_node
+
+        # Create the new Tree
+        new_tree = Tree(self.defaults, self.filters)
+        new_tree.root = deep_copy_node(start_node)
+        # Update node_lookup and path_lookup for the subtree
+        def update_lookups(node):
+            new_tree.node_lookup[node.name] = node
+            new_tree.path_lookup[node.path] = node
+            for child in node.children:
+                update_lookups(child)
+        update_lookups(new_tree.root)
+        return new_tree
+
     def get_nodes_at_level(self: "Tree", target_level: int) -> list["TreeNode"]:
         """
         Retrieve all nodes in the tree at the specified level.
