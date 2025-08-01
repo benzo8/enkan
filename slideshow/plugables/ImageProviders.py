@@ -48,13 +48,25 @@ class ImageProviders:
         return new_manager
     
     def image_provider_sequential(self, image_paths, index=0, **kwargs):
-        for path in image_paths[index:]:
-            yield path
+        try:
+            for path in image_paths[index:]:
+                yield path
+        except GeneratorExit:
+            print("Sequential image provider closed unexpectedly.")
+            return
 
     def image_provider_random(self, image_paths, **kwargs):
-        while True:
-            yield random.choice(image_paths)
+        try:
+            while True:
+                yield random.choice(image_paths)
+        except GeneratorExit:
+            print("Random image provider closed unexpectedly.")
+            return
 
     def image_provider_weighted(self, image_paths, weights=None, **kwargs):
-        while True:
-            yield random.choices(image_paths, weights=weights, k=1)[0]
+        try:
+            while True:
+                yield random.choices(image_paths, weights=weights, k=1)[0]
+        except GeneratorExit:
+            print("Weighted image provider closed unexpectedly.")
+            return
