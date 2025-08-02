@@ -2,6 +2,7 @@ import threading
 from slideshow.cache.LRUCache import LRUCache
 from slideshow.cache.PreloadQueue import PreloadQueue
 from slideshow.cache.HistoryManager import HistoryManager
+from slideshow.plugables.ImageLoaders import ImageLoaders
 from slideshow.utils.utils import is_videofile
 from slideshow import constants
 
@@ -13,12 +14,12 @@ class ImageCacheManager:
     Supports background preloading of images.
     """
 
-    def __init__(self, image_provider, load_image_from_disk, current_image_index, debug=False, background_preload=True):
+    def __init__(self, image_provider, current_image_index, debug=False, background_preload=True):
         self.lru_cache = LRUCache(constants.CACHE_SIZE)
         self.preload_queue = PreloadQueue(constants.PRELOAD_QUEUE_LENGTH)
         self.history_manager = HistoryManager(constants.HISTORY_QUEUE_LENGTH)
         self.image_provider = image_provider
-        self.load_image_from_disk = load_image_from_disk
+        self.image_loader = ImageLoaders()
         self.current_image_index = current_image_index
         self.debug = debug
         self.background_preload = background_preload
@@ -26,7 +27,7 @@ class ImageCacheManager:
         self._lock = threading.Lock()
         self._refill_thread = None
 
-        # Initial preload (async if background_preload=True)
+        # Initial preload (async if background=True)
         if self.background_preload:
             self._background_refill()
         else:
@@ -81,7 +82,7 @@ class ImageCacheManager:
         image_obj = self.lru_cache.get(image_path)
         if image_obj is None:
             self._log(f"Loading from Disk: {image_path}")
-            image_obj = self.load_image_from_disk(image_path)
+            image_obj = self.image_loader.load_image(image_path)
             self.lru_cache.put(image_path, image_obj)
         else:
             self._log(f"Loaded from LRUCache: {image_path}")
@@ -107,8 +108,9 @@ class ImageCacheManager:
                 image_path, image_obj = next(iter(popped.items()))
                 source = "PreloadQueue"
             else:
-                image_path = self.image_provider()
-                if image_path is None:
+                try:
+                    image_path = next(self.image_provider)
+                except StopIteration:
                     self._log("No image provided (empty provider).")
                     return None, None
                 image_obj = self._load_image(image_path)

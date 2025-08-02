@@ -1,8 +1,19 @@
-import slideshow.tree.Tree as Tree
+from slideshow.tree.Tree import Tree
+from slideshow.tree.TreeBuilder import TreeBuilder
 from slideshow.tree.TreeNode import TreeNode
 from slideshow.utils.Defaults import resolve_mode
 from slideshow.constants import TOTAL_WEIGHT
 
+
+def build_tree(defaults, filters, image_dirs, specific_images, quiet=False) -> Tree:
+        tree = Tree(defaults, filters)
+        builder = TreeBuilder(tree)
+        builder.build_tree(image_dirs, specific_images, quiet)
+        _, num_images = tree.count_branches(tree.root)
+        if num_images == 0:
+            raise ValueError("No images found in the provided input files.")
+        calculate_weights(tree)
+        return tree
 
 def calculate_weights(tree: Tree) -> None:
     """
@@ -148,7 +159,9 @@ def calculate_weights(tree: Tree) -> None:
 
 
 def extract_image_paths_and_weights_from_tree(
-    tree: Tree, test_iterations: int = None
+    tree: Tree, 
+    start_node: TreeNode = None,
+    test_iterations: int = None
 ) -> tuple[list[str], list[float]]:
     """
     Recursively extract all image file paths and their associated normalized weights from the tree.
@@ -195,7 +208,8 @@ def extract_image_paths_and_weights_from_tree(
         for child in node.children:
             traverse_node(child)
 
-    # Start traversal from the root node
-    traverse_node(tree.root)
+    if start_node is None:
+        start_node = tree.root
+    traverse_node(start_node)
 
     return all_images, weights

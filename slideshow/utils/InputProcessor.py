@@ -12,31 +12,6 @@ class InputProcessor:
         self.filters = filters
         self.quiet = quiet
 
-    def find_input_file(self, input_filename, additional_search_paths=[]):
-        # List of potential directories to search
-        possible_locations = [
-            os.path.dirname(os.path.abspath(__file__)),  # Script's directory
-            os.getcwd(),  # Current working directory
-            *additional_search_paths,  # Additional paths (e.g., main input file's directory)
-            os.path.join(
-                os.getcwd(), "lists"
-            ),  # Fixed "lists" folder in the current working directory
-        ]
-
-        # If input_filename has no extension, try .lst then .txt
-        _, ext = os.path.splitext(input_filename)
-        candidates = [input_filename]
-        if not ext:
-            candidates = [input_filename + ".lst", input_filename + ".txt"]
-
-        for location in possible_locations:
-            for candidate in candidates:
-                potential_path = os.path.join(location, candidate)
-                if os.path.isfile(potential_path):
-                    return potential_path
-
-        return None
-
     def process_inputs(self, input_files, recdepth=1):
         """
         Parse input files and directories to create image_dirs and specific_images dictionaries.
@@ -58,6 +33,97 @@ class InputProcessor:
                 input_entry, recdepth, image_dirs, specific_images, all_images, weights
             )
         return image_dirs, specific_images, all_images, weights
+
+    def process_entry(
+        self, entry, recdepth, image_dirs, specific_images, all_images, weights
+    ):
+        """
+        Process a single input entry (file, directory, or image).
+        """
+
+        additional_search_paths = [os.path.dirname(entry)]
+        input_filename_full = utils.find_input_file(entry, additional_search_paths)
+
+        if input_filename_full:
+            match os.path.splitext(input_filename_full)[1].lower():
+                case ".lst":
+                    with open(
+                        input_filename_full, "r", buffering=65536, encoding="utf-8"
+                    ) as f:
+                        total_lines = sum(1 for _ in f)
+                        f.seek(0)
+                        for line in tqdm(
+                            f,
+                            desc=f"Parsing {input_filename_full}",
+                            unit="line",
+                            total=total_lines,
+                            disable=self.quiet,
+                        ):
+                            line = line.strip()
+                            if not line or line.startswith("#"):
+                                continue
+                            image_path, weight_str = line.rsplit(
+                                ",", 1
+                            )  # Split on last comma
+                            if weight_str:  # Expecting "image_path,weight"
+                                try:
+                                    weights.append(float(weight_str))
+                                    all_images.append(image_path)
+                                except ValueError:
+                                    # weight_str is not a number, so it's part of the image path (comma in filename)
+                                    all_images.append(f"{image_path},{weight_str}")
+                                    weights.append(
+                                        0.01
+                                    )  # Default weight for single lines
+                            else:  # Probably an irfanview-style list
+                                all_images.append(line)
+                                weights.append(0.01)  # Default weight for single lines
+                case ".txt":
+                    with open(
+                        input_filename_full, "r", buffering=65536, encoding="utf-8"
+                    ) as f:
+                        total_lines = sum(1 for _ in f)
+                        f.seek(0)
+                        for line in tqdm(
+                            f,
+                            desc=f"Parsing {input_filename_full}",
+                            unit="line",
+                            total=total_lines,
+                            disable=self.quiet,
+                        ):
+                            line = line.strip()
+                            if not line or line.startswith(
+                                "#"
+                            ):  # Skip comments/empty lines
+                                continue
+                            line = line.replace(
+                                '"', ""
+                            ).strip()  # Remove enclosing quotes
+
+                            if utils.is_textfile(
+                                line
+                            ):  # Recursively process nested text files
+                                sub_image_dirs, sub_specific_images, _, _ = (
+                                    self.process_inputs([line], recdepth + 1)
+                                )
+                                image_dirs.update(sub_image_dirs)
+                                specific_images.update(sub_specific_images)
+                            else:
+                                path, modifier_list = self.parse_input_line(
+                                    line, recdepth
+                                )
+                                if modifier_list:
+                                    if utils.is_imagefile(path):
+                                        specific_images[path] = modifier_list
+                                    else:
+                                        image_dirs[path] = modifier_list
+        else:  # Handle directories and images directly
+            path, modifier_list = self.parse_input_line(entry, recdepth)
+            if modifier_list:
+                if utils.is_imagefile(path):
+                    specific_images[path] = modifier_list
+                else:
+                    image_dirs[path] = modifier_list
 
     def parse_input_line(self, line, recdepth):
         modifier_pattern = re.compile(r"(\[.*?\])")
@@ -189,94 +255,3 @@ class InputProcessor:
             print(f"Path '{path}' is neither a file nor a directory.")
 
         return None, None
-
-    def process_entry(
-        self, entry, recdepth, image_dirs, specific_images, all_images, weights
-    ):
-        """
-        Process a single input entry (file, directory, or image).
-        """
-
-        additional_search_paths = [os.path.dirname(entry)]
-        input_filename_full = self.find_input_file(entry, additional_search_paths)
-
-        if input_filename_full:
-            match os.path.splitext(input_filename_full)[1].lower():
-                case ".lst":
-                    with open(
-                        input_filename_full, "r", buffering=65536, encoding="utf-8"
-                    ) as f:
-                        total_lines = sum(1 for _ in f)
-                        f.seek(0)
-                        for line in tqdm(
-                            f,
-                            desc=f"Parsing {input_filename_full}",
-                            unit="line",
-                            total=total_lines,
-                            disable=self.quiet,
-                        ):
-                            line = line.strip()
-                            if not line or line.startswith("#"):
-                                continue
-                            image_path, weight_str = line.rsplit(
-                                ",", 1
-                            )  # Split on last comma
-                            if weight_str:  # Expecting "image_path,weight"
-                                try:
-                                    weights.append(float(weight_str))
-                                    all_images.append(image_path)
-                                except ValueError:
-                                    # weight_str is not a number, so it's part of the image path (comma in filename)
-                                    all_images.append(f"{image_path},{weight_str}")
-                                    weights.append(
-                                        0.01
-                                    )  # Default weight for single lines
-                            else:  # Probably an irfanview-style list
-                                all_images.append(line)
-                                weights.append(0.01)  # Default weight for single lines
-                case ".txt":
-                    with open(
-                        input_filename_full, "r", buffering=65536, encoding="utf-8"
-                    ) as f:
-                        total_lines = sum(1 for _ in f)
-                        f.seek(0)
-                        for line in tqdm(
-                            f,
-                            desc=f"Parsing {input_filename_full}",
-                            unit="line",
-                            total=total_lines,
-                            disable=self.quiet,
-                        ):
-                            line = line.strip()
-                            if not line or line.startswith(
-                                "#"
-                            ):  # Skip comments/empty lines
-                                continue
-                            line = line.replace(
-                                '"', ""
-                            ).strip()  # Remove enclosing quotes
-
-                            if utils.is_textfile(
-                                line
-                            ):  # Recursively process nested text files
-                                sub_image_dirs, sub_specific_images, _, _ = (
-                                    self.process_inputs([line], recdepth + 1)
-                                )
-                                image_dirs.update(sub_image_dirs)
-                                specific_images.update(sub_specific_images)
-                            else:
-                                path, modifier_list = self.parse_input_line(
-                                    line, recdepth
-                                )
-                                if modifier_list:
-                                    if utils.is_imagefile(path):
-                                        specific_images[path] = modifier_list
-                                    else:
-                                        image_dirs[path] = modifier_list
-        else:  # Handle directories and images directly
-            path, modifier_list = self.parse_input_line(entry, recdepth)
-            if modifier_list:
-                if utils.is_imagefile(path):
-                    specific_images[path] = modifier_list
-                else:
-                    image_dirs[path] = modifier_list

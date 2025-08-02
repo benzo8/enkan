@@ -1,9 +1,9 @@
 import random
 from slideshow.cache.ImageCacheManager import ImageCacheManager
 
+
 class ImageProviders:
-    def __init__(self, load_image_from_disk):
-        self.load_image_from_disk = load_image_from_disk
+    def __init__(self):
         self.manager = None
         # Provider registry: key → provider factory function
         self.providers = {
@@ -26,10 +26,9 @@ class ImageProviders:
         image_provider = provider_func(image_paths, **kwargs)
         self.manager = ImageCacheManager(
             image_provider,
-            self.load_image_from_disk,
             kwargs.get("index", 0),
-            debug=True,
-            background_preload=False,
+            debug=kwargs.get("debug", False),
+            background_preload=kwargs.get("background", True)
         )
         self.current_provider_name = provider_name
         return self.manager
@@ -44,16 +43,30 @@ class ImageProviders:
         """
         if provider_name is None:
             provider_name = self.current_provider_name or "sequential"
-        return self.select_manager(image_paths, provider_name, **kwargs)
+        new_manager = self.select_manager(image_paths, provider_name, **kwargs)
+        new_manager.reset()
+        return new_manager
     
     def image_provider_sequential(self, image_paths, index=0, **kwargs):
-        for path in image_paths[index:]:
-            yield path
+        try:
+            for path in image_paths[index:]:
+                yield path
+        except GeneratorExit:
+            print("Sequential image provider closed unexpectedly.")
+            return
 
     def image_provider_random(self, image_paths, **kwargs):
-        while True:
-            yield random.choice(image_paths)
+        try:
+            while True:
+                yield random.choice(image_paths)
+        except GeneratorExit:
+            print("Random image provider closed unexpectedly.")
+            return
 
     def image_provider_weighted(self, image_paths, weights=None, **kwargs):
-        while True:
-            yield random.choices(image_paths, weights=weights, k=1)[0]
+        try:
+            while True:
+                yield random.choices(image_paths, weights=weights, k=1)[0]
+        except GeneratorExit:
+            print("Weighted image provider closed unexpectedly.")
+            return
