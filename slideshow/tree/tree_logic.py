@@ -159,7 +159,9 @@ def calculate_weights(tree: Tree) -> None:
 
 
 def extract_image_paths_and_weights_from_tree(
-    tree: Tree, test_iterations: int = None
+    tree: Tree, 
+    start_node: TreeNode = None,
+    test_iterations: int = None
 ) -> tuple[list[str], list[float]]:
     """
     Recursively extract all image file paths and their associated normalized weights from the tree.
@@ -206,7 +208,8 @@ def extract_image_paths_and_weights_from_tree(
         for child in node.children:
             traverse_node(child)
 
-    # Start traversal from the root node
-    traverse_node(tree.root)
+    if start_node is None:
+        start_node = tree.root
+    traverse_node(start_node)
 
     return all_images, weights

@@ -96,6 +96,8 @@ class TreeBuilder:
         Add a special 'flat' branch for directories with images.
         """
 
+        traversed_paths = []
+
         def flatten_branch(root):
             """
             Collect all images from the branch rooted at `root`, including subdirectories.
@@ -108,15 +110,20 @@ class TreeBuilder:
             """
             images = []
             for path, _, files in os.walk(root):
-                images.extend(
-                    os.path.join(path, f)
-                    for f in files
-                    if utils.is_imagefile(f)
-                    or (
-                        utils.is_videofile(f)
-                        and utils.is_videoallowed(data.get("video"), self.tree.defaults)
+                if files:
+                    traversed_paths.append(path)
+                    pbar.total += len(files)
+                    pbar.update(len(files))
+                    pbar.refresh()
+                    images.extend(
+                        os.path.join(path, f)
+                        for f in files
+                        if utils.is_imagefile(f)
+                        or (
+                            utils.is_videofile(f)
+                            and utils.is_videoallowed(data.get("video"), self.tree.defaults)
+                        )
                     )
-                )
             return images
 
         pbar.desc = f"Flattening {path}"
@@ -124,10 +131,6 @@ class TreeBuilder:
 
         images = flatten_branch(path)
         level = data.get("level", self.tree.calculate_level(path))
-
-        pbar.total += len(images)
-        pbar.update(len(images))
-        pbar.refresh()
 
         self.tree.append_overwrite_or_update(
             path,
@@ -140,6 +143,11 @@ class TreeBuilder:
                 "images": images,
             },
         )
+        
+        # Add lookup entries for each traversed path
+        flattened_node = self.tree.path_lookup[path]
+        for dirpath in traversed_paths:
+            self.tree.path_lookup[dirpath] = flattened_node
 
     def add_images_branch(self, path, images, level, data):
         """

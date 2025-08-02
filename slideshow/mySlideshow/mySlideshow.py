@@ -35,6 +35,7 @@ class ImageSlideshow:
         self.subfolder_mode = False
         self.parent_mode = False
         self.navigation_mode = "folder"
+        self.navigation_node = None
         self.show_filename = False
 
         self.screen_width = root.winfo_screenwidth()
@@ -411,15 +412,18 @@ class ImageSlideshow:
         )
         self.show_image(self.image_paths[self.current_image_index])
 
-    def traverse_directory(self, new_path):
+    def traverse_directory(self, new_path=None, navigation_node=None):
         """Set up for a new directory and create an updated slideshow."""
-        if os.path.isdir(new_path):
+        if navigation_node:
+            new_image_paths, new_weights = extract_image_paths_and_weights_from_tree(tree=self.original_tree, start_node=navigation_node)
+        elif os.path.isdir(new_path):
             parent_image_dirs = {new_path: {"weight_modifier": 100, "is_percentage": True, "proportion": None}}
             parent_tree = build_tree(self.defaults, self.filters, parent_image_dirs, None, self.quiet)
             new_image_paths, new_weights = extract_image_paths_and_weights_from_tree(parent_tree)
-            self.update_slide_show(new_image_paths, new_weights)
+            
         else:
             print("No valid directory found.")
+        self.update_slide_show(new_image_paths, new_weights)
 
     def navigate_up(self):
         """Navigate up one level in the directory structure."""
@@ -429,6 +433,7 @@ class ImageSlideshow:
         
         current_path = os.path.dirname(self.current_image_path)
         current_top = self.parentFolderStack.read_top()
+        child_path = None
         
         if self.navigation_mode == "folder":
             if utils.contains_subdirectory(current_top):
@@ -445,12 +450,32 @@ class ImageSlideshow:
                     self.parentFolderStack.push(child_path, self.image_paths, self.weights)
             else:
                 print("No valid child directory found.")
+        elif self.navigation_mode == "branch":
+            # In branch mode, we need to find the child node in the tree
+            current_path_node = self.original_tree.find_node(
+                current_path, 
+                self.original_tree.path_lookup
+            )
+            path = []
+            node = current_path_node
+            while node and node != self.navigation_node:
+                path.append(node)
+                node = node.parent
                 
-            self.traverse_directory(child_path)
+            if node != self.navigation_node:
+                print("No valid child node found in the branch.")
+                return
+            
+            path.reverse()
+            self.navigation_node = path[0] if path else self.navigation_node
+            
+        self.traverse_directory(child_path, self.navigation_node)
                        
     def navigate_down(self):
         """Navigate down into the selected directory."""
+        parent_path = None
         
+        # Not in parent mode (S2)
         if not self.parent_mode:
             current_path = os.path.dirname(self.current_image_path)
             current_path_level = utils.level_of(current_path)
@@ -464,21 +489,30 @@ class ImageSlideshow:
                         parent_path
                     ):
                         break
-            else:
-                print("No lower directory available.")
+                self.parentFolderStack.push(parent_path, self.image_paths, self.weights)
+            elif self.navigation_mode == "branch":
+                # In branch mode, we need to find the parent path in the tree
+                self.navigation_node = self.original_tree.find_node(
+                    os.path.dirname(self.current_image_path), 
+                    self.original_tree.path_lookup
+                ).parent
+        # Parent mode (S3)
         else:
-            previous_path = self.parentFolderStack.read_top()
-            parent_level = utils.level_of(previous_path) - 1
-            parent_path = utils.truncate_path(previous_path, parent_level)
+            if self.navigation_mode == "folder":
+                previous_path = self.parentFolderStack.read_top()
+                parent_level = utils.level_of(previous_path) - 1
+                parent_path = utils.truncate_path(previous_path, parent_level)
 
-            # If we're backtracking, step backwards instead
-            if parent_path == self.parentFolderStack.read_top(2):
-                self.step_backwards()
-                return
+                # If we're backtracking, step backwards instead
+                if parent_path == self.parentFolderStack.read_top(2):
+                    self.step_backwards()
+                    return
+                self.parentFolderStack.push(parent_path, self.image_paths, self.weights)
+            elif self.navigation_mode == "branch":
+                self.navigation_node = self.navigation_node.parent
             
         self.parent_mode = True
-        self.parentFolderStack.push(parent_path, self.image_paths, self.weights)
-        self.traverse_directory(parent_path)
+        self.traverse_directory(parent_path, self.navigation_node)
 
     def step_backwards(self):
         """Step backwards in the parent folder stack."""
@@ -513,6 +547,7 @@ class ImageSlideshow:
         
         # Clear the parent folder stack
         self.parentFolderStack.clear()
+        self.navigation_node = None
         
         # Reset image paths and weights to their original states
         self.image_paths = self.original_image_paths[:]
@@ -533,20 +568,20 @@ class ImageSlideshow:
             self.filename_label.config(state=tk.NORMAL)
             self.filename_label.delete("1.0", tk.END)  # Clear old text
             
-            label_path = self.current_image_path
-
             # --------- Left-side filename display ---------
+            label_path = self.current_image_path
+            if self.navigation_mode == "branch":
+                label_path = os.path.join(self.original_tree.find_node(os.path.dirname(label_path), self.original_tree.path_lookup).name,os.path.basename(label_path))
+
             if self.subfolder_mode:
                 fixed_path = self.subFolderStack.read_top()
                 fixed_colour = "tomato"
             elif self.parent_mode:
-                fixed_path = self.parentFolderStack.read_top()
-                fixed_colour = "gold"
-                
-            if self.navigation_mode == "branch":
-                label_path = os.path.join(self.original_tree.find_node(os.path.dirname(label_path), self.original_tree.path_lookup).name,os.path.basename(label_path))
-                if fixed_path:
-                    fixed_path = self.original_tree.convert_path_to_tree_format(fixed_path)
+                if self.navigation_mode == "folder":
+                    fixed_path = self.parentFolderStack.read_top()
+                elif self.navigation_mode == "branch":
+                    fixed_path = self.navigation_node.name
+                fixed_colour = "gold"                
 
             if fixed_colour:
                 if label_path.startswith(fixed_path):
