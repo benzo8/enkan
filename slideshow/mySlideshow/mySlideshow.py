@@ -3,7 +3,7 @@ import os
 import sys
 import random
 import tkinter as tk
-from tkinter import messagebox 
+from tkinter import messagebox
 from PIL import Image, ImageTk
 
 # ——— Third-party ———
@@ -16,12 +16,15 @@ from slideshow.utils.Defaults import resolve_mode
 from slideshow.utils.MyStack import Stack
 from slideshow.plugables.ImageProviders import ImageProviders
 from slideshow.tree.tree_logic import (
-    build_tree, 
-    extract_image_paths_and_weights_from_tree
+    build_tree,
+    extract_image_paths_and_weights_from_tree,
 )
 
+
 class ImageSlideshow:
-    def __init__(self, root, tree, image_paths, weights, defaults, filters, quiet, interval):
+    def __init__(
+        self, root, tree, image_paths, weights, defaults, filters, quiet, interval
+    ):
         self.root = root
         self.original_tree = tree
         self.image_paths = image_paths
@@ -67,14 +70,14 @@ class ImageSlideshow:
         self.root.attributes("-fullscreen", True)
         self.root.bind("<space>", self.next_image)
         self.root.bind("<Escape>", self.exit_slideshow)
-        
+
         for key in ["<Left>", "<Right>"]:
             self.root.bind(key, self.navigate_image_history)
         for key in ["<Up>", "<Down>"]:
             self.root.bind(key, self.navigate_image_sequential)
         for key in ["<c>", "<w>", "<l>"]:
-            self.root.bind(key , self.select_mode)
-            
+            self.root.bind(key, self.select_mode)
+
         self.root.bind("<Control-c>", lambda e: e.widget.event_generate("<<Copy>>"))
 
         self.root.bind("<t>", self.toggle_navigation_mode)
@@ -82,15 +85,15 @@ class ImageSlideshow:
         self.root.bind("<o>", self.follow_branch_up)
         self.root.bind("<p>", self.follow_branch_down)
         self.root.bind("<i>", self.step_backwards)
-        
+
         self.root.bind("<r>", self.rotate_image)
         self.root.bind("<Delete>", self.delete_image)
-        
+
         self.root.bind("<m>", self.toggle_mute)
         self.root.bind("<n>", self.toggle_filename_display)
         self.root.bind("<s>", self.toggle_subfolder_mode)
         self.root.bind("<a>", self.toggle_auto_advance)
-        
+
         self.providers = ImageProviders()
         if self.defaults.is_random:
             self.set_provider("random")
@@ -108,12 +111,12 @@ class ImageSlideshow:
         # Easily switch to any provider by name/key
         self.current_provider = provider_name
         self.manager = self.providers.select_manager(
-                image_paths=self.image_paths,
-                provider_name=provider_name,
-                debug=self.defaults.debug,
-                background_preload=self.defaults.background,
-                **provider_kwargs
-            )
+            image_paths=self.image_paths,
+            provider_name=provider_name,
+            debug=self.defaults.debug,
+            background_preload=self.defaults.background,
+            **provider_kwargs,
+        )
         self.update_filename_display()
 
     def toggle_auto_advance(self, event=None, interval=None):
@@ -206,9 +209,9 @@ class ImageSlideshow:
             # Resize image to fit the screen while maintaining aspect ratio
             screen_width = self.screen_width
             screen_height = self.screen_height
-            
+
             # Apply rotation before resizing
-            if hasattr(self, 'rotation_angle') and self.rotation_angle:
+            if hasattr(self, "rotation_angle") and self.rotation_angle:
                 image = image.rotate(self.rotation_angle, expand=True)
 
             # Get correct image size after rotation
@@ -352,10 +355,7 @@ class ImageSlideshow:
         ]
 
         self.subfolder_mode = True
-        self.update_slide_show(
-            image_paths=temp_image_paths,
-            weights=temp_weights
-        )
+        self.update_slide_show(image_paths=temp_image_paths, weights=temp_weights)
 
     def subfolder_mode_off(self):
         _, self.image_paths, self.weights = self.subFolderStack.pop()
@@ -363,10 +363,7 @@ class ImageSlideshow:
             self.image_paths
         )  # Update the number of images for the full set
         self.subfolder_mode = False
-        self.update_slide_show(
-            image_paths=self.image_paths,
-            weights=self.weights
-        )
+        self.update_slide_show(image_paths=self.image_paths, weights=self.weights)
 
     def toggle_subfolder_mode(self, event=None):
         if not self.subfolder_mode:
@@ -374,29 +371,33 @@ class ImageSlideshow:
         else:
             self.subfolder_mode_off()
         self.show_image(self.current_image_path)
-        self.update_filename_display()
+        # self.update_filename_display()
 
     def toggle_navigation_mode(self, event=None):
         if self.navigation_mode == "branch":
             self.navigation_mode = "folder"
         else:
-            if self.original_tree.find_node(os.path.dirname(self.current_image_path), self.original_tree.path_lookup):
+            self.navigation_node = self.original_tree.find_node(
+                os.path.dirname(self.current_image_path), self.original_tree.path_lookup
+            )
+            if self.navigation_node:
                 self.navigation_mode = "branch"
-                self.reset_parent_mode()
             else:
-                utils.log(f"Cannot change mode - {self.current_image_path} not in tree", self.defaults.debug)
+                utils.log(
+                    f"Cannot change mode - {self.current_image_path} not in tree",
+                    self.defaults.debug,
+                )
                 return
+        self.reset_parent_mode()
         self.update_filename_display()
 
     def safe_current_image_index(self, image_paths):
         number_of_images = len(image_paths)
         try:
-            current_image_index = self.image_paths.index(
-                self.current_image_path
-            )
+            current_image_index = self.image_paths.index(self.current_image_path)
         except ValueError:
             current_image_index = random.randint(0, number_of_images - 1)
-       
+
         return current_image_index
 
     def update_slide_show(self, image_paths, weights):
@@ -408,19 +409,31 @@ class ImageSlideshow:
             image_paths=image_paths,
             provider_name=self.providers.get_current_provider_name(),
             weights=weights,
-            index=self.current_image_index
+            index=self.current_image_index,
         )
         self.show_image(self.image_paths[self.current_image_index])
 
     def traverse_directory(self, new_path=None, navigation_node=None):
         """Set up for a new directory and create an updated slideshow."""
         if navigation_node:
-            new_image_paths, new_weights = extract_image_paths_and_weights_from_tree(tree=self.original_tree, start_node=navigation_node)
+            new_image_paths, new_weights = extract_image_paths_and_weights_from_tree(
+                tree=self.original_tree, start_node=navigation_node
+            )
         elif os.path.isdir(new_path):
-            parent_image_dirs = {new_path: {"weight_modifier": 100, "is_percentage": True, "proportion": None}}
-            parent_tree = build_tree(self.defaults, self.filters, parent_image_dirs, None, self.quiet)
-            new_image_paths, new_weights = extract_image_paths_and_weights_from_tree(parent_tree)
-            
+            parent_image_dirs = {
+                new_path: {
+                    "weight_modifier": 100,
+                    "is_percentage": True,
+                    "proportion": None,
+                }
+            }
+            parent_tree = build_tree(
+                self.defaults, self.filters, parent_image_dirs, None, self.quiet
+            )
+            new_image_paths, new_weights = extract_image_paths_and_weights_from_tree(
+                parent_tree
+            )
+
         else:
             print("No valid directory found.")
         self.update_slide_show(new_image_paths, new_weights)
@@ -430,11 +443,11 @@ class ImageSlideshow:
         if self.parentFolderStack.is_full() or not self.parent_mode:
             print("Cannot navigate up - Stack is full or not in parent mode.")
             return
-        
+
         current_path = os.path.dirname(self.current_image_path)
         current_top = self.parentFolderStack.read_top()
         child_path = None
-        
+
         if self.navigation_mode == "folder":
             if utils.contains_subdirectory(current_top):
                 current_path_level = utils.level_of(current_top)
@@ -445,36 +458,37 @@ class ImageSlideshow:
                     self.step_backwards()
                     return
                 elif not utils.contains_subdirectory(child_path):
-                     self.toggle_subfolder_mode()
+                    self.toggle_subfolder_mode()
                 else:
-                    self.parentFolderStack.push(child_path, self.image_paths, self.weights)
+                    self.parentFolderStack.push(
+                        child_path, self.image_paths, self.weights
+                    )
             else:
                 print("No valid child directory found.")
         elif self.navigation_mode == "branch":
             # In branch mode, we need to find the child node in the tree
             current_path_node = self.original_tree.find_node(
-                current_path, 
-                self.original_tree.path_lookup
+                current_path, self.original_tree.path_lookup
             )
             path = []
             node = current_path_node
             while node and node != self.navigation_node:
                 path.append(node)
                 node = node.parent
-                
+
             if node != self.navigation_node:
                 print("No valid child node found in the branch.")
                 return
-            
+
             path.reverse()
             self.navigation_node = path[0] if path else self.navigation_node
-            
+
         self.traverse_directory(child_path, self.navigation_node)
-                       
+
     def navigate_down(self):
         """Navigate down into the selected directory."""
         parent_path = None
-        
+
         # Not in parent mode (S2)
         if not self.parent_mode:
             current_path = os.path.dirname(self.current_image_path)
@@ -485,16 +499,16 @@ class ImageSlideshow:
                 for i in range(current_path_level - 1, 1, -1):
                     parent_level = i
                     parent_path = utils.truncate_path(current_path, parent_level)
-                    if utils.contains_subdirectory(parent_path) > 1 or utils.contains_files(
+                    if utils.contains_subdirectory(
                         parent_path
-                    ):
+                    ) > 1 or utils.contains_files(parent_path):
                         break
                 self.parentFolderStack.push(parent_path, self.image_paths, self.weights)
             elif self.navigation_mode == "branch":
                 # In branch mode, we need to find the parent path in the tree
                 self.navigation_node = self.original_tree.find_node(
-                    os.path.dirname(self.current_image_path), 
-                    self.original_tree.path_lookup
+                    os.path.dirname(self.current_image_path),
+                    self.original_tree.path_lookup,
                 ).parent
         # Parent mode (S3)
         else:
@@ -510,7 +524,7 @@ class ImageSlideshow:
                 self.parentFolderStack.push(parent_path, self.image_paths, self.weights)
             elif self.navigation_mode == "branch":
                 self.navigation_node = self.navigation_node.parent
-            
+
         self.parent_mode = True
         self.traverse_directory(parent_path, self.navigation_node)
 
@@ -519,11 +533,11 @@ class ImageSlideshow:
         if self.parentFolderStack.is_empty():
             print("Cannot step back - Stack is empty.")
             return
-        
+
         # Pop the current top and show the previous one
         _, images, weights = self.parentFolderStack.pop()
         self.update_slide_show(images, weights)
-        
+
     def follow_branch_down(self, event=None):
         if self.subfolder_mode:
             self.toggle_subfolder_mode()
@@ -539,16 +553,16 @@ class ImageSlideshow:
             self.show_image(self.current_image_path)
             return
         self.navigate_up()
-        
+
     def reset_parent_mode(self, event=None):
         """Reset the parent mode and associated states."""
         # Turn off parent mode
         self.parent_mode = False
-        
+        self.subfolder_mode = False
+
         # Clear the parent folder stack
         self.parentFolderStack.clear()
-        self.navigation_node = None
-        
+
         # Reset image paths and weights to their original states
         self.image_paths = self.original_image_paths[:]
         self.weights = self.original_weights[:]
@@ -567,21 +581,32 @@ class ImageSlideshow:
             fixed_path = None
             self.filename_label.config(state=tk.NORMAL)
             self.filename_label.delete("1.0", tk.END)  # Clear old text
-            
-            # --------- Left-side filename display ---------
-            label_path = self.current_image_path
-            if self.navigation_mode == "branch":
-                label_path = os.path.join(self.original_tree.find_node(os.path.dirname(label_path), self.original_tree.path_lookup).name,os.path.basename(label_path))
 
-            if self.subfolder_mode:
-                fixed_path = self.subFolderStack.read_top()
-                fixed_colour = "tomato"
-            elif self.parent_mode:
-                if self.navigation_mode == "folder":
+            # --------- Left-side filename display ---------
+
+            if self.navigation_mode == "folder":
+                label_path = self.current_image_path
+                if self.subfolder_mode:
+                    fixed_path = self.subFolderStack.read_top()
+                    fixed_colour = "tomato"
+                elif self.parent_mode:
                     fixed_path = self.parentFolderStack.read_top()
-                elif self.navigation_mode == "branch":
+                    fixed_colour = "gold"
+            elif self.navigation_mode == "branch":
+                label_path = os.path.join(
+                    self.original_tree.find_node(
+                        os.path.dirname(label_path), self.original_tree.path_lookup
+                    ).name,
+                    os.path.basename(label_path),
+                )
+                if self.subfolder_mode:
+                    fixed_path = self.original_tree.find_node(
+                        self.subFolderStack.read_top(), self.original_tree.path_lookup
+                    ).name
+                    fixed_colour = "tomato"
+                elif self.parent_mode:
                     fixed_path = self.navigation_node.name
-                fixed_colour = "gold"                
+                    fixed_colour = "lightgreen"
 
             if fixed_colour:
                 if label_path.startswith(fixed_path):
@@ -600,14 +625,16 @@ class ImageSlideshow:
             self.filename_label.tag_configure("fixed", foreground=fixed_colour)
             self.filename_label.tag_configure("normal", foreground="white")
             self.filename_label.place(x=0, y=0)
-            self.filename_label.config(
-                height=1, width=len(label_path) + 10, bg="black"
-            )
+            self.filename_label.config(height=1, width=len(label_path) + 10, bg="black")
             self.filename_label.config(state=tk.DISABLED)
 
             # --------- Right-side mode/interval display ---------
             # Determine mode_text
-            mode_text = self.providers.get_current_provider_name()[0:3].upper() if self.mode else "-"
+            mode_text = (
+                self.providers.get_current_provider_name()[0:3].upper()
+                if self.mode
+                else "-"
+            )
             if self.subfolder_mode:
                 mode_text += " SUB"
                 count = len(self.image_paths)
