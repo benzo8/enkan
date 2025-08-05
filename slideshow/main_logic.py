@@ -16,6 +16,7 @@ def main(args):
     defaults = Defaults(args=args)
     filters = Filters()
     filters.preprocess_ignored_files()
+    tree = None
 
     # Use args.input_file directly as a list
     input_files = args.input_file if args.input_file else []
@@ -61,4 +62,7 @@ def main(args):
         return
     
     from slideshow.mySlideshow.start_slideshow import start_slideshow
+    if not tree:
+        from slideshow.tree.Tree import Tree
+        tree = Tree(defaults, filters)
     start_slideshow(tree, all_images, weights, defaults, filters, args.quiet or False, args.interval)
