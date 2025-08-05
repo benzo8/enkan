@@ -34,7 +34,7 @@ def main(args):
         # Print tree if requested
         if args.printtree:
             from slideshow.utils.tests import print_tree
-            print_tree(defaults, tree.root, max_depth=args.test or 9999)
+            print_tree(defaults, tree.root, max_depth=args.testdepth or 9999)
             return
 
         # Extract paths and weights from the tree

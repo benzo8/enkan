@@ -611,13 +611,13 @@ class ImageSlideshow:
                 case ("folder", True, False):
                     fixed_path = self.parentFolderStack.read_top()
                     fixed_colour = "gold"
-                case ("folder", False, True):
+                case ("folder", _, True):
                     fixed_path = self.subFolderStack.read_top()
                     fixed_colour = "tomato"
                 case ("branch", True, False):
                     fixed_path = self.navigation_node.name
                     fixed_colour = "lightgreen"
-                case ("branch", False, True):
+                case ("branch", _, True):
                     fixed_path = self.original_tree.find_node(
                         self.subFolderStack.read_top(), self.original_tree.path_lookup
                     ).name
