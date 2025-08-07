@@ -72,7 +72,7 @@ class ImageProviders:
             print("Weighted image provider closed unexpectedly.")
             return
         
-    def image_provider_folder_burst(self, image_paths, burst_size=5, **kwargs):
+    def image_provider_folder_burst(self, image_paths, weights=None, burst_size=5, **kwargs):
         from collections import defaultdict
         import os
 
@@ -86,7 +86,7 @@ class ImageProviders:
             while True:
                 if not burst_images:
                     # Pick a new random folder and prepare a burst
-                    random_image = random.choice(image_paths)
+                    random_image = random.choices(image_paths, weights=weights, k=1)[0]
                     folder = os.path.dirname(random_image)
                     images_in_folder = folder_to_images[folder]
                     images = images_in_folder[:]

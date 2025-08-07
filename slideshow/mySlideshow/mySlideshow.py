@@ -452,7 +452,7 @@ class ImageSlideshow:
             case "W":
                 self.set_provider("weighted", weights=self.weights)
             case "B":
-                self.set_provider("burst")
+                self.set_provider("burst", weights=self.weights, burst_size=5)
 
 # -- Parent Mode Navigation ---
 

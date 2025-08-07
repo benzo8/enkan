@@ -112,7 +112,7 @@ def find_input_file(input_filename, additional_search_paths=[]):
     _, ext = os.path.splitext(input_filename)
     candidates = [input_filename]
     if not ext:
-        candidates = [input_filename + ".lst", input_filename + ".txt"]
+        candidates = [input_filename + ".tree", input_filename + ".lst", input_filename + ".txt"]
 
     for location in possible_locations:
         for candidate in candidates:
