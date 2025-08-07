@@ -1,7 +1,7 @@
 import re
 
 # Constants
-VERSION = "1.95.1-dev"
+VERSION = "1.97-dev"
 TOTAL_WEIGHT = 100
 PARENT_STACK_MAX = 5
 HISTORY_QUEUE_LENGTH = 25

@@ -87,7 +87,7 @@ class TreeBuilder:
         if dirs and images:
             # Create a special "images" branch for directories with images
             self.add_images_branch(path, images, path_level + 1, data)
-        else:
+        elif images:
             # Add a regular branch
             self.add_regular_branch(path, images, path_level, data)
 

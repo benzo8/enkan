@@ -74,7 +74,7 @@ class ImageSlideshow:
             self.root.bind(key, self.navigate_image_history)
         for key in ["<Up>", "<Down>"]:
             self.root.bind(key, self.navigate_image_sequential)
-        for key in ["<c>", "<w>", "<l>"]:
+        for key in ["<c>", "<w>", "<l>", "<b>"]:
             self.root.bind(key, self.select_mode)
 
         self.root.bind("<Control-c>", lambda e: e.widget.event_generate("<<Copy>>"))
@@ -451,6 +451,8 @@ class ImageSlideshow:
                 self.set_provider("sequential", index=self.current_image_index + 1)
             case "W":
                 self.set_provider("weighted", weights=self.weights)
+            case "B":
+                self.set_provider("burst")
 
 # -- Parent Mode Navigation ---
 

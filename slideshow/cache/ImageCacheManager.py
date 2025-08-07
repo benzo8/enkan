@@ -1,4 +1,6 @@
 import threading
+import time
+
 from slideshow.cache.LRUCache import LRUCache
 from slideshow.cache.PreloadQueue import PreloadQueue
 from slideshow.cache.HistoryManager import HistoryManager
@@ -50,6 +52,13 @@ class ImageCacheManager:
         while len(self.preload_queue) < self.preload_queue.max_size:
             try:
                 image_path = next(self.image_provider)
+            except ValueError as e:
+                if "generator already executing" in str(e):
+                    self._log("Generator busy, waiting before retry...")
+                    time.sleep(0.01)  # Wait 10ms before retrying
+                    continue
+                else:
+                    raise
             except StopIteration:
                 break  # For linear/sequential provider; random providers never stop
             if image_path is None:
@@ -108,11 +117,26 @@ class ImageCacheManager:
                 image_path, image_obj = next(iter(popped.items()))
                 source = "PreloadQueue"
             else:
-                try:
-                    image_path = next(self.image_provider)
-                except StopIteration:
-                    self._log("No image provided (empty provider).")
-                    return None, None
+                retry_count = 0
+                max_retries = 10
+                while True:
+                    try:
+                        image_path = next(self.image_provider)
+                        break
+                    except ValueError as e:
+                        if "generator already executing" in str(e):
+                            if retry_count >= max_retries:
+                                self._log("Generator busy after max retries, giving up.")
+                                return None, None
+                            self._log("Generator busy in get_next, waiting before retry...")
+                            time.sleep(0.01)  # Wait 10ms before retrying
+                            retry_count += 1
+                            continue
+                        else:
+                            raise
+                    except StopIteration:
+                        self._log("No image provided (empty provider).")
+                        return None, None
                 image_obj = self._load_image(image_path)
                 source = "Disk"
         else:

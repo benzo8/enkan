@@ -1,8 +1,22 @@
 import os
+import bisect
+import random
 from datetime import datetime
 
 from slideshow import constants
 
+def prepare_cumulative_weights(weights):
+    cum_weights = []
+    total = 0
+    for w in weights:
+        total += w
+        cum_weights.append(total)
+    return cum_weights
+
+def weighted_choice(image_paths, cum_weights):
+    x = random.uniform(0, cum_weights[-1])
+    idx = bisect.bisect_left(cum_weights, x)
+    return image_paths[idx]
 
 def level_of(path):
     return len([item for item in path.split(os.sep) if item != ""])
@@ -120,3 +134,13 @@ def write_image_list(all_images, weights, input_files, mode_args, output_path):
         f.write("\n".join(header) + "\n")
         for img, w in zip(all_images, weights):
             f.write(f"{img},{w}\n")
+            
+def write_tree_to_file(tree, output_path):
+    import pickle
+    with open(output_path, "wb") as f:
+        pickle.dump(tree, f, protocol=pickle.HIGHEST_PROTOCOL)
+    
+def load_tree_from_file(input_path):
+    import pickle
+    with open(input_path, "rb") as f:
+        return pickle.load(f)
