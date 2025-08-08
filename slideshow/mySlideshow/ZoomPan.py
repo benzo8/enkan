@@ -10,14 +10,15 @@ class ZoomPan:
       easing (bool): enable animated eased zoom. If False, zoom applies instantly.
     """
 
-    def __init__(self, widget: tk.Widget, screen_w: int, screen_h: int, on_image_changed=None, allow_upscale: bool = False, easing: bool = False):
+    def __init__(self, widget: tk.Widget, screen_w: int, screen_h: int, on_image_changed=None, allow_upscale: bool = False, easing: bool = False, fill_small: bool = True):
         # ...existing code up to interaction / quality management...
         self.widget = widget
         self.screen_w = screen_w
         self.screen_h = screen_h
         self.on_image_changed = on_image_changed
-        self.allow_upscale = allow_upscale
-        self.easing = easing  # <-- new flag
+        self.allow_upscale = allow_upscale  # governs whether user zoom can exceed 1:1 base
+        self.fill_small = fill_small        # if True, smaller-than-screen images are fit (upscaled) initially
+        self.easing = easing  # <-- existing flag
         # ...existing code remains unchanged below this line...
         self.orig_image = None
         self.fit_image = None
@@ -99,9 +100,20 @@ class ZoomPan:
     def _recompute_base_scale(self):
         iw, ih = self.orig_image.size
         sw, sh = self.screen_w, self.screen_h
-        fit_scale = min(sw / iw, sh / ih)
-        if not self.allow_upscale:
-            fit_scale = min(1.0, fit_scale)
+        fit_scale = min(sw / iw, sh / ih)  # scale to contain
+        # If image is smaller than screen (fit_scale > 1):
+        #  - If allow_upscale True -> always use fit_scale
+        #  - If allow_upscale False but fill_small True -> still use fit_scale so it fills one axis
+        #  - Else clamp to 1.0 (no enlargement)
+        if fit_scale > 1:
+            if self.allow_upscale or self.fill_small:
+                pass  # keep fit_scale
+            else:
+                fit_scale = 1.0
+        else:
+            # Image larger than (or equal) in at least one dimension; always scale down to fit.
+            # If future option to prevent downscale were desired, handle here.
+            pass
         self.base_scale = fit_scale
 
     def _build_fit_image(self):
