@@ -4,7 +4,6 @@ import sys
 import random
 import tkinter as tk
 from tkinter import messagebox
-from PIL import Image, ImageTk
 
 # ——— Third-party ———
 import vlc
@@ -19,6 +18,7 @@ from slideshow.tree.tree_logic import (
     build_tree,
     extract_image_paths_and_weights_from_tree,
 )
+from slideshow.mySlideshow.ZoomPan import ZoomPan  # <-- added import
 
 class ImageSlideshow:
     def __init__(
@@ -66,6 +66,9 @@ class ImageSlideshow:
         self.filename_label.config(state=tk.DISABLED)
         self.mode_label = tk.Label(self.root, bg="black", fg="white", anchor="ne")
 
+        # Zoom/Pan controller (binds mouse events on the label)
+        self.zoompan = ZoomPan(self.label, self.screen_width, self.screen_height, on_image_changed=self.update_filename_display)
+
         self.root.attributes("-fullscreen", True)
         self.root.bind("<space>", self.next_image)
         self.root.bind("<Escape>", self.exit_slideshow)
@@ -93,6 +96,17 @@ class ImageSlideshow:
         self.root.bind("<s>", self.toggle_subfolder_mode)
         self.root.bind("<a>", self.toggle_auto_advance)
 
+        # Zoom/Pan key bindings (avoid clashing with existing navigation)
+        self.root.bind("=", lambda e: self.zoompan.zoom_in())  # '=' key (shift+'+' also triggers)
+        self.root.bind("+", lambda e: self.zoompan.zoom_in())
+        self.root.bind("-", lambda e: self.zoompan.zoom_out())
+        self.root.bind("0", self._reset_zoom)
+        # Shift + Arrows for panning so plain arrows keep history/sequential behaviour
+        self.root.bind("<Shift-Left>", lambda e: self.zoompan.pan(-80, 0))
+        self.root.bind("<Shift-Right>", lambda e: self.zoompan.pan(80, 0))
+        self.root.bind("<Shift-Up>", lambda e: self.zoompan.pan(0, -80))
+        self.root.bind("<Shift-Down>", lambda e: self.zoompan.pan(0, 80))
+
         self.providers = ImageProviders()
         if self.defaults.is_random:
             self.set_provider("random")
@@ -105,6 +119,9 @@ class ImageSlideshow:
             self.auto_advance_interval = interval
             self._schedule_next_image()
             self.auto_advance_running = True
+
+    def _reset_zoom(self, event=None):
+        self.zoompan.reset_view()
 
     def update_slide_show(self, image_paths, weights):
         """Updates the slideshow with the new set of images and weights."""
@@ -120,31 +137,6 @@ class ImageSlideshow:
         self.show_image(self.image_paths[self.current_image_index])
 
     def show_image(self, image_path=None, record_history=True):
-        """
-        Displays an image or plays a video in the slideshow application.
-
-        If an image path is provided, displays the specified image or plays the specified video.
-        If no image path is provided, selects the next image or video to display based on the current mode
-        (random or weighted random selection). Handles updating the navigation history.
-
-        For images:
-            - Applies rotation if specified.
-            - Resizes the image to fit the screen while maintaining aspect ratio.
-            - Displays the image in the Tkinter label widget.
-
-        For videos:
-            - Stops any currently playing video.
-            - Initializes and embeds a VLC media player instance into the Tkinter frame.
-            - Plays the video and starts polling to detect when the video ends.
-
-        Also updates filename and mode display labels.
-
-        Args:
-            image_path (str, optional): The file path of the image or video to display. If None, selects the next file automatically.
-
-        Raises:
-            RuntimeError: If the platform is unsupported for video playback embedding.
-        """
         # Stop existing video playback and clean up resources
         if hasattr(self, "video_player") and self.video_player:
             self.video_player.stop()
@@ -161,38 +153,17 @@ class ImageSlideshow:
         self.current_image_index = self.image_paths.index(image_path)
 
         if image:
-            # Stop any video, hide video frame, and show image
-            if hasattr(self, "video_frame"):
-                self.video_frame.place_forget()
-
-            # Resize image to fit the screen while maintaining aspect ratio
-            screen_width = self.screen_width
-            screen_height = self.screen_height
-
-            # Apply rotation before resizing
+            # If rotating, apply before handing to ZoomPan
             if hasattr(self, "rotation_angle") and self.rotation_angle:
                 image = image.rotate(self.rotation_angle, expand=True)
-
-            # Get correct image size after rotation
-            image_ratio = image.width / image.height
-            screen_ratio = screen_width / screen_height
-            if image_ratio > screen_ratio:
-                new_width = screen_width
-                new_height = int(screen_width / image_ratio)
-            else:
-                new_height = screen_height
-                new_width = int(screen_height * image_ratio)
-
-            image = image.resize((new_width, new_height), Image.LANCZOS)
-
-            # Convert to PhotoImage and display
-            photo = ImageTk.PhotoImage(image)
-            self.label.config(image=photo)
-            self.label.image = photo
+            # Provide full-resolution image to ZoomPan, which will fit & manage viewport
+            self.zoompan.set_image(image)
             self.label.pack()
         else:
+            # Clear any existing image from label
             self.label.config(image="")
             self.label.image = None
+            self.zoompan.orig_image = None  # disable zoom state while video plays
             self.label.pack()
 
             if not hasattr(self, "video_frame"):
@@ -212,7 +183,6 @@ class ImageSlideshow:
             self.video_player.set_media(media)
             self.video_player.audio_set_mute(self.video_muted)
 
-            # Embed into tkinter
             window_id = self.video_frame.winfo_id()
             if sys.platform.startswith("win"):
                 self.video_player.set_hwnd(window_id)
@@ -224,8 +194,6 @@ class ImageSlideshow:
                 raise RuntimeError(f"Unsupported platform: {sys.platform}")
 
             self.video_player.play()
-
-            # Start polling to detect end of video
             self.root.after(500, self._check_video_ended)
 
         self.filename_label.tkraise()
@@ -308,18 +276,16 @@ class ImageSlideshow:
         If enabling, optionally provide a new interval (ms).
         """
         if getattr(self, "auto_advance_running", False):
-            # Stop auto-advance
             if getattr(self, "auto_advance_id", None) is not None:
                 self.root.after_cancel(self.auto_advance_id)
             self.auto_advance_id = None
             self.auto_advance_running = False
             print("[DEBUG] Auto-advance stopped.")
         else:
-            # Start auto-advance
             if interval is not None:
                 self.auto_advance_interval = interval
             if not hasattr(self, "auto_advance_interval"):
-                self.auto_advance_interval = 5000  # Default 5 seconds
+                self.auto_advance_interval = 5000
             self._schedule_next_image()
             self.auto_advance_running = True
             print(f"[DEBUG] Auto-advance started ({self.auto_advance_interval} ms).")
@@ -332,10 +298,9 @@ class ImageSlideshow:
         self.auto_advance_id = self.root.after(
             self.auto_advance_interval, self._advance_image
         )
-        self.auto_advance_running = True  # Mark as running
+        self.auto_advance_running = True
 
     def _advance_image(self):
-        """Advance the slideshow by one image and reschedule."""
         self.show_image()
         self._schedule_next_image()
 
@@ -391,7 +356,7 @@ class ImageSlideshow:
             current_mute = self.video_player.audio_get_mute()
             new_mute = not current_mute
             self.video_player.audio_set_mute(new_mute)
-            self.video_muted = new_mute  # Keep state in sync
+            self.video_muted = new_mute
 
     def toggle_subfolder_mode(self, event=None):
         if not self.subfolder_mode:
@@ -399,7 +364,6 @@ class ImageSlideshow:
         else:
             self.subfolder_mode_off()
         self.show_image(self.current_image_path)
-        # self.update_filename_display()
 
     def toggle_navigation_mode(self, event=None):
         if self.navigation_mode == "branch":
@@ -439,7 +403,7 @@ class ImageSlideshow:
         _, self.image_paths, self.weights = self.subFolderStack.pop()
         self.number_of_images = len(
             self.image_paths
-        )  # Update the number of images for the full set
+        )
         self.subfolder_mode = False
         self.update_slide_show(image_paths=self.image_paths, weights=self.weights)
 
@@ -457,7 +421,6 @@ class ImageSlideshow:
 # -- Parent Mode Navigation ---
 
     def navigate_up(self):
-        """Navigate up one level in the directory structure."""
         if self.parentFolderStack.is_full() or not self.parent_mode:
             print("Cannot navigate up - Stack is full or not in parent mode.")
             return
@@ -484,7 +447,6 @@ class ImageSlideshow:
             else:
                 print("No valid child directory found.")
         elif self.navigation_mode == "branch":
-            # In branch mode, we need to find the child node in the tree
             current_path_node = self.original_tree.find_node(
                 current_path, self.original_tree.path_lookup
             )
@@ -504,15 +466,12 @@ class ImageSlideshow:
         self.traverse_directory(child_path, self.navigation_node)
 
     def navigate_down(self):
-        """Navigate down into the selected directory."""
         parent_path = None
 
         match (self.navigation_mode, self.parent_mode):
             case ("folder", False):
                 current_path = os.path.dirname(self.current_image_path)
                 current_path_level = utils.level_of(current_path)
-
-                # Traverse up levels until a valid parent is found
                 for i in range(current_path_level - 1, 1, -1):
                     parent_level = i
                     parent_path = utils.truncate_path(current_path, parent_level)
@@ -525,14 +484,11 @@ class ImageSlideshow:
                 previous_path = self.parentFolderStack.read_top()
                 parent_level = utils.level_of(previous_path) - 1
                 parent_path = utils.truncate_path(previous_path, parent_level)
-
-                # If we're backtracking, step backwards instead
                 if parent_path == self.parentFolderStack.read_top(2):
                     self.step_backwards()
                     return
                 self.parentFolderStack.push(parent_path, self.image_paths, self.weights)
             case ("branch", False):
-                # In branch mode, we need to find the parent path in the tree
                 self.navigation_node = self.original_tree.find_node(
                     os.path.dirname(self.current_image_path),
                     self.original_tree.path_lookup,
@@ -544,12 +500,9 @@ class ImageSlideshow:
         self.traverse_directory(parent_path, self.navigation_node)
 
     def step_backwards(self):
-        """Step backwards in the parent folder stack."""
         if self.parentFolderStack.is_empty():
             print("Cannot step back - Stack is empty.")
             return
-
-        # Pop the current top and show the previous one
         _, images, weights = self.parentFolderStack.pop()
         self.update_slide_show(images, weights)
 
@@ -570,18 +523,11 @@ class ImageSlideshow:
         self.navigate_up()
 
     def reset_parent_mode(self, event=None):
-        """Reset the parent mode and associated states."""
-        # Turn off parent mode
         self.parent_mode = False
         self.subfolder_mode = False
-
-        # Clear the parent folder stack
         self.parentFolderStack.clear()
-
-        # Reset image paths and weights to their original states
         self.image_paths = self.original_image_paths[:]
         self.weights = self.original_weights[:]
-
         self.update_slide_show(self.image_paths, self.weights)
         self.show_image(self.image_paths[self.current_image_index])
         print("[DEBUG] Parent mode reset and modes updated.")
@@ -597,10 +543,7 @@ class ImageSlideshow:
             fixed_colour = None
             fixed_path = None
             self.filename_label.config(state=tk.NORMAL)
-            self.filename_label.delete("1.0", tk.END)  # Clear old text
-
-            # --------- Left-side filename display ---------
-
+            self.filename_label.delete("1.0", tk.END)
             label_path = self.current_image_path
             if self.navigation_mode == "branch":
                 label_path = os.path.join(
@@ -645,8 +588,6 @@ class ImageSlideshow:
             self.filename_label.config(height=1, width=len(label_path) + 10, bg="black")
             self.filename_label.config(state=tk.DISABLED)
 
-            # --------- Right-side mode/interval display ---------
-            # Determine mode_text
             mode_text = (
                 self.providers.get_current_provider_name()[0:3].upper()
                 if self.mode
@@ -665,7 +606,6 @@ class ImageSlideshow:
             else:
                 mode_text = f"({self.current_image_index + 1}/{self.number_of_images}) {mode_text}"
 
-            # Build display string: (interval if present) + mode_text
             display_text = mode_text
             if (
                 hasattr(self, "auto_advance_running")
@@ -675,11 +615,9 @@ class ImageSlideshow:
             ):
                 display_text = f"AUTO ({self.auto_advance_interval}ms)   {mode_text}"
 
-            # Set text and color for label (single foreground color only)
             self.mode_label.config(
                 text=display_text,
-                fg="white",  # or whatever color you prefer
-                # bg=...      # optionally your label background color
+                fg="white",
             )
             self.mode_label.place(x=self.root.winfo_screenwidth(), y=0, anchor="ne")
         else:
@@ -696,24 +634,15 @@ class ImageSlideshow:
 # --- Exit Method ---
 
     def exit_slideshow(self, event=None):
-        # Clear preloaded images and cache
         self.manager.lru_cache.clear()
         self.manager.preload_queue.clear()
-
-        # Stop and release video player
         if hasattr(self, "video_player") and self.video_player:
             self.video_player.stop()
             self.video_player.release()
             self.video_player = None
-
-        # Release VLC instance
         if hasattr(self, "vlc_instance") and self.vlc_instance:
             self.vlc_instance.release()
             self.vlc_instance = None
-
-        # Destroy video frame
         if hasattr(self, "video_frame"):
             self.video_frame.destroy()
-
-        # Exit Tkinter main loop
         self.root.destroy()
