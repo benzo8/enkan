@@ -1,5 +1,3 @@
-import weakref
-
 class TreeNode:
     __slots__ = (
         "name",
@@ -12,8 +10,7 @@ class TreeNode:
         "flat",
         "images",
         "children",
-        "_parent",
-        "__weakref__",
+        "parent",
     )
 
     def __init__(
@@ -58,20 +55,6 @@ class TreeNode:
             current = current.parent
 
         return level
-
-    @property
-    def parent(self):
-        """
-        Get the parent node (returns None if parent was garbage collected)
-        """
-        return self._parent() if self._parent is not None else None
-
-    @parent.setter
-    def parent(self, new_parent):
-        """
-        Set the parent node using a weak reference
-        """
-        self._parent = weakref.ref(new_parent) if new_parent is not None else None
 
     @property
     def siblings(self):

@@ -29,10 +29,12 @@ class InputProcessor:
         weights = []
 
         for input_entry in input_files:
-            self.process_entry(
+            tree = self.process_entry(
                 input_entry, recdepth, image_dirs, specific_images, all_images, weights
             )
-        return image_dirs, specific_images, all_images, weights
+            if tree:
+                return tree, {}, {}, [], []
+        return None, image_dirs, specific_images, all_images, weights
 
     def process_entry(
         self, entry, recdepth, image_dirs, specific_images, all_images, weights
@@ -46,6 +48,12 @@ class InputProcessor:
 
         if input_filename_full:
             match os.path.splitext(input_filename_full)[1].lower():
+                case ".tree":
+                    # Load a pre-built tree from a file
+                    from slideshow.utils.utils import load_tree_from_file
+                    print(f"Loading tree from {input_filename_full}")
+                    tree = load_tree_from_file(input_filename_full)
+                    return tree
                 case ".lst":
                     with open(
                         input_filename_full, "r", buffering=65536, encoding="utf-8"

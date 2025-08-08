@@ -10,6 +10,7 @@ class ImageProviders:
             "sequential": self.image_provider_sequential,
             "random": self.image_provider_random,
             "weighted": self.image_provider_weighted,
+            "burst": self.image_provider_folder_burst
         }
         self.current_provider_name = None
 
@@ -28,7 +29,7 @@ class ImageProviders:
             image_provider,
             kwargs.get("index", 0),
             debug=kwargs.get("debug", False),
-            background_preload=kwargs.get("background", True)
+            background_preload=kwargs.get("background_preload", True)
         )
         self.current_provider_name = provider_name
         return self.manager
@@ -69,4 +70,30 @@ class ImageProviders:
                 yield random.choices(image_paths, weights=weights, k=1)[0]
         except GeneratorExit:
             print("Weighted image provider closed unexpectedly.")
+            return
+        
+    def image_provider_folder_burst(self, image_paths, weights=None, burst_size=5, **kwargs):
+        from collections import defaultdict
+        import os
+
+        folder_to_images = defaultdict(list)
+        for path in image_paths:
+            folder = os.path.dirname(path)
+            folder_to_images[folder].append(path)
+
+        burst_images = []
+        try:
+            while True:
+                if not burst_images:
+                    # Pick a new random folder and prepare a burst
+                    random_image = random.choices(image_paths, weights=weights, k=1)[0]
+                    folder = os.path.dirname(random_image)
+                    images_in_folder = folder_to_images[folder]
+                    images = images_in_folder[:]
+                    random.shuffle(images)
+                    burst_images = images[:burst_size]
+                # Yield one image per call
+                yield burst_images.pop(0)
+        except GeneratorExit:
+            print("Folder burst image provider closed unexpectedly.")
             return
