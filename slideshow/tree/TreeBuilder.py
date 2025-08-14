@@ -187,11 +187,14 @@ class TreeBuilder:
         """
         Process specific images and add them to the tree.
         """
-        num_average_images = int((lambda a, b: b / a)(*self.tree.count_branches(self.tree.root)))
-
+        if self.tree.count_branches(self.tree.root)[1] > 0:
+            num_average_images = int((lambda a, b: b / a)(*self.tree.count_branches(self.tree.root)))
+        else:
+            num_average_images = 100
+            
         for path, data in specific_images.items():
             if self.tree.filters.passes(path) == 0:
-                node_name = path
+                node_name = os.path.join(os.path.dirname(path), os.path.splitext(os.path.basename(path))[0])
                 is_percentage = data.get("is_percentage", True)
                 level = data.get("level", self.tree.calculate_level(node_name))
 
@@ -211,7 +214,9 @@ class TreeBuilder:
                         ),
                     },
                 )
-
+                
+                self.tree.virtual_image_lookup[path] = self.tree.path_lookup[node_name]
+                
                 # Handle grafting after processing the directory
                 graft_level = data.get("graft_level") or level
                 group = data.get("group")

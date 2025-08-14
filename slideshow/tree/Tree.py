@@ -11,6 +11,7 @@ class Tree:
         self.root = TreeNode("root", 0)
         self.node_lookup = {"root": self.root}
         self.path_lookup = {"root": self.root}
+        self.virtual_image_lookup = {"root": self.root}
         self.defaults = defaults
         self.filters = filters
 
@@ -60,6 +61,7 @@ class Tree:
         self.detach_node(current_node)
         parent_node.add_child(current_node)
         self.rename_node_in_lookup(current_node.name, levelled_name)
+        current_node.name = levelled_name
         current_node.path = root
 
         # Rename and relevel child nodes
