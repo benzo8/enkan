@@ -3,10 +3,12 @@ import os
 from tqdm import tqdm
 
 import slideshow.utils.utils as utils
+from slideshow.tree.Grafting import Grafting
 
 class TreeBuilder:
     def __init__(self, tree):
         self.tree = tree
+        self.grafting = Grafting(self.tree)
 
     def build_tree(self, image_dirs, specific_images, quiet=False):
         """
@@ -43,7 +45,7 @@ class TreeBuilder:
                             },
                         )
 
-                self.tree.handle_grafting(
+                self.grafting.handle_grafting(
                     root, data.get("graft_level"), data.get("group")
                 )
 
@@ -220,4 +222,4 @@ class TreeBuilder:
                 # Handle grafting after processing the directory
                 graft_level = data.get("graft_level") or level
                 group = data.get("group")
-                self.tree.handle_grafting(node_name, graft_level, group)
+                self.grafting.handle_grafting(node_name, graft_level, group)

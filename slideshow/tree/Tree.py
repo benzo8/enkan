@@ -14,84 +14,7 @@ class Tree:
         self.virtual_image_lookup = {"root": self.root}
         self.defaults = defaults
         self.filters = filters
-
-    def handle_grafting(self: "Tree", root: str, graft_level: int, group: str) -> None:
-        """
-        Graft a subtree to a new location in the tree at the specified level and apply group-specific configuration.
-
-        This function moves (grafts) a node and its subtree from its current parent to a new parent node at the
-        specified graft_level. It also applies any mode modifiers and proportions specified in the group configuration.
-        If the old parent becomes empty after grafting, it is pruned from the tree.
-
-        Args:
-            root (str): The original root path of the node to be grafted.
-            graft_level (int): The level in the tree to which the node should be grafted.
-            group (str): The group name used to look up group-specific configuration.
-
-        Returns:
-            None. The tree structure is modified in-place.
-        """
-        # if not group:
-        #     return
-        # else:
-        if group in self.defaults.groups:
-            group_graft_level = self.defaults.groups[group].get("graft_level")
-        else:
-            group_graft_level = None
-        graft_level = graft_level or group_graft_level
-        if not graft_level:
-            return
-
-        current_node_name = self.convert_path_to_tree_format(root)
-        current_node = self.find_node(current_node_name)
-        if not current_node:
-            print(
-                f"Warning: Node '{current_node_name}' not found for grafting. Skipping."
-            )
-            return
-        current_node_parent = current_node.parent
-
-        levelled_name = self.convert_path_to_tree_format(
-            self.set_path_to_level(root, graft_level, group)
-        )
-        parent_path = os.path.dirname(levelled_name)
-        parent_node = self.ensure_parent_exists(parent_path)
-
-        # Detach from the old parent and graft to the new location
-        self.detach_node(current_node)
-        parent_node.add_child(current_node)
-        self.rename_node_in_lookup(current_node.name, levelled_name)
-        current_node.name = levelled_name
-        current_node.path = root
-
-        # Rename and relevel child nodes
-        self.rename_children(current_node, levelled_name)
-
-        # Prune old parent node if empty
-        node_to_check = current_node_parent
-        while node_to_check and node_to_check != self.root:
-            if not node_to_check.images and not node_to_check.children:
-                parent = node_to_check.parent
-                if parent:
-                    parent.children = [
-                        child for child in parent.children if child != node_to_check
-                    ]
-                # Remove from node_lookup if you want to keep it clean
-                if node_to_check.name in self.node_lookup:
-                    del self.node_lookup[node_to_check.name]
-                node_to_check = parent
-            else:
-                break
-
-        # Add mode_modifiers, if present
-        group_config = self.defaults.groups.get(group)
-        if group_config:
-            mode_modifiers = group_config.get("mode_modifier")
-            if mode_modifiers:
-                for level, mode in mode_modifiers.items():
-                    for child in current_node.get_nodes_at_level(level):
-                        child.mode_modifier = {level: mode}
-            self.set_proportion(group, current_node)
+    
 
     def rename_children(self, parent_node, new_parent_name):
         """
@@ -106,8 +29,8 @@ class Tree:
             # Calculate the new name for the child node
             child_basename = os.path.basename(child.name)
             new_name = os.path.join(new_parent_name, child_basename)
-            child.name = new_name
-            self.rename_node_in_lookup(child.name, new_name)
+            old_name = child.name
+            self.rename_node_in_lookup(old_name, new_name)
             # Recursively update the child's subtree
             self.rename_children(child, new_name)
 

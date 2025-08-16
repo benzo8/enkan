@@ -68,7 +68,7 @@ class ImageSlideshow:
         self.mode_label = tk.Label(self.root, bg="black", fg="white", anchor="ne")
 
         # Zoom/Pan controller (binds mouse events on the label)
-        self.zoompan = ZoomPan(self.label, self.screen_width, self.screen_height, on_image_changed=self.update_filename_display)
+        self.zoompan = ZoomPan(self.label, self.screen_width, self.screen_height, on_image_changed=None)
 
         self.root.attributes("-fullscreen", True)
         self.root.bind("<space>", self.next_image)
@@ -382,6 +382,7 @@ class ImageSlideshow:
 
     def toggle_navigation_mode(self, event=None):
         if self.navigation_mode == "branch":
+            self.navigation_node = None
             self.navigation_mode = "folder"
         else:
             self.navigation_node = self.find_node_for_image(self.current_image_path)
