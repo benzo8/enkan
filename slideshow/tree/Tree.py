@@ -216,8 +216,10 @@ class Tree:
                 # Create the next node if it doesn't exist
                 new_node = TreeNode(name=next_node_name, path=next_node_path)
                 current_node.add_child(new_node)
-                self.node_lookup[next_node_name] = new_node
-                self.path_lookup[next_node_path] = new_node
+                if next_node_name not in self.node_lookup:
+                    self.node_lookup[next_node_name] = new_node
+                if next_node_path not in self.path_lookup:
+                    self.path_lookup[next_node_path] = new_node
                 current_node = new_node
             else:
                 # Move to the existing node
@@ -472,7 +474,7 @@ class Tree:
                     node.proportion = proportion
 
         return
-    
+
     def count_branches(self, node: "TreeNode") -> tuple[int, int]:
         """
         Recursively count the number of branches and images in the tree starting from the given node.

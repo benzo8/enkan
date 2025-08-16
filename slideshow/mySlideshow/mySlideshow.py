@@ -10,6 +10,7 @@ import vlc
 
 # ——— Local ———
 from slideshow import constants
+from slideshow.tree import Tree
 from slideshow.utils import utils
 from slideshow.utils.Defaults import resolve_mode
 from slideshow.utils.MyStack import Stack
@@ -22,8 +23,8 @@ from slideshow.mySlideshow.ZoomPan import ZoomPan  # <-- added import
 
 class ImageSlideshow:
     def __init__(
-        self, root, tree, image_paths, weights, defaults, filters, quiet, interval
-    ):
+        self, root, tree: Tree, image_paths, weights, defaults, filters, quiet, interval
+    ) -> None:
         self.root = root
         self.original_tree = tree
         self.image_paths = image_paths
@@ -555,7 +556,7 @@ class ImageSlideshow:
             self.filename_label.delete("1.0", tk.END)
             label_path = self.current_image_path
             if self.navigation_mode == "branch":
-                label_path = self.find_node_for_image(self.current_image_path).name
+                label_path = os.path.join(self.find_node_for_image(self.current_image_path).name, os.path.basename(self.current_image_path))
             match (self.navigation_mode, self.parent_mode, self.subfolder_mode):
                 case ("folder", True, False):
                     fixed_path = self.parentFolderStack.read_top()

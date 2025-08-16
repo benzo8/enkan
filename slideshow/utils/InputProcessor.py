@@ -1,8 +1,10 @@
 import os
 import re
+from typing import Dict, List
 from tqdm import tqdm
 
 from slideshow import constants
+from slideshow.tree import Tree
 from slideshow.utils import utils
 from slideshow.utils.Defaults import parse_mode_string
 
@@ -23,13 +25,13 @@ class InputProcessor:
         Returns:
             tuple: (image_dirs, specific_images)
         """
-        image_dirs = {}
-        specific_images = {}
-        all_images = []
-        weights = []
+        image_dirs: Dict = {}
+        specific_images: Dict = {}
+        all_images: List = []
+        weights: List = []
 
         for input_entry in input_files:
-            tree = self.process_entry(
+            tree: Tree = self.process_entry(
                 input_entry, recdepth, image_dirs, specific_images, all_images, weights
             )
             if tree:

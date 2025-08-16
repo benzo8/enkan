@@ -20,3 +20,4 @@ build/
 
 # Optional config files
 .vscode/launch.json
+slideshow/ruff.toml

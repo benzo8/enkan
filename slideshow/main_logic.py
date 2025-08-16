@@ -1,5 +1,6 @@
 # ——— Standard library ———
 import os
+from typing import List
 
 # ——— Local ———
 from slideshow.utils.InputProcessor import InputProcessor
@@ -11,18 +12,18 @@ from slideshow.tree.tree_logic import (
 )
 
 
-def main(args):
+def main(args) -> None:
     
-    defaults = Defaults(args=args)
-    filters = Filters()
+    defaults: Defaults = Defaults(args=args)
+    filters: Filters = Filters()
     filters.preprocess_ignored_files()
-    tree = None
+    tree: Tree = None
 
     # Use args.input_file directly as a list
-    input_files = args.input_file if args.input_file else []
+    input_files: str | List = args.input_file if args.input_file else []
     
     # Parse input files and directories
-    processor = InputProcessor(defaults, filters, args.quiet or False)
+    processor: InputProcessor[Defaults, Filters] = InputProcessor(defaults, filters, args.quiet or False)
     tree, image_dirs, specific_images, all_images, weights = processor.process_inputs(input_files)
 
     if not any([tree, image_dirs, specific_images, all_images, weights]):
