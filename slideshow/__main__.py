@@ -25,8 +25,13 @@
 # -----------------------------------------------------------------------------
 
 from slideshow.utils.argparse_setup import get_arg_parser
-from slideshow.main_logic import main
+from slideshow.main_logic import main_with_args
+
+def main() -> None:
+    """Console script / module entry point."""
+    args = get_arg_parser().parse_args()
+    main_with_args(args)
+
 
 if __name__ == "__main__":
-    args = get_arg_parser().parse_args()
-    main(args)
+    main()

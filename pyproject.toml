@@ -1,3 +1,27 @@
+[project]
+name = "Slideshow"
+description = "A not-so-simple slideshow application"
+version = "1.9.9.1"
+authors = [
+    { name = "John Sullivan", email = "benzo8@gmail.com" },
+]
+requires-python = ">=3.11"
+dependencies = [
+    "matplotlib>=3.10.5",
+    "pillow>=11.3.0",
+    "python-vlc>=3.0.21203",
+    "tqdm>=4.67.1",
+]
+
 [build-system]
-requires = ["setuptools"]
+requires = [
+    "setuptools>=68.0.0",
+    "wheel>=0.40.0",
+]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["slideshow"]
+
+[project.scripts]
+slideshow = "slideshow.__main__:main"

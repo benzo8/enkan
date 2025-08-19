@@ -10,6 +10,7 @@ import vlc
 
 # ——— Local ———
 from slideshow import constants
+from slideshow.tree import Tree
 from slideshow.utils import utils
 from slideshow.utils.Defaults import resolve_mode
 from slideshow.utils.MyStack import Stack
@@ -22,8 +23,8 @@ from slideshow.mySlideshow.ZoomPan import ZoomPan  # <-- added import
 
 class ImageSlideshow:
     def __init__(
-        self, root, tree, image_paths, weights, defaults, filters, quiet, interval
-    ):
+        self, root, tree: Tree, image_paths, weights, defaults, filters, quiet, interval
+    ) -> None:
         self.root = root
         self.original_tree = tree
         self.image_paths = image_paths
@@ -67,7 +68,7 @@ class ImageSlideshow:
         self.mode_label = tk.Label(self.root, bg="black", fg="white", anchor="ne")
 
         # Zoom/Pan controller (binds mouse events on the label)
-        self.zoompan = ZoomPan(self.label, self.screen_width, self.screen_height, on_image_changed=self.update_filename_display)
+        self.zoompan = ZoomPan(self.label, self.screen_width, self.screen_height, on_image_changed=None)
 
         self.root.attributes("-fullscreen", True)
         self.root.bind("<space>", self.next_image)
@@ -220,6 +221,14 @@ class ImageSlideshow:
         )
         self.update_filename_display()
 
+    def find_node_for_image(self, image_path):
+        # First: specific image mapping
+        node = self.original_tree.virtual_image_lookup.get(image_path)
+        if node:
+            return node
+        # Fallback: directory-based
+        return self.original_tree.find_node(os.path.dirname(image_path), self.original_tree.path_lookup)
+    
     def safe_current_image_index(self, image_paths):
         number_of_images = len(image_paths)
         try:
@@ -340,14 +349,20 @@ class ImageSlideshow:
                 f"Are you sure you want to delete {self.current_image_path}?",
             )
             if confirm:
+                # Stop and release video player if a video is playing
+                if hasattr(self, "video_player") and self.video_player:
+                    self.video_player.stop()
+                    self.video_player.release()
+                    self.video_player = None
+                if hasattr(self, "video_frame"):
+                    self.video_frame.place_forget()
                 try:
                     os.remove(self.current_image_path)
                     index = self.image_paths.index(self.current_image_path)
                     self.image_paths.pop(index)
                     self.weights.pop(index)
                     self.manager.history_manager.remove(self.current_image_path)
-                    self.show_image()
-                    self.manager.reset()
+                    self.update_slide_show(image_paths=self.image_paths, weights=self.weights)
                 except Exception as e:
                     messagebox.showerror("Error", f"Could not delete the image: {e}")
 
@@ -367,11 +382,10 @@ class ImageSlideshow:
 
     def toggle_navigation_mode(self, event=None):
         if self.navigation_mode == "branch":
+            self.navigation_node = None
             self.navigation_mode = "folder"
         else:
-            self.navigation_node = self.original_tree.find_node(
-                os.path.dirname(self.current_image_path), self.original_tree.path_lookup
-            )
+            self.navigation_node = self.find_node_for_image(self.current_image_path)
             if self.navigation_node:
                 self.navigation_mode = "branch"
             else:
@@ -489,10 +503,7 @@ class ImageSlideshow:
                     return
                 self.parentFolderStack.push(parent_path, self.image_paths, self.weights)
             case ("branch", False):
-                self.navigation_node = self.original_tree.find_node(
-                    os.path.dirname(self.current_image_path),
-                    self.original_tree.path_lookup,
-                ).parent
+                self.navigation_node = self.find_node_for_image(self.current_image_path).parent
             case ("branch", True):
                 self.navigation_node = self.navigation_node.parent
 
@@ -546,12 +557,7 @@ class ImageSlideshow:
             self.filename_label.delete("1.0", tk.END)
             label_path = self.current_image_path
             if self.navigation_mode == "branch":
-                label_path = os.path.join(
-                    self.original_tree.find_node(
-                        os.path.dirname(label_path), self.original_tree.path_lookup
-                    ).name,
-                    os.path.basename(label_path),
-                )
+                label_path = os.path.join(self.find_node_for_image(self.current_image_path).name, os.path.basename(self.current_image_path))
             match (self.navigation_mode, self.parent_mode, self.subfolder_mode):
                 case ("folder", True, False):
                     fixed_path = self.parentFolderStack.read_top()
