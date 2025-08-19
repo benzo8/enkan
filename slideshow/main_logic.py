@@ -12,7 +12,7 @@ from slideshow.tree.tree_logic import (
 )
 
 
-def main(args) -> None:
+def main_with_args(args) -> None:
     
     defaults: Defaults = Defaults(args=args)
     filters: Filters = Filters()
