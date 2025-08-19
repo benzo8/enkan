@@ -1,7 +1,7 @@
 [project]
 name = "Slideshow"
 description = "A not-so-simple slideshow application"
-version = "1.9.9.1"
+version = "1.9.9.2-dev"
 authors = [
     { name = "John Sullivan", email = "benzo8@gmail.com" },
 ]
@@ -20,8 +20,9 @@ requires = [
 ]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["slideshow"]
+[tool.setuptools.packages.find]
+include = ["slideshow*"]
+exclude = ["slideshow.tests*", "slideshow.*.scratch*"]
 
 [project.scripts]
 slideshow = "slideshow.__main__:main"

@@ -3,7 +3,8 @@ import os
 from tqdm import tqdm
 
 import slideshow.utils.utils as utils
-from slideshow.tree.Grafting import Grafting
+# Try relative import if the module exists in the same directory
+from .Grafting import Grafting
 
 class TreeBuilder:
     def __init__(self, tree):
