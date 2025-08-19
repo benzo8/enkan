@@ -6,6 +6,7 @@ from typing import List
 from slideshow.utils.InputProcessor import InputProcessor
 from slideshow.utils.Defaults import Defaults
 from slideshow.utils.Filters import Filters
+from slideshow.utils.utils import prepare_cumulative_weights
 from slideshow.tree.tree_logic import (
     build_tree,
     extract_image_paths_and_weights_from_tree
@@ -55,6 +56,8 @@ def main_with_args(args) -> None:
         ) 
         all_images.extend(extracted_images)
         weights.extend(extracted_weights)
+        
+    cum_weights = prepare_cumulative_weights(weights)
 
     if args.outputlist:
         from slideshow.utils.utils import write_image_list
@@ -69,11 +72,11 @@ def main_with_args(args) -> None:
     # Test or start the slideshow
     if args.test:
         from slideshow.utils.tests import test_distribution
-        test_distribution(all_images, weights, args.test, args.testdepth, args.histo, defaults, args.quiet or False)
+        test_distribution(all_images, cum_weights, args.test, args.testdepth, args.histo, defaults, args.quiet or False)
         return
     
     from slideshow.mySlideshow.start_slideshow import start_slideshow
     if not tree:
         from slideshow.tree.Tree import Tree
         tree = Tree(defaults, filters)
-    start_slideshow(tree, all_images, weights, defaults, filters, args.quiet or False, args.interval)
+    start_slideshow(tree, all_images, cum_weights, defaults, filters, args.quiet or False, args.interval)

@@ -7,10 +7,8 @@ from tqdm import tqdm
 
 from slideshow.constants import TOTAL_WEIGHT
 from slideshow.utils.Defaults import resolve_mode
-from slideshow.utils.utils import (
-    prepare_cumulative_weights,
-    weighted_choice
-)
+from slideshow.utils.utils import weighted_choice
+
 
 def timeit(func):
     @wraps(func)
@@ -58,9 +56,8 @@ def print_tree(
     for child in node.children:
         print_tree(defaults, child, indent + " + ", current_depth + 1, max_depth)
 
-def test_distribution(image_nodes, weights, iterations, testdepth, histo, defaults, quiet=False):    
+def test_distribution(image_nodes, cum_weights, iterations, testdepth, histo, defaults, quiet=False):    
     hit_counts = defaultdict(int)
-    cum_weights = prepare_cumulative_weights(weights)
     for _ in tqdm(range(iterations), desc="Iterating tests", disable=quiet):
         if defaults.is_random:
             image_path = random.choice(image_nodes)

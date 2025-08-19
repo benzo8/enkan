@@ -23,16 +23,16 @@ from slideshow.mySlideshow.ZoomPan import ZoomPan  # <-- added import
 
 class ImageSlideshow:
     def __init__(
-        self, root, tree: Tree, image_paths, weights, defaults, filters, quiet, interval
+        self, root, tree: Tree, image_paths, cum_weights, defaults, filters, quiet, interval
     ) -> None:
         self.root = root
         self.original_tree = tree
         self.image_paths = image_paths
-        self.weights = weights
+        self.cum_weights = cum_weights
+        self.original_cum_weights = cum_weights
         self.original_image_paths = image_paths
         self.number_of_images = len(image_paths)
         self.current_image_index = 0
-        self.original_weights = weights
         self.subFolderStack = Stack(1)
         self.parentFolderStack = Stack(constants.PARENT_STACK_MAX)
         self.subfolder_mode = False
@@ -112,7 +112,7 @@ class ImageSlideshow:
         if self.defaults.is_random:
             self.set_provider("random")
         else:
-            self.set_provider("weighted", weights=[1] * len(self.image_paths))
+            self.set_provider("weighted", cum_weights=self.cum_weights)
         self.mode, _ = resolve_mode(self.defaults.mode, min(self.defaults.mode.keys()))
 
         self.show_image()
@@ -124,15 +124,15 @@ class ImageSlideshow:
     def _reset_zoom(self, event=None):
         self.zoompan.reset_view()
 
-    def update_slide_show(self, image_paths, weights):
+    def update_slide_show(self, image_paths, cum_weights):
         """Updates the slideshow with the new set of images and weights."""
         self.image_paths = image_paths
-        self.weights = weights
+        self.cum_weights = cum_weights
         self.current_image_index = self.safe_current_image_index(image_paths)
         self.manager = self.providers.reset_manager(
             image_paths=image_paths,
             provider_name=self.providers.get_current_provider_name(),
-            weights=weights,
+            cum_weights=self.cum_weights,
             index=self.current_image_index,
         )
         self.show_image(self.image_paths[self.current_image_index])
@@ -258,10 +258,10 @@ class ImageSlideshow:
             new_image_paths, new_weights = extract_image_paths_and_weights_from_tree(
                 parent_tree
             )
-
         else:
             print("No valid directory found.")
-        self.update_slide_show(new_image_paths, new_weights)
+        new_cum_weights = utils.prepare_cumulative_weights(new_weights)
+        self.update_slide_show(new_image_paths, new_cum_weights)
 
     def _check_video_ended(self):
         if not self.video_player:
@@ -360,9 +360,9 @@ class ImageSlideshow:
                     os.remove(self.current_image_path)
                     index = self.image_paths.index(self.current_image_path)
                     self.image_paths.pop(index)
-                    self.weights.pop(index)
+                    self.cum_weights.pop(index)
                     self.manager.history_manager.remove(self.current_image_path)
-                    self.update_slide_show(image_paths=self.image_paths, weights=self.weights)
+                    self.update_slide_show(image_paths=self.image_paths, cum_weights=self.cum_weights)
                 except Exception as e:
                     messagebox.showerror("Error", f"Could not delete the image: {e}")
 
@@ -399,27 +399,23 @@ class ImageSlideshow:
 
     def subfolder_mode_on(self):
         folder = os.path.dirname(self.current_image_path)
-        self.subFolderStack.push(folder, self.image_paths, self.weights)
+        self.subFolderStack.push(folder, self.image_paths, self.cum_weights)
 
         temp_image_paths = [
             path for path in self.image_paths if path.startswith(folder)
         ]
-        temp_weights = [
-            self.weights[i]
-            for i, path in enumerate(self.image_paths)
-            if path.startswith(folder)
-        ]
-
+        temp_weights = [1] * len(temp_image_paths)
         self.subfolder_mode = True
-        self.update_slide_show(image_paths=temp_image_paths, weights=temp_weights)
+        temp_cum_weights = utils.prepare_cumulative_weights(temp_weights)
+        self.update_slide_show(image_paths=temp_image_paths, cum_weights=temp_cum_weights)
 
     def subfolder_mode_off(self):
-        _, self.image_paths, self.weights = self.subFolderStack.pop()
+        _, self.image_paths, self.cum_weights = self.subFolderStack.pop()
         self.number_of_images = len(
             self.image_paths
         )
         self.subfolder_mode = False
-        self.update_slide_show(image_paths=self.image_paths, weights=self.weights)
+        self.update_slide_show(image_paths=self.image_paths, weights=self.cum_weights)
 
     def select_mode(self, event=None):
         match event.char.upper():
@@ -428,9 +424,9 @@ class ImageSlideshow:
             case "L":
                 self.set_provider("sequential", index=self.current_image_index + 1)
             case "W":
-                self.set_provider("weighted", weights=self.weights)
+                self.set_provider("weighted", weights=self.cum_weights)
             case "B":
-                self.set_provider("burst", weights=self.weights, burst_size=5)
+                self.set_provider("burst", weights=self.cum_weights, burst_size=5)
 
 # -- Parent Mode Navigation ---
 
@@ -456,7 +452,7 @@ class ImageSlideshow:
                     self.toggle_subfolder_mode()
                 else:
                     self.parentFolderStack.push(
-                        child_path, self.image_paths, self.weights
+                        child_path, self.image_paths, self.cum_weights
                     )
             else:
                 print("No valid child directory found.")
@@ -493,7 +489,7 @@ class ImageSlideshow:
                         parent_path
                     ) > 1 or utils.contains_files(parent_path):
                         break
-                self.parentFolderStack.push(parent_path, self.image_paths, self.weights)
+                self.parentFolderStack.push(parent_path, self.image_paths, self.cum_weights)
             case ("folder", True):
                 previous_path = self.parentFolderStack.read_top()
                 parent_level = utils.level_of(previous_path) - 1
@@ -501,7 +497,7 @@ class ImageSlideshow:
                 if parent_path == self.parentFolderStack.read_top(2):
                     self.step_backwards()
                     return
-                self.parentFolderStack.push(parent_path, self.image_paths, self.weights)
+                self.parentFolderStack.push(parent_path, self.image_paths, self.cum_weights)
             case ("branch", False):
                 self.navigation_node = self.find_node_for_image(self.current_image_path).parent
             case ("branch", True):
@@ -514,8 +510,8 @@ class ImageSlideshow:
         if self.parentFolderStack.is_empty():
             print("Cannot step back - Stack is empty.")
             return
-        _, images, weights = self.parentFolderStack.pop()
-        self.update_slide_show(images, weights)
+        _, images, cum_weights = self.parentFolderStack.pop()
+        self.update_slide_show(images, cum_weights)
 
     def follow_branch_down(self, event=None):
         if self.subfolder_mode:
@@ -538,8 +534,8 @@ class ImageSlideshow:
         self.subfolder_mode = False
         self.parentFolderStack.clear()
         self.image_paths = self.original_image_paths[:]
-        self.weights = self.original_weights[:]
-        self.update_slide_show(self.image_paths, self.weights)
+        self.cum_weights = self.original_cum_weights[:]
+        self.update_slide_show(self.image_paths, self.cum_weights)
         self.show_image(self.image_paths[self.current_image_index])
         print("[DEBUG] Parent mode reset and modes updated.")
 

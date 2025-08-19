@@ -1,5 +1,6 @@
 import random
 from slideshow.cache.ImageCacheManager import ImageCacheManager
+from slideshow.utils.utils import weighted_choice
 
 
 class ImageProviders:
@@ -64,15 +65,15 @@ class ImageProviders:
             print("Random image provider closed unexpectedly.")
             return
 
-    def image_provider_weighted(self, image_paths, weights=None, **kwargs):
+    def image_provider_weighted(self, image_paths, cum_weights, **kwargs):
         try:
             while True:
-                yield random.choices(image_paths, weights=weights, k=1)[0]
+                yield weighted_choice(image_paths, cum_weights=cum_weights)
         except GeneratorExit:
             print("Weighted image provider closed unexpectedly.")
             return
         
-    def image_provider_folder_burst(self, image_paths, weights=None, burst_size=5, **kwargs):
+    def image_provider_folder_burst(self, image_paths, cum_weights, burst_size=5, **kwargs):
         from collections import defaultdict
         import os
 
@@ -86,7 +87,7 @@ class ImageProviders:
             while True:
                 if not burst_images:
                     # Pick a new random folder and prepare a burst
-                    random_image = random.choices(image_paths, weights=weights, k=1)[0]
+                    random_image = weighted_choice(image_paths, cum_weights=cum_weights)
                     folder = os.path.dirname(random_image)
                     images_in_folder = folder_to_images[folder]
                     images = images_in_folder[:]
