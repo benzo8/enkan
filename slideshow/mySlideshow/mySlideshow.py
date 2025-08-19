@@ -13,7 +13,7 @@ from slideshow import constants
 from slideshow.tree import Tree
 from slideshow.utils import utils
 from slideshow.utils.Defaults import resolve_mode
-from slideshow.utils.MyStack import Stack
+from slideshow.utils.myStack import Stack
 from slideshow.plugables.ImageProviders import ImageProviders
 from slideshow.tree.tree_logic import (
     build_tree,
