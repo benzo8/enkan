@@ -7,6 +7,7 @@ from slideshow.utils import utils
 
 
 class Tree:
+    PICKLE_VERSION = 2
     def __init__(self, defaults, filters):
         self.root = TreeNode("root", 0)
         self.node_lookup = {"root": self.root}
@@ -14,7 +15,24 @@ class Tree:
         self.virtual_image_lookup = {"root": self.root}
         self.defaults = defaults
         self.filters = filters
+        self._post_init_indexes()
     
+    def _post_init_indexes(self):
+        # Aliases / legacy
+        if not hasattr(self, "virtual_image_lookup"):
+            self.virtual_image_lookup = {}
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_pickle_version"] = self.PICKLE_VERSION
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._post_init_indexes()
+        # Backfill version if absent
+        if "_pickle_version" not in self.__dict__:
+            self._pickle_version = 0
 
     def rename_children(self, parent_node, new_parent_name):
         """

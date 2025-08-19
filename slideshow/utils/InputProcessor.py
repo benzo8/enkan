@@ -4,7 +4,7 @@ from typing import Dict, List
 from tqdm import tqdm
 
 from slideshow import constants
-from slideshow.tree import Tree
+from slideshow.tree.Tree import Tree
 from slideshow.utils import utils
 from slideshow.utils.Defaults import parse_mode_string
 
@@ -38,9 +38,31 @@ class InputProcessor:
                 return tree, {}, {}, [], []
         return None, image_dirs, specific_images, all_images, weights
 
+    def _load_tree_if_current(self, filename: str) -> Tree | None:
+        """
+        Attempt to load a pickled Tree; return None if version missing/outdated.
+        """
+        from slideshow.utils.utils import load_tree_from_file
+        try:
+            tree = load_tree_from_file(filename)
+        except Exception as e:
+            print(f"[tree] Failed to load '{filename}': {e}.")
+            return None
+        version_in_pickle = getattr(tree, "_pickle_version", None)
+        if version_in_pickle is None or version_in_pickle < Tree.PICKLE_VERSION:
+            tree_filename = os.path.basename(filename)
+            txt_filename = os.path.splitext(tree_filename)[0] + ".txt"
+            print(
+                f"[tree] '{tree_filename}' outdated "
+                f"(pickle_version={version_in_pickle}, required={Tree.PICKLE_VERSION}). "
+                f"Please rebuild the tree with 'slideshow --input_file {txt_filename} --outputtree'."
+            )
+            return None
+        return tree
+
     def process_entry(
         self, entry, recdepth, image_dirs, specific_images, all_images, weights
-    ):
+    ) -> Tree | None:
         """
         Process a single input entry (file, directory, or image).
         """
@@ -52,10 +74,20 @@ class InputProcessor:
             match os.path.splitext(input_filename_full)[1].lower():
                 case ".tree":
                     # Load a pre-built tree from a file
-                    from slideshow.utils.utils import load_tree_from_file
-                    print(f"Loading tree from {input_filename_full}")
-                    tree = load_tree_from_file(input_filename_full)
-                    return tree
+                    tree = self._load_tree_if_current(input_filename_full)
+                    if tree:
+                        print(f"Loaded current tree from {input_filename_full}")
+                        return tree
+                    stem = os.path.splitext(input_filename_full)[0]
+                    for ext in (".lst", ".txt"):
+                        alt = stem + ext
+                        if os.path.isfile(alt):
+                            # Reinvoke processing on the alternate file
+                            return self.process_entry(
+                                alt, recdepth, image_dirs, specific_images, all_images, weights
+                            )
+                    # If no alternate source list, just stop (nothing else to parse here)
+                    return None                
                 case ".lst":
                     with open(
                         input_filename_full, "r", buffering=65536, encoding="utf-8"

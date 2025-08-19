@@ -27,24 +27,19 @@ class TreeBuilder:
                         # Process each directory
                         self.process_directory(root, data, pbar)
 
-                # Insert proportion & mode if specified
                 if root in image_dirs:
-                    if (
-                        data.get("proportion") is not None
-                        or data.get("mode_modifier") is not None
-                    ):
-                        # If a proportion is specified, use it
-                        self.tree.append_overwrite_or_update(
-                            root,
-                            data.get("level", self.tree.calculate_level(root)),
-                            {
-                                "weight_modifier": data.get("weight_modifier", 100),
-                                "is_percentage": data.get("is_percentage", True),
-                                "proportion": data.get("proportion"),
-                                "mode_modifier": data.get("mode_modifier"),
-                                "images": [],
-                            },
-                        )
+                    # Update or overwrite the node with the provided data
+                    self.tree.append_overwrite_or_update(
+                        root,
+                        data.get("level", self.tree.calculate_level(root)),
+                        {
+                            "weight_modifier": data.get("weight_modifier", 100),
+                            "is_percentage": data.get("is_percentage", True),
+                            "proportion": data.get("proportion"),
+                            "mode_modifier": data.get("mode_modifier"),
+                            "images": [],
+                        },
+                    )
 
                 self.grafting.handle_grafting(
                     root, data.get("graft_level"), data.get("group")
