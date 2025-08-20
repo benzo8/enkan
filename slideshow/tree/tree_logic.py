@@ -1,11 +1,21 @@
-from slideshow.tree.Tree import Tree
-from slideshow.tree.TreeBuilder import TreeBuilder
-from slideshow.tree.TreeNode import TreeNode
-from slideshow.utils.Defaults import resolve_mode
+from __future__ import annotations
+
+from typing import Callable, Mapping, Optional, Sequence, Tuple, List
+
+from .Tree import Tree
+from .TreeBuilder import TreeBuilder
+from .TreeNode import TreeNode
+from slideshow.utils.Defaults import Defaults, resolve_mode
+from slideshow.utils.Filters import Filters
 from slideshow.constants import TOTAL_WEIGHT
 
 
-def build_tree(defaults, filters, image_dirs, specific_images, quiet=False) -> Tree:
+def build_tree(defaults: Defaults, 
+               filters: Filters, 
+               image_dirs: Mapping[str, dict],
+                specific_images: Optional[Mapping[str, dict]],
+                quiet: bool = False
+) -> Tree:
         tree = Tree(defaults, filters)
         builder = TreeBuilder(tree)
         builder.build_tree(image_dirs, specific_images, quiet)
@@ -31,9 +41,9 @@ def calculate_weights(tree: Tree) -> None:
     """
 
     def _process_node(
-        node: "TreeNode",
+        node: TreeNode,
         apportioned_weight: float,
-        mode_modifier: dict = None,
+        mode_modifier: Optional[dict] = None,
     ) -> None:
         """
         Recursively assigns weights to a node and its children based on the apportioned weight and mode modifiers.
@@ -65,7 +75,7 @@ def calculate_weights(tree: Tree) -> None:
             tree.defaults.mode | (node.children[0].mode_modifier or {}), child_level
         )
 
-        children = _fill_missing_proportions(
+        children: List[TreeNode] = _fill_missing_proportions(
             node.children,
             child_mode,
             slope,
@@ -75,15 +85,16 @@ def calculate_weights(tree: Tree) -> None:
         )
 
         for child in children:
-            child_weight = node.weight * (child.proportion / 100)
+            proportion = child.proportion if child.proportion is not None else 0
+            child_weight = node.weight * (proportion / 100)
             _process_node(child, child_weight, mode_modifier)
 
     def _fill_missing_proportions(
-        nodes: list[TreeNode],
+        nodes: List[TreeNode],
         mode: str,
-        slope: tuple[int, int] = (0, 0),
-        count_fn: callable = None,
-    ) -> list[TreeNode]:
+        slope: Tuple[int, int] | Sequence[int] = (0, 0),
+        count_fn: Optional[Callable[[TreeNode], int]] = None,
+    ) -> List[TreeNode]:
         """
         Assigns proportions to nodes that do not have a set proportion, according to the specified mode.
 
@@ -117,32 +128,38 @@ def calculate_weights(tree: Tree) -> None:
             for n in unset_nodes:
                 n.proportion = per_node
         elif mode == "w":
-            # Assign proportion based on count_fn and slope
-            slope_value = slope[0] if isinstance(slope, (list, tuple)) else slope
-            image_counts = [count_fn(n) for n in unset_nodes]
-            if slope_value >= 0:
-                # Flatten toward balanced as slope increases
-                exp = 1 - (slope_value / 100)
-                exp = max(0.01, exp)
-                powered = [count**exp for count in image_counts]
+            # Weighted mode requires count_fn
+            if not count_fn:
+                # Fallback: treat like balanced if count function missing
+                per_node = remaining / len(unset_nodes) if unset_nodes else 0
+                for n in unset_nodes:
+                    n.proportion = per_node
             else:
-                # Inverse weighting for negative slopes
-                exp = 1 + (slope_value / 100)  # slope -100 to 0 → exp 0 to 1
-                exp = max(0.01, exp)
-                powered = [(1 / count) ** exp for count in image_counts]
-            total_powered = sum(powered) or 1
-            for n, p in zip(unset_nodes, powered):
-                n.proportion = remaining * (p / total_powered)
+                slope_value = slope[0] if isinstance(slope, (list, tuple)) else slope
+                image_counts = [max(1, count_fn(n)) for n in unset_nodes]  # avoid zero
+                if slope_value >= 0:
+                    exp = 1 - (slope_value / 100)
+                    exp = max(0.01, exp)
+                    powered = [c ** exp for c in image_counts]
+                else:
+                    exp = 1 + (slope_value / 100)
+                    exp = max(0.01, exp)
+                    powered = [(1 / c) ** exp for c in image_counts]
+                total_powered = sum(powered) or 1
+                for n, p in zip(unset_nodes, powered):
+                    n.proportion = remaining * (p / total_powered)
 
-        # Renormalize so proportions sum to 100
-        total = sum(n.proportion for n in nodes)
-        for n in nodes:
-            n.proportion = n.proportion * 100 / total if total else 0
-
+        # Renormalize to exactly 100
+        total = sum(n.proportion for n in nodes if n.proportion is not None)
+        if total:
+            factor = 100 / total
+            for n in nodes:
+                if n.proportion is not None:
+                    n.proportion *= factor
         return nodes
 
     lowest_rung = min(tree.defaults.mode.keys())
-    starting_nodes = tree.get_nodes_at_level(lowest_rung) or [tree.root]
+    starting_nodes: List[TreeNode] = tree.get_nodes_at_level(lowest_rung) or [tree.root]
 
     mode, slope = resolve_mode(tree.defaults.mode, lowest_rung)
 
@@ -154,6 +171,9 @@ def calculate_weights(tree: Tree) -> None:
     )
 
     for node in starting_nodes:
+        if node.proportion is None:
+            # If still unset, give remaining equally (single node fallback)
+            node.proportion = 100.0
         apportioned_weight = TOTAL_WEIGHT * (node.proportion / 100)
         _process_node(node, apportioned_weight)
 
@@ -171,6 +191,8 @@ def extract_image_paths_and_weights_from_tree(
     in the node. If test_iterations is provided, the image name is used instead of the full path for testing.
 
     Args:
+        tree (Tree): The tree from which to extract image paths and weights.
+        start_node (TreeNode, optional): The node from which to start the traversal. If None, starts from the root.
         test_iterations (int, optional): If provided, use node names instead of image paths for output
             (useful for testing distributions). Defaults to None.
 
@@ -179,32 +201,22 @@ def extract_image_paths_and_weights_from_tree(
             - all_images (list of str): List of image file paths (or node names if test_iterations is set).
             - weights (list of float): List of normalized weights corresponding to each image.
     """
-    all_images = []
-    weights = []
+    all_images: List[str] = []
+    weights: List[float] = []
 
     # Helper function to recursively gather data
-    def traverse_node(node) -> None:
+    def traverse_node(node: Optional[TreeNode]) -> None:
         if not node:
             return
-
-        # Number of images in this node
-        number_of_images = len(node.images)
-        if number_of_images != 0:
+        num_images = len(node.images)
+        if num_images:
             normalised_weight = node.weight / (
-                number_of_images if node.is_percentage else node.weight_modifier
+                num_images if node.is_percentage else node.weight_modifier
             )
-
-            # Add current node's images and normalized weights
-            if test_iterations is None:
-                for img in node.images:
-                    all_images.append(img)
-                    weights.append(normalised_weight)
-            else:
-                for img in node.images:
-                    all_images.append(node.name)
-                    weights.append(normalised_weight)
-
-        # Recurse into children
+            target_value = node.name if test_iterations is not None else None
+            for img in node.images:
+                all_images.append(target_value or img)
+                weights.append(normalised_weight)
         for child in node.children:
             traverse_node(child)
 

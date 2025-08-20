@@ -55,12 +55,22 @@ class Tree:
             node.name = new_name
             self.node_lookup[new_name] = node
 
-    def append_overwrite_or_update(self, path: str, level: int, node_data: dict | None = None) -> None:
+    def create_node(self, path: str, node_data: dict | None = None) -> None:
         parent_path: str = self.find_parent_name(path)
         self.ensure_parent_exists(parent_path)
-
         node_name: str = self.convert_path_to_tree_format(path)
-        node: Optional[TreeNode] = self.find_node(node_name)
+        new_node: TreeNode = TreeNode(
+            name=node_name,
+            path=path,
+            weight_modifier=node_data["weight_modifier"],
+            is_percentage=node_data["is_percentage"],
+            proportion=node_data["proportion"],
+            mode_modifier=node_data["mode_modifier"],
+            images=node_data["images"],
+        )
+        self.add_node(new_node, self.convert_path_to_tree_format(parent_path))
+            
+    def update_node(self, node: TreeNode, node_data: dict | None = None) -> None:
         if node:
             # Overwrite core attributes
             node.weight_modifier = node_data["weight_modifier"]
@@ -71,17 +81,6 @@ class Tree:
             TODO: Fix adding images to existing virtual nodes without duplicating images in other node types
             """
             # node.images.extend(node_data["images"])
-        else:
-            new_node: TreeNode = TreeNode(
-                name=node_name,
-                path=path,
-                weight_modifier=node_data["weight_modifier"],
-                is_percentage=node_data["is_percentage"],
-                proportion=node_data["proportion"],
-                mode_modifier=node_data["mode_modifier"],
-                images=node_data["images"],
-            )
-            self.add_node(new_node, self.convert_path_to_tree_format(parent_path))
 
     def detach_node(self, node: TreeNode) -> None:
         if node.parent:

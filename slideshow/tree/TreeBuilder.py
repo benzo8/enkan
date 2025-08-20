@@ -6,6 +6,7 @@ from typing import Dict, List, Mapping, Optional
 from tqdm import tqdm
 
 import slideshow.utils.utils as utils
+from .TreeNode import TreeNode
 from .Tree import Tree
 from .Grafting import Grafting
 
@@ -62,16 +63,16 @@ class TreeBuilder:
                     continue
 
                 # Only construct branch structure if not already present
-                if not self.tree.find_node(root, lookup_dict=self.tree.path_lookup):
+                node: TreeNode | None = self.tree.find_node(root, lookup_dict=self.tree.path_lookup)
+                if not node:
                     if data.get("flat", False):
                         self.add_flat_branch(root, data, pbar)
                     else:
                         self.process_directory(root, data, pbar)
                 else:
                     # Ensure the is updated with current metadata
-                    self.tree.append_overwrite_or_update(
-                        root,
-                        data.get("level", self.tree.calculate_level(root)),
+                    self.tree.update_node(
+                        node,
                         {
                             "weight_modifier": data.get("weight_modifier", 100),
                             "is_percentage": data.get("is_percentage", True),
@@ -182,11 +183,9 @@ class TreeBuilder:
         pbar.refresh()
 
         images = collect_images(path)
-        level = data.get("level", self.tree.calculate_level(path))
 
-        self.tree.append_overwrite_or_update(
+        self.tree.create_node(
             path,
-            level,
             {
                 "weight_modifier": data.get("weight_modifier", 100),
                 "is_percentage": data.get("is_percentage", True),
@@ -212,9 +211,8 @@ class TreeBuilder:
         Create a synthetic 'images' child node under a directory that also has subdirectories.
         """
         images_path = os.path.join(path, "images")
-        self.tree.append_overwrite_or_update(
+        self.tree.create_node(
             images_path,
-            level,
             {
                 "weight_modifier": 100,
                 "is_percentage": True,
@@ -234,9 +232,8 @@ class TreeBuilder:
         """
         Create/overwrite a normal node that directly holds images.
         """
-        self.tree.append_overwrite_or_update(
+        self.tree.create_node(
             path,
-            level,
             {
                 "weight_modifier": data.get("weight_modifier", 100),
                 "is_percentage": data.get("is_percentage", True),
@@ -282,9 +279,8 @@ class TreeBuilder:
             else:
                 images_list = [img_path] * weight_modifier
 
-            self.tree.append_overwrite_or_update(
+            self.tree.create_node(
                 node_name,
-                level,
                 {
                     "weight_modifier": weight_modifier,
                     "is_percentage": is_percentage,

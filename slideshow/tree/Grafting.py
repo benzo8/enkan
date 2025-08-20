@@ -1,17 +1,10 @@
-"""Grafting logic for the Tree structure.
-
-This module contains the Grafting class which encapsulates the logic for
-relocating (grafting) a subtree within the slideshow Tree based on a target
-graft level and optional group configuration.
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 import os
 
-from slideshow.tree.Tree import Tree
-from slideshow.tree.TreeNode import TreeNode
+from .Tree import Tree
+from .TreeNode import TreeNode
 
 if TYPE_CHECKING:  # pragma: no cover
     from .Tree import Tree
