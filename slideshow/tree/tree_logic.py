@@ -183,7 +183,7 @@ def extract_image_paths_and_weights_from_tree(
     weights = []
 
     # Helper function to recursively gather data
-    def traverse_node(node):
+    def traverse_node(node) -> None:
         if not node:
             return
 

@@ -1,3 +1,7 @@
+from __future__ import annotations
+from typing import Any, List, Optional
+
+
 class TreeNode:
     __slots__ = (
         "name",
@@ -15,77 +19,62 @@ class TreeNode:
 
     def __init__(
         self,
-        name,
-        path,
-        proportion=None,
-        weight_modifier=100,
-        is_percentage=True,
-        mode_modifier=None,
-        flat=False,
-        images=None,
-        parent=None,
-    ):
-        self.name = name  # Virtual name of the node
-        self.path = path  # Path of the node in the filesystem
-        self.proportion = proportion  # Proportion of this node in the tree
-        self.weight = None  # Weight for this node
-        self.weight_modifier = weight_modifier  # Weight modifier for this node
-        self.is_percentage = (
-            is_percentage  # Boolean to indicate if the weight is a percentage
-        )
-        self.mode_modifier = mode_modifier  # Modifier for the mode of this node
-        self.flat = flat  # Boolean to indicate if this node is a flat branch
-        self.images = images if images else []  # List of images in this node
-        self.children = []  # List of child nodes (branches)
-        self.parent = parent  # Reference to the parent node
+        name: str,
+        path: str,
+        proportion: Optional[float] = None,
+        weight_modifier: int = 100,
+        is_percentage: bool = True,
+        mode_modifier: Any = None,
+        flat: bool = False,
+        images: Optional[List[str]] = None,
+        parent: Optional["TreeNode"] = None,
+    ) -> None:
+        self.name: str = name
+        self.path: str = path
+        self.proportion: Optional[float] = proportion
+        self.weight: Optional[float] = None
+        self.weight_modifier: int = weight_modifier
+        self.is_percentage: bool = is_percentage
+        self.mode_modifier: Any = mode_modifier
+        self.flat: bool = flat
+        self.images: List[str] = list(images) if images else []
+        self.children: List["TreeNode"] = []
+        self.parent: Optional["TreeNode"] = parent
 
     @property
-    def level(self):
+    def level(self) -> int:
         """
-        Dynamically compute the level of this node in the tree by traversing up to the root.
-
-        Returns:
-            int: The level of this node, with the root node at level 0.
+        Compute depth (root = 1).
         """
         current = self
         level = 1
 
         while current.parent:  # Traverse upwards until reaching the root
             level += 1
-            current = current.parent
-
+            current: TreeNode = current.parent
         return level
 
     @property
-    def siblings(self):
-        if self.parent:
-            return self.parent.children
-        return []
+    def siblings(self) -> List["TreeNode"]:
+        return self.parent.children if self.parent else []
 
-    def add_child(self, child_node):
+    def add_child(self, child_node: "TreeNode") -> None:
         child_node.parent = self
         self.children.append(child_node)
 
-    def find_node(self, name):
-        # Check if the current node is the one we're looking for
+    def find_node(self, name: str) -> Optional["TreeNode"]:
         if self.name == name:
             return self
-
-        # Recursively search in the children
         for child in self.children:
-            result = child.find_node(name)
-            if result:
-                return result
+            found = child.find_node(name)
+            if found:
+                return found
+        return None
 
-        return None  # Node not found
-
-    def get_nodes_at_level(self, target_level):
-        nodes_at_level = []
-
+    def get_nodes_at_level(self, target_level: int) -> List["TreeNode"]:
+        result: List["TreeNode"] = []
         if self.level == target_level:
-            nodes_at_level.append(self)
-
+            result.append(self)
         for child in self.children:
-            nodes_at_level.extend(child.get_nodes_at_level(target_level))
-
-        return nodes_at_level
+            result.extend(child.get_nodes_at_level(target_level))
+        return result

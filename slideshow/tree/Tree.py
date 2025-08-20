@@ -1,86 +1,68 @@
+from __future__ import annotations
+
 # ——— Standard library ———
 import os
+from typing import Any, Optional
 
 # ——— Local ———
-from slideshow.tree.TreeNode import TreeNode
+from .TreeNode import TreeNode
 from slideshow.utils import utils
+from slideshow.utils.Defaults import Defaults
+from slideshow.utils.Filters import Filters
 
 
 class Tree:
     PICKLE_VERSION = 2
-    def __init__(self, defaults, filters):
-        self.root = TreeNode("root", 0)
-        self.node_lookup = {"root": self.root}
-        self.path_lookup = {"root": self.root}
-        self.virtual_image_lookup = {"root": self.root}
-        self.defaults = defaults
-        self.filters = filters
+
+    def __init__(self, defaults: Defaults, filters: Filters) -> None:
+        # Use string path, not int
+        self.root: TreeNode = TreeNode(name="root", path="root")
+        self.node_lookup: dict[str, TreeNode] = {"root": self.root}
+        self.path_lookup: dict[str, TreeNode] = {"root": self.root}
+        self.virtual_image_lookup: dict[str, TreeNode] = {"root": self.root}
+        self.defaults: Defaults = defaults
+        self.filters: Filters = filters
         self._post_init_indexes()
-    
-    def _post_init_indexes(self):
-        # Aliases / legacy
+
+    def _post_init_indexes(self) -> None:
+        # Backward compatibility for older pickles
         if not hasattr(self, "virtual_image_lookup"):
             self.virtual_image_lookup = {}
+        # (Add future index repairs here)
 
-    def __getstate__(self):
-        state = self.__dict__.copy()
+    def __getstate__(self) -> dict[str, Any]:
+        state: dict[str, Any] = self.__dict__.copy()
         state["_pickle_version"] = self.PICKLE_VERSION
         return state
 
-    def __setstate__(self, state):
+    def __setstate__(self, state: dict[str, Any]) -> None:
         self.__dict__.update(state)
         self._post_init_indexes()
-        # Backfill version if absent
         if "_pickle_version" not in self.__dict__:
             self._pickle_version = 0
 
-    def rename_children(self, parent_node, new_parent_name):
-        """
-        Traverse the subtree of the parent node and update the names
-        of all child nodes to reflect the graft. Assumes levels are calculated dynamically.
-
-        Args:
-            parent_node (TreeNode): The grafted node whose children need updating.
-            new_parent_name (str): The new name of the parent node after grafting.
-        """
+    def rename_children(self, parent_node: TreeNode, new_parent_name: str) -> None:
         for child in parent_node.children:
-            # Calculate the new name for the child node
             child_basename = os.path.basename(child.name)
             new_name = os.path.join(new_parent_name, child_basename)
             old_name = child.name
             self.rename_node_in_lookup(old_name, new_name)
-            # Recursively update the child's subtree
             self.rename_children(child, new_name)
 
-    def rename_node_in_lookup(self: "Tree", old_name: str, new_name: str) -> None:
-        """
-        Rename a node in the tree and update node_lookup accordingly.
-
-        Args:
-            old_name (str): The current name (key) of the node in node_lookup.
-            new_name (str): The new name to assign to the node and as the key in node_lookup.
-        """
-        node = self.node_lookup.pop(old_name, None)
+    def rename_node_in_lookup(self, old_name: str, new_name: str) -> None:
+        node: Optional[TreeNode] = self.node_lookup.pop(old_name, None)
         if node is not None:
             node.name = new_name
             self.node_lookup[new_name] = node
 
-    def append_overwrite_or_update(self, path, level, node_data=None):
-        """
-        Add or update a node in the tree. If the node already exists, overwrite or update it.
-        """
-        # Convert path to match the format used in node_lookup
-        # tree_path = self.convert_path_to_tree_format(path)
-
-        # Ensure all parent nodes exist
-        parent_path = self.find_parent_name(path)
+    def append_overwrite_or_update(self, path: str, level: int, node_data: dict | None = None) -> None:
+        parent_path: str = self.find_parent_name(path)
         self.ensure_parent_exists(parent_path)
 
-        node_name = self.convert_path_to_tree_format(path)
-        parent_node_name = self.convert_path_to_tree_format(parent_path)
-        node = self.find_node(node_name)
+        node_name: str = self.convert_path_to_tree_format(path)
+        node: Optional[TreeNode] = self.find_node(node_name)
         if node:
-            # Update node data if it exists
+            # Overwrite core attributes
             node.weight_modifier = node_data["weight_modifier"]
             node.is_percentage = node_data["is_percentage"]
             node.proportion = node_data["proportion"]
@@ -90,8 +72,7 @@ class Tree:
             """
             # node.images.extend(node_data["images"])
         else:
-            # Create a new node and add it to the tree
-            new_node = TreeNode(
+            new_node: TreeNode = TreeNode(
                 name=node_name,
                 path=path,
                 weight_modifier=node_data["weight_modifier"],
@@ -100,349 +81,158 @@ class Tree:
                 mode_modifier=node_data["mode_modifier"],
                 images=node_data["images"],
             )
-            self.add_node(new_node, parent_node_name)
+            self.add_node(new_node, self.convert_path_to_tree_format(parent_path))
 
-    def detach_node(self, node):
-        """
-        Detach a node from its parent and update parent/child relationships.
-
-        Args:
-            node (TreeNode): The node to be detached.
-        """
+    def detach_node(self, node: TreeNode) -> None:
         if node.parent:
-            # Remove the node from its parent's children list
-            node.parent.children = [
-                child for child in node.parent.children if child != node
-            ]
-            # Clear the node's parent reference
+            node.parent.children = [c for c in node.parent.children if c is not node]
             node.parent = None
 
-    def add_node(self, new_node, parent_node_name):
-        """
-        Add a new node to the tree, ensuring the parent exists.
-
-        Args:
-            new_node (TreeNode): The node to be added.
-            parent_name (str): The name of the parent node.
-
-        Raises:
-            ValueError: If the parent cannot be created or added for any reason.
-        """
-        # Find the parent node
-        parent_node = self.find_node(parent_node_name)
-
-        # Add the new node to the parent
+    def add_node(self, new_node: TreeNode, parent_node_name: str) -> None:
+        parent_node: Optional[TreeNode] = self.find_node(parent_node_name)
+        if parent_node is None:
+            raise ValueError(f"Parent node '{parent_node_name}' not found.")
         parent_node.add_child(new_node)
         self.node_lookup[new_node.name] = new_node
         self.path_lookup[new_node.path] = new_node
 
-    def ensure_parent_exists(self, path):
-        """
-        Iteratively ensure all parent nodes exist from the root down to the specified parent_name.
-
-        Args:
-            path (str): The full path of the parent node to ensure exists.
-
-        Returns:
-            TreeNode: The parent node if `return_parent` is True, otherwise None.
-        """
+    def ensure_parent_exists(self, path: str) -> TreeNode:
         path_components = path.split(os.path.sep)
-        current_node_path = utils.get_drive_or_root(path_components[0])
-        current_node = self.root
+        current_node_path = utils.get_drive_or_root(path_components[0]) if path_components else ""
+        current_node: TreeNode = self.root
 
-        for component in path_components[1:]:  # Skip the "root" component
+        for component in path_components[1:]:
             next_node_path = os.path.join(current_node_path, component)
             next_node_name = self.convert_path_to_tree_format(next_node_path)
-            if next_node_name not in self.node_lookup:
-                # Create the next node if it doesn't exist
-                new_node = TreeNode(name=next_node_name, path=next_node_path)
-                current_node.add_child(new_node)
-                if next_node_name not in self.node_lookup:
-                    self.node_lookup[next_node_name] = new_node
-                if next_node_path not in self.path_lookup:
-                    self.path_lookup[next_node_path] = new_node
-                current_node = new_node
-            else:
-                # Move to the existing node
-                current_node = self.node_lookup[next_node_name]
-
+            node = self.node_lookup.get(next_node_name)
+            if node is None:
+                node = TreeNode(name=next_node_name, path=next_node_path)
+                current_node.add_child(node)
+                self.node_lookup[next_node_name] = node
+                self.path_lookup[next_node_path] = node
+            current_node = node
             current_node_path = next_node_path
-
         return current_node
 
-    def convert_path_to_tree_format(self: "Tree", path: str) -> str:
-        """
-        Convert the path to match the format used in node_lookup (e.g., prefixed with 'root').
-        Removes the drive letter and adds 'root' as the base.
-        """
-        # Remove the drive letter (e.g., "I:") from the path
-        path_without_drive = os.path.splitdrive(path)[1]
+    def convert_path_to_tree_format(self, path: str) -> str:
+        path_without_drive: str = os.path.splitdrive(path)[1]
+        components = [c for c in path_without_drive.strip(os.path.sep).split(os.path.sep) if c]
+        return os.path.join("root", *components).lower()
 
-        # Split the path into components and prepend "root"
-        path_components = ["root"] + path_without_drive.strip(os.path.sep).split(
-            os.path.sep
-        )
-
-        # Join the components back into a single path
-        return os.path.join(*path_components).lower()
-
-    def set_path_to_level(self, path, level, group=None):
-        """
-        Adjust the path to the specified level. If the level is less than the current level, truncate the path.
-        If the level is greater than the current level, extend the path with placeholder folders.
-
-        Args:
-            path (str): The original path.
-            level (int): The target level for the path.
-
-        Returns:
-            str: The adjusted path.
-        """
+    def set_path_to_level(self, path: str, level: int, group: str | None = None) -> str:
         current_level = self.calculate_level(path)
         path_components = path.split(os.path.sep)
-
-        # Normalize the drive component
-        if len(path_components) > 0 and path_components[0].endswith(":"):
+        if path_components and path_components[0].endswith(":"):
             path_components[0] += os.path.sep
-        # Remove any empty components
+
         if group:
             extension_root = group
             for i in range(1, len(path_components) - 1):
                 path_components[i] = f"{extension_root}_{i}"
-
         else:
-            path_components = list(filter(lambda x: x != "", path_components))
+            path_components = [c for c in path_components if c]
             extension_root = "unamed"
 
         if level <= current_level:
-            # Truncate the path
-            truncated_components = (
-                path_components[: level - 1]
-                + path_components[len(path_components) - 1 :]
-            )
-            return os.path.join(*truncated_components)
-
-        elif level > current_level:
-            # Extend the path with placeholders
-            extension = [
-                f"{extension_root}_{i - 1}" for i in range(current_level, level)
-            ]
-            extended_components = (
-                path_components[:-1] + extension + [path_components[-1]]
-            )
-            return os.path.join(*extended_components)
-
-        # No adjustment needed
+            truncated = path_components[: level - 1] + path_components[-1:]
+            return os.path.join(*truncated)
+        if level > current_level:
+            extension = [f"{extension_root}_{i - 1}" for i in range(current_level, level)]
+            extended = path_components[:-1] + extension + [path_components[-1]]
+            return os.path.join(*extended)
         return path
 
-    def find_parent_name(self: "Tree", node_name: str) -> str:
-        """
-        Return the parent name (path) of a given node name.
-
-        This function uses os.path.dirname to extract the parent path from the given node name.
-        It is used to determine the parent node in the tree structure.
-
-        Args:
-            node_name (str): The name (path) of the node whose parent is to be found.
-
-        Returns:
-            str: The parent name (path) of the given node.
-        """
+    def find_parent_name(self, node_name: str) -> str:
         return os.path.dirname(node_name)
 
-    def find_node(self: "Tree", name: str, lookup_dict: dict = None) -> "TreeNode":
-        """
-        Retrieve a node from the tree by its name using the specified lookup dictionary.
-
-        Args:
-            name (str): The name (or path) of the node to find.
-            lookup_dict (dict): The dictionary to search (defaults to node_lookup).
-
-        Returns:
-            TreeNode: The node with the specified name, or None if not found.
-        """
+    def find_node(self, name: str, lookup_dict: dict[str, TreeNode] | None = None) -> TreeNode | None:
         if lookup_dict is None:
             lookup_dict = self.node_lookup
         return lookup_dict.get(name)
 
-    def copy_subtree_as_tree(self, start_node):
-        """
-        Return a new Tree that is a deep copy of the subtree starting at the given node.
-        The root of the new Tree will be a copy of the supplied node and its descendants.
-        """
-        # start_node = self.find_node(start_node_name)
-        # if not start_node:
-        #     raise ValueError(f"Node '{start_node_name}' not found in the tree.")
-
-        # Recursive function to copy nodes
-        def deep_copy_node(node):
+    def copy_subtree_as_tree(self, start_node: TreeNode) -> Tree:
+        def deep_copy(node: TreeNode) -> TreeNode:
             new_node = TreeNode(
                 name=node.name,
                 path=node.path,
-                weight_modifier=getattr(node, 'weight_modifier', None),
-                is_percentage=getattr(node, 'is_percentage', None),
-                proportion=getattr(node, 'proportion', None),
-                mode_modifier=getattr(node, 'mode_modifier', None),
-                images=list(node.images) if hasattr(node, 'images') else [],
+                weight_modifier=getattr(node, "weight_modifier", None),
+                is_percentage=getattr(node, "is_percentage", None),
+                proportion=getattr(node, "proportion", None),
+                mode_modifier=getattr(node, "mode_modifier", None),
+                images=list(getattr(node, "images", [])),
             )
-            # Copy children recursively
             for child in node.children:
-                child_copy = deep_copy_node(child)
-                new_node.add_child(child_copy)
+                new_node.add_child(deep_copy(child))
             return new_node
 
-        # Create the new Tree
         new_tree = Tree(self.defaults, self.filters)
-        new_tree.root = deep_copy_node(start_node)
-        # Update node_lookup and path_lookup for the subtree
-        def update_lookups(node):
+        new_tree.root = deep_copy(start_node)
+
+        def index(node: TreeNode):
             new_tree.node_lookup[node.name] = node
             new_tree.path_lookup[node.path] = node
-            for child in node.children:
-                update_lookups(child)
-        update_lookups(new_tree.root)
+            for c in node.children:
+                index(c)
+
+        index(new_tree.root)
         return new_tree
 
-    def get_nodes_at_level(self: "Tree", target_level: int) -> list["TreeNode"]:
-        """
-        Retrieve all nodes in the tree at the specified level.
+    def get_nodes_at_level(self, target_level: int) -> list[TreeNode]:
+        result: list[TreeNode] = []
 
-        This function traverses the tree starting from the root node and collects all nodes
-        whose level matches the given target_level. Traversal stops at nodes that match the
-        target level, so their children are not included.
-
-        Args:
-            target_level (int): The level (depth) in the tree to collect nodes from.
-                The root node is typically level 1.
-
-        Returns:
-            list[TreeNode]: A list of TreeNode objects at the specified level.
-        """
-        nodes_at_level = []
-
-        def traverse(node):
+        def traverse(node: TreeNode):
             if node.level == target_level:
-                nodes_at_level.append(node)
-                # Skip traversing children since this node is at the target level
+                result.append(node)
                 return
-            for child in node.children:
-                traverse(child)
+            for c in node.children:
+                traverse(c)
 
         traverse(self.root)
-        return nodes_at_level
+        return result
 
-    def calculate_level(self: "Tree", path: str) -> int:
-        """
-        Calculate the level (depth) of a given filesystem path.
+    def calculate_level(self, path: str) -> int:
+        return len([c for c in path.split(os.path.sep) if c])
 
-        The level is determined by splitting the path using the OS-specific path separator
-        and counting the number of non-empty components. This is used to determine the
-        depth of a node in the tree structure.
-
-        Args:
-            path (str): The filesystem path to evaluate.
-
-        Returns:
-            int: The level (depth) of the path, where the root is level 1.
-        """
-        return len(
-            list(filter(None, path.split(os.path.sep)))
-        )  # Calculate level based on path depth
-
-    def set_proportion(
-        self: "Tree",
-        group: str,
-        current_node: "TreeNode",
-    ) -> int | None:
-        """
-        Determine the effective graft level for a group and node, and set the group's proportion
-        (if present) on the node at that level along the current_node's path.
-
-        Returns group_graft_level if it exists, otherwise the lowest of:
-        - the group's mode_modifier keys (if any)
-        - the lowest graft_level among the node's children (if any child has it set)
-
-        If group_config has a 'proportion', it is set on the node at the effective graft level.
-
-        Args:
-            group (str): The group name to look up in defaults.groups.
-            current_node (TreeNode): The node whose children may have graft_level set.
-
-        Returns:
-            int or None: The effective graft level, or None if not found.
-        """
-        group_config = self.defaults.groups.get(group, {})
-        if group_config is None:
+    def set_proportion(self, group: str, current_node: TreeNode) -> int | None:
+        group_config: dict[str, Any] | None = self.defaults.groups.get(group)
+        if not group_config:
             return None
-        proportion = group_config.get("proportion", None)
-        if proportion is not None:
-            group_graft_level = group_config.get("graft_level")
-            if group_graft_level is not None:
-                effective_level = group_graft_level
-            else:
-                # Get lowest mode_modifier key if present
-                mode_modifiers = group_config.get("mode_modifier")
-                mode_modifier_level = None
-                if mode_modifiers:
-                    mode_modifier_level = min(mode_modifiers.keys())
+        proportion = group_config.get("proportion")
+        if proportion is None:
+            return None
 
-                # Get lowest graft_level among children if present
-                child_graft_levels = [
-                    getattr(child, "graft_level", None)
-                    for child in getattr(current_node, "children", [])
-                    if getattr(child, "graft_level", None) is not None
-                ]
-                child_graft_level = (
-                    min(child_graft_levels) if child_graft_levels else None
-                )
+        group_graft_level = group_config.get("graft_level")
+        if group_graft_level is not None:
+            effective_level = group_graft_level
+        else:
+            mode_modifiers = group_config.get("mode_modifier")
+            mode_modifier_level = min(mode_modifiers.keys()) if mode_modifiers else None
+            child_levels = [
+                getattr(child, "graft_level", None)
+                for child in current_node.children
+                if getattr(child, "graft_level", None) is not None
+            ]
+            child_level = min(child_levels) if child_levels else None
+            candidates = [lvl for lvl in (mode_modifier_level, child_level) if lvl is not None]
+            effective_level = min(candidates) if candidates else None
 
-                # Return the lowest of mode_modifier_level and child_graft_level (if either exists)
-                candidates = [
-                    lvl
-                    for lvl in [mode_modifier_level, child_graft_level]
-                    if lvl is not None
-                ]
-                effective_level = min(candidates) if candidates else None
+        if effective_level is None:
+            return None
 
-            # Set the proportion if present
+        node = current_node
+        while node and node.level > effective_level:
+            node = node.parent
+        if node and node.level == effective_level:
+            node.proportion = proportion
+        return effective_level
 
-            if proportion is not None and effective_level is not None:
-                # Traverse up from current_node to the node at effective_level
-                node = current_node
-                while node is not None and node.level > effective_level:
-                    node = node.parent
-                if node is not None and node.level == effective_level:
-                    node.proportion = proportion
-
-        return
-
-    def count_branches(self, node: "TreeNode") -> tuple[int, int]:
-        """
-        Recursively count the number of branches and images in the tree starting from the given node.
-
-        Args:
-            node (TreeNode): The current node to start counting from.
-
-        Returns:
-            tuple[int, int]: A tuple (branch_count, image_count) where:
-                - branch_count (int): The total number of branches (nodes with images) in the subtree.
-                - image_count (int): The total number of images in the subtree.
-        """
+    def count_branches(self, node: TreeNode) -> tuple[int, int]:
         if not node:
             return 0, 0
-
-        branch_count = 0
-        image_count = 0
-
-        # Count current node as a branch if it has images
-        if node.images:
-            branch_count = 1
-            image_count = len(node.images)
-
-        # Recursively count branches and images in child nodes
+        branches = 1 if node.images else 0
+        images = len(node.images) if node.images else 0
         for child in node.children:
-            child_branch_count, child_image_count = self.count_branches(child)
-            branch_count += child_branch_count
-            image_count += child_image_count
-
-        return branch_count, image_count
+            b, i = self.count_branches(child)
+            branches += b
+            images += i
+        return branches, images

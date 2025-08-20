@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import os
 
 from slideshow.tree.Tree import Tree
+from slideshow.tree.TreeNode import TreeNode
 
 if TYPE_CHECKING:  # pragma: no cover
     from .Tree import Tree
@@ -46,20 +47,19 @@ class Grafting:
         if not graft_level:
             return
 
-        current_node_name = t.convert_path_to_tree_format(root)
-        current_node = t.find_node(current_node_name)
+        current_node: TreeNode | None = t.find_node(root, lookup_dict=t.path_lookup)
         if not current_node:
             print(
-                f"Warning: Node '{current_node_name}' not found for grafting. Skipping."
+                f"Warning: Node '{root}' not found for grafting. Skipping."
             )
             return
-        current_node_parent = current_node.parent
+        current_node_parent: TreeNode | None = current_node.parent
 
-        levelled_name = t.convert_path_to_tree_format(
+        levelled_name: str = t.convert_path_to_tree_format(
             t.set_path_to_level(root, graft_level, group)
         )
-        parent_path = os.path.dirname(levelled_name)
-        parent_node = t.ensure_parent_exists(parent_path)
+        parent_path: str = os.path.dirname(levelled_name)
+        parent_node: TreeNode = t.ensure_parent_exists(parent_path)
 
         # Detach from the old parent and graft to the new location
         t.detach_node(current_node)
