@@ -168,18 +168,18 @@ class InputProcessor:
                     image_dirs[path] = modifier_list
 
     def parse_input_line(self, line, recdepth):
-        modifier_pattern = re.compile(r"(\[.*?\])")
-        weight_modifier_pattern = re.compile(r"^\d+%?$")
-        proportion_pattern = re.compile(r"^%\d+%?$")
-        mode_pattern = constants.CX_PATTERN
-        graft_pattern = re.compile(r"^g\d+$", re.IGNORECASE)
-        group_pattern = re.compile(r"^>.*", re.IGNORECASE)
-        flat_pattern = re.compile(r"^f$", re.IGNORECASE)
-        video_pattern = re.compile(r"^v$", re.IGNORECASE)
-        no_video_pattern = re.compile(r"^nv$", re.IGNORECASE)
-        mute_pattern = re.compile(r"^m$", re.IGNORECASE)
-        no_mute_pattern = re.compile(r"^nm$", re.IGNORECASE)
-        dont_recurse_pattern = re.compile(r"^/$", re.IGNORECASE)
+        modifier_pattern: re.Pattern[str] = re.compile(r"(\[.*?\])")
+        weight_modifier_pattern: re.Pattern[str] = re.compile(r"^\d+%?$")
+        proportion_pattern: re.Pattern[str] = re.compile(r"^%\d+%?$")
+        mode_pattern: re.Pattern[str] = constants.CX_PATTERN
+        graft_pattern: re.Pattern[str] = re.compile(r"^g\d+$", re.IGNORECASE)
+        group_pattern: re.Pattern[str] = re.compile(r"^>.*", re.IGNORECASE)
+        flat_pattern: re.Pattern[str] = re.compile(r"^f$", re.IGNORECASE)
+        video_pattern: re.Pattern[str] = re.compile(r"^v$", re.IGNORECASE)
+        no_video_pattern: re.Pattern[str] = re.compile(r"^nv$", re.IGNORECASE)
+        mute_pattern: re.Pattern[str] = re.compile(r"^m$", re.IGNORECASE)
+        no_mute_pattern: re.Pattern[str] = re.compile(r"^nm$", re.IGNORECASE)
+        dont_recurse_pattern: re.Pattern[str] = re.compile(r"^/$", re.IGNORECASE)
 
         if line.startswith("[r]"):
             self.defaults.set_global_defaults(is_random=True)
@@ -215,9 +215,9 @@ class InputProcessor:
         mute = None
 
         # Extract all modifiers
-        modifiers = modifier_pattern.findall(line)
+        modifiers: List[os.Any] = modifier_pattern.findall(line)
         # Remove all modifiers from the line to get the path
-        path = modifier_pattern.sub("", line).strip()
+        path: str = modifier_pattern.sub("", line).strip()
 
         # Process each modifier
         for mod in modifiers:

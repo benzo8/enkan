@@ -1,9 +1,11 @@
 import threading
 import time
 
-from slideshow.cache.LRUCache import LRUCache
-from slideshow.cache.PreloadQueue import PreloadQueue
-from slideshow.cache.HistoryManager import HistoryManager
+from PIL import Image
+
+from .LRUCache import LRUCache
+from .PreloadQueue import PreloadQueue
+from .HistoryManager import HistoryManager
 from slideshow.plugables.ImageLoaders import ImageLoaders
 from slideshow.utils.utils import is_videofile
 from slideshow import constants
@@ -47,11 +49,11 @@ class ImageCacheManager:
     # Preload
     # -----------------------
 
-    def _preload_refill(self):
+    def _preload_refill(self) -> None:
         """Fill preload queue fully."""
         while len(self.preload_queue) < self.preload_queue.max_size:
             try:
-                image_path = next(self.image_provider)
+                image_path: str = next(self.image_provider)
             except ValueError as e:
                 if "generator already executing" in str(e):
                     self._log("Generator busy, waiting before retry...")
@@ -65,7 +67,7 @@ class ImageCacheManager:
                 break
             if image_path in self.preload_queue:
                 continue
-            image_obj = self._load_image(image_path)
+            image_obj: Image.Image = self._load_image(image_path)
             self.preload_queue.push(image_path, image_obj)
             self._log(f"Preloaded: {image_path}")
 
@@ -85,13 +87,13 @@ class ImageCacheManager:
     # Image Loading
     # -----------------------
 
-    def _load_image(self, image_path):
+    def _load_image(self, image_path: str) -> Image.Image | None:
         if is_videofile(image_path):
             return None
-        image_obj = self.lru_cache.get(image_path)
+        image_obj: Image.Image = self.lru_cache.get(image_path)
         if image_obj is None:
             self._log(f"Loading from Disk: {image_path}")
-            image_obj = self.image_loader.load_image(image_path)
+            image_obj: Image.Image = self.image_loader.load_image(image_path)
             self.lru_cache.put(image_path, image_obj)
         else:
             self._log(f"Loaded from LRUCache: {image_path}")
@@ -101,14 +103,18 @@ class ImageCacheManager:
     # Public API
     # -----------------------
 
-    def get_next(self, image_path=None, record_history=True):
+    def get_next(
+        self, 
+        image_path: str = None, 
+        record_history: bool = True
+    ) -> tuple[str | None, Image.Image | None]:
         """
         Retrieve the next (image_path, image_obj).
         If image_path is None, pop from PreloadQueue.
         Updates history if record_history=True.
         """
-        image_obj = None
-        source = None
+        image_obj: Image.Image = None
+        source: str = None
 
         # Step 1: Pop from preload if no explicit path is given
         if image_path is None:

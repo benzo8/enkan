@@ -10,28 +10,39 @@ import vlc
 
 # ——— Local ———
 from slideshow import constants
+from slideshow.cache.ImageCacheManager import ImageCacheManager
 from slideshow.tree import Tree
+from slideshow.tree.TreeNode import TreeNode
 from slideshow.utils import utils
-from slideshow.utils.Defaults import resolve_mode
+from slideshow.utils.Defaults import Defaults, resolve_mode
+from slideshow.utils.Filters import Filters
 from slideshow.utils.myStack import Stack
 from slideshow.plugables.ImageProviders import ImageProviders
 from slideshow.tree.tree_logic import (
     build_tree,
     extract_image_paths_and_weights_from_tree,
 )
-from slideshow.mySlideshow.ZoomPan import ZoomPan  # <-- added import
+from .ZoomPan import ZoomPan
 
 class ImageSlideshow:
     def __init__(
-        self, root, tree: Tree, image_paths, cum_weights, defaults, filters, quiet, interval
+        self, 
+        root: TreeNode, 
+        tree: Tree, 
+        image_paths: list, 
+        cum_weights: list, 
+        defaults: Defaults, 
+        filters: Filters, 
+        quiet: bool,
+        interval: int | float | None = None
     ) -> None:
-        self.root = root
-        self.original_tree = tree
-        self.image_paths = image_paths
-        self.cum_weights = cum_weights
-        self.original_cum_weights = cum_weights
-        self.original_image_paths = image_paths
-        self.number_of_images = len(image_paths)
+        self.root: TreeNode = root
+        self.original_tree: Tree = tree
+        self.image_paths: list = image_paths
+        self.cum_weights: list = cum_weights
+        self.original_cum_weights: list = cum_weights
+        self.original_image_paths: list = image_paths
+        self.number_of_images: int = len(image_paths)
         self.current_image_index = 0
         self.subFolderStack = Stack(1)
         self.parentFolderStack = Stack(constants.PARENT_STACK_MAX)
@@ -41,16 +52,16 @@ class ImageSlideshow:
         self.navigation_node = None
         self.show_filename = False
 
-        self.screen_width = root.winfo_screenwidth()
-        self.screen_height = root.winfo_screenheight()
+        self.screen_width: int = root.winfo_screenwidth()
+        self.screen_height: int = root.winfo_screenheight()
 
-        self.defaults = defaults
-        self.filters = filters
-        self.video_muted = self.defaults.mute
-        self.quiet = quiet
-        self.interval = interval
+        self.defaults: Defaults = defaults
+        self.filters: Filters = filters
+        self.video_muted: bool = self.defaults.mute
+        self.quiet: bool = quiet
+        self.interval: int | float | None = interval
 
-        self.rotation_angle = 0
+        self.rotation_angle: int | float = 0
 
         self.root.configure(background="black")  # Set root background to black
         self.label = tk.Label(root, bg="black")  # Set label background to black
@@ -121,15 +132,19 @@ class ImageSlideshow:
             self._schedule_next_image()
             self.auto_advance_running = True
 
-    def _reset_zoom(self, event=None):
+    def _reset_zoom(self, event=None) -> None:
         self.zoompan.reset_view()
 
-    def update_slide_show(self, image_paths, cum_weights):
+    def update_slide_show(
+        self, 
+        image_paths: list, 
+        cum_weights: list
+    ) -> None:
         """Updates the slideshow with the new set of images and weights."""
         self.image_paths = image_paths
         self.cum_weights = cum_weights
         self.current_image_index = self.safe_current_image_index(image_paths)
-        self.manager = self.providers.reset_manager(
+        self.manager: ImageCacheManager = self.providers.reset_manager(
             image_paths=image_paths,
             provider_name=self.providers.get_current_provider_name(),
             cum_weights=self.cum_weights,
@@ -137,7 +152,11 @@ class ImageSlideshow:
         )
         self.show_image(self.image_paths[self.current_image_index])
 
-    def show_image(self, image_path=None, record_history=True):
+    def show_image(
+        self, 
+        image_path: str = None, 
+        record_history: bool = True
+    ) -> None:
         # Stop existing video playback and clean up resources
         if hasattr(self, "video_player") and self.video_player:
             self.video_player.stop()
@@ -201,7 +220,7 @@ class ImageSlideshow:
         self.mode_label.tkraise()
         self.update_filename_display()
 
-    def next_image(self, event=None):
+    def next_image(self, event=None) -> None:
         if self.rotation_angle != 0:
             self.rotation_angle = 0
         self.show_image()
@@ -209,10 +228,14 @@ class ImageSlideshow:
 
 # --- Utility Methods ---
 
-    def set_provider(self, provider_name, **provider_kwargs):
+    def set_provider(
+        self, 
+        provider_name: str, 
+        **provider_kwargs
+    ) -> None:
         # Easily switch to any provider by name/key
-        self.current_provider = provider_name
-        self.manager = self.providers.select_manager(
+        self.current_provider: str = provider_name
+        self.manager: ImageCacheManager = self.providers.select_manager(
             image_paths=self.image_paths,
             provider_name=provider_name,
             debug=self.defaults.debug,
@@ -221,20 +244,26 @@ class ImageSlideshow:
         )
         self.update_filename_display()
 
-    def find_node_for_image(self, image_path):
+    def find_node_for_image(
+        self, 
+        image_path: str
+    ) -> TreeNode:
         # First: specific image mapping
-        node = self.original_tree.virtual_image_lookup.get(image_path)
+        node: TreeNode = self.original_tree.virtual_image_lookup.get(image_path)
         if node:
             return node
         # Fallback: directory-based
         return self.original_tree.find_node(os.path.dirname(image_path), self.original_tree.path_lookup)
     
-    def safe_current_image_index(self, image_paths):
-        number_of_images = len(image_paths)
+    def safe_current_image_index(
+        self, 
+        image_paths: list
+    ) -> int:
+        number_of_images: int = len(image_paths)
         try:
-            current_image_index = self.image_paths.index(self.current_image_path)
+            current_image_index: int = self.image_paths.index(self.current_image_path)
         except ValueError:
-            current_image_index = random.randint(0, number_of_images - 1)
+            current_image_index: int = random.randint(0, number_of_images - 1)
 
         return current_image_index
 
