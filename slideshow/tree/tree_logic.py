@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, Mapping, Optional, Sequence, Tuple, List
+from typing import Callable, Literal, Mapping, Optional, Sequence, Tuple, List
 
 from .Tree import Tree
 from .TreeBuilder import TreeBuilder
@@ -10,20 +10,22 @@ from slideshow.utils.Filters import Filters
 from slideshow.constants import TOTAL_WEIGHT
 
 
-def build_tree(defaults: Defaults, 
-               filters: Filters, 
-               image_dirs: Mapping[str, dict],
-                specific_images: Optional[Mapping[str, dict]],
-                quiet: bool = False
+def build_tree(
+    defaults: Defaults,
+    filters: Filters,
+    image_dirs: Mapping[str, dict],
+    specific_images: Optional[Mapping[str, dict]],
+    quiet: bool = False,
 ) -> Tree:
-        tree = Tree(defaults, filters)
-        builder = TreeBuilder(tree)
-        builder.build_tree(image_dirs, specific_images, quiet)
-        _, num_images = tree.count_branches(tree.root)
-        if num_images == 0:
-            raise ValueError("No images found in the provided input files.")
-        calculate_weights(tree)
-        return tree
+    tree = Tree(defaults, filters)
+    builder = TreeBuilder(tree)
+    builder.build_tree(image_dirs, specific_images, quiet)
+    _, num_images = tree.count_branches(tree.root)
+    if num_images == 0:
+        raise ValueError("No images found in the provided input files.")
+    calculate_weights(tree)
+    return tree
+
 
 def calculate_weights(tree: Tree) -> None:
     """
@@ -124,7 +126,7 @@ def calculate_weights(tree: Tree) -> None:
 
         if mode == "b":
             # Assign equal share of remaining proportion to each unset node
-            per_node = remaining / len(unset_nodes)
+            per_node: float = remaining / len(unset_nodes)
             for n in unset_nodes:
                 n.proportion = per_node
         elif mode == "w":
@@ -135,30 +137,30 @@ def calculate_weights(tree: Tree) -> None:
                 for n in unset_nodes:
                     n.proportion = per_node
             else:
-                slope_value = slope[0] if isinstance(slope, (list, tuple)) else slope
-                image_counts = [max(1, count_fn(n)) for n in unset_nodes]  # avoid zero
+                slope_value: int | Sequence[int] = slope[0] if isinstance(slope, (list, tuple)) else slope
+                image_counts: List[int] = [max(1, count_fn(n)) for n in unset_nodes]  # avoid zero
                 if slope_value >= 0:
                     exp = 1 - (slope_value / 100)
-                    exp = max(0.01, exp)
-                    powered = [c ** exp for c in image_counts]
+                    exp: float = max(0.01, exp)
+                    powered: List[int] = [c**exp for c in image_counts]
                 else:
                     exp = 1 + (slope_value / 100)
                     exp = max(0.01, exp)
                     powered = [(1 / c) ** exp for c in image_counts]
-                total_powered = sum(powered) or 1
+                total_powered: int = sum(powered) or 1
                 for n, p in zip(unset_nodes, powered):
                     n.proportion = remaining * (p / total_powered)
 
         # Renormalize to exactly 100
-        total = sum(n.proportion for n in nodes if n.proportion is not None)
+        total: float | Literal[0] = sum(n.proportion for n in nodes if n.proportion is not None)
         if total:
-            factor = 100 / total
+            factor: float = 100 / total
             for n in nodes:
                 if n.proportion is not None:
                     n.proportion *= factor
         return nodes
 
-    lowest_rung = min(tree.defaults.mode.keys())
+    lowest_rung: int = min(tree.defaults.mode.keys())
     starting_nodes: List[TreeNode] = tree.get_nodes_at_level(lowest_rung) or [tree.root]
 
     mode, slope = resolve_mode(tree.defaults.mode, lowest_rung)
@@ -179,9 +181,7 @@ def calculate_weights(tree: Tree) -> None:
 
 
 def extract_image_paths_and_weights_from_tree(
-    tree: Tree, 
-    start_node: TreeNode = None,
-    test_iterations: int = None
+    tree: Tree, start_node: TreeNode = None, test_iterations: int = None
 ) -> tuple[list[str], list[float]]:
     """
     Recursively extract all image file paths and their associated normalized weights from the tree.

@@ -12,6 +12,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
+
 class Grafting:
     """Encapsulates subtree grafting logic for a Tree instance.
 
@@ -44,9 +45,7 @@ class Grafting:
 
         current_node: TreeNode | None = t.find_node(root, lookup_dict=t.path_lookup)
         if not current_node:
-            logger.debug(
-                "Warning: Node '%s' not found for grafting. Skipping.", root
-            )
+            logger.debug("Warning: Node '%s' not found for grafting. Skipping.", root)
             return
         current_node_parent: TreeNode | None = current_node.parent
 

@@ -13,6 +13,7 @@ from .Grafting import Grafting
 ImageDirConfig = Dict[str, object]
 SpecificImagesConfig = Dict[str, Dict[str, object]]
 
+
 class TreeBuilder:
     def __init__(self, tree: Tree) -> None:
         """
@@ -63,7 +64,9 @@ class TreeBuilder:
                     continue
 
                 # Only construct branch structure if not already present
-                node: TreeNode | None = self.tree.find_node(root, lookup_dict=self.tree.path_lookup)
+                node: TreeNode | None = self.tree.find_node(
+                    root, lookup_dict=self.tree.path_lookup
+                )
                 if not node:
                     if data.get("flat", False):
                         self.add_flat_branch(root, data, pbar)
