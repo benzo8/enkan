@@ -24,14 +24,22 @@
 #
 # -----------------------------------------------------------------------------
 
+import logging
 from slideshow.utils.argparse_setup import get_arg_parser
+from slideshow.utils.logging import configure_logging
 from slideshow.main_logic import main_with_args
 
 def main() -> None:
     """Console script / module entry point."""
     args = get_arg_parser().parse_args()
-    main_with_args(args)
-
+    configure_logging(debug=getattr(args, "debug", False), quiet=getattr(args, "quiet", False))
+    try:
+        main_with_args(args)
+    except Exception as e:
+        logging.getLogger("slideshow").error("Fatal: %s", e)
+        # No traceback shown unless debug enabled
+        if getattr(args, "debug", False):
+            raise
 
 if __name__ == "__main__":
     main()

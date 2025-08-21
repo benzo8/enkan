@@ -1,6 +1,10 @@
-from PIL import Image
+from __future__ import annotations
+from typing import Callable, Optional
 
-from typing import Callable, Any
+import logging
+from PIL import Image, UnidentifiedImageError
+
+logger: logging.Logger = logging.getLogger("slideshow.imageloaders")
 
 class ImageLoaders:
     def __init__(self):
@@ -16,23 +20,39 @@ class ImageLoaders:
         self.loaders[name] = func
         
     def load_image(
-        self, 
-        image_path: str, 
-        loader_name: str = "disk", 
+        self,
+        image_path: str,
+        loader_name: str = "disk",
+        suppress_errors: bool = True,
         **kwargs
-    ) -> Image.Image:
-        loader_func: Callable[..., Any] | None = self.loaders.get(loader_name)
+    ) -> Optional[Image.Image]:
+        loader_func: Callable[..., Image.Image | None] | None = self.loaders.get(loader_name)
         if not loader_func:
+            if suppress_errors:
+                logger.warning("No such loader '%s'", loader_name)
+                return None
             raise ValueError(f"No such loader: {loader_name}")
-        
-        image: Image.Image = loader_func(image_path, **kwargs)
-        return image
+
+        try:
+            return loader_func(image_path, **kwargs)
+        except Exception as e:
+            # Never emit traceback unless higher-level debug wants it
+            if suppress_errors:
+                logger.info("Image load failed: %s (%s)", image_path, e)
+                return None
+            raise
 
     def load_from_disk(
         self, 
         path: str
-    ) -> Image.Image:
-        with Image.open(path) as img:
-            img_copy = img.copy()
-        return img_copy
-        
+    ) -> Image.Image | None:
+        try:
+            with Image.open(path) as img:
+                return img.copy()
+        except (FileNotFoundError, PermissionError) as e:
+            logger.info("File access issue: %s (%s)", path, e)
+        except UnidentifiedImageError as e:
+            logger.info("Unidentified/corrupt image: %s (%s)", path, e)
+        except OSError as e:
+            logger.info("PIL OSError on %s (%s)", path, e)
+        return None

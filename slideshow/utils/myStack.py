@@ -1,3 +1,7 @@
+import logging
+
+logger: logging.Logger = logging.getLogger("__name__")   
+
 class Stack:
     def __init__(self, max_size=None):
         """
@@ -21,7 +25,7 @@ class Stack:
         if self.max_size is None or len(self.stack) < self.max_size:
             self.stack.append((root, listA, listB))
         else:
-            print("Stack is full. Cannot push more items.")
+            logger.debug("Stack is full. Cannot push more items.")
 
     def pop(self):
         """
@@ -33,7 +37,7 @@ class Stack:
         if self.stack:
             return self.stack.pop()
         else:
-            print("Stack is empty. Cannot pop items.")
+            logger.debug("Stack is empty. Cannot pop items.")
             return None, None, None  # Return empty lists if the stack is empty
 
     def read_top(self, index=1):

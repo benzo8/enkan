@@ -1,12 +1,15 @@
 import os
 import re
 from typing import Dict, List
+import logging
 from tqdm import tqdm
 
 from slideshow import constants
 from slideshow.tree.Tree import Tree
 from slideshow.utils import utils
 from slideshow.utils.Defaults import parse_mode_string
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 class InputProcessor:
     def __init__(self, defaults, filters, quiet=False):
@@ -46,16 +49,19 @@ class InputProcessor:
         try:
             tree = load_tree_from_file(filename)
         except Exception as e:
-            print(f"[tree] Failed to load '{filename}': {e}.")
+            logger.warning("[tree] Failed to load '%s': %s.", filename, e)
             return None
         version_in_pickle = getattr(tree, "_pickle_version", None)
         if version_in_pickle is None or version_in_pickle < Tree.PICKLE_VERSION:
             tree_filename = os.path.basename(filename)
             txt_filename = os.path.splitext(tree_filename)[0] + ".txt"
-            print(
-                f"[tree] '{tree_filename}' outdated "
-                f"(pickle_version={version_in_pickle}, required={Tree.PICKLE_VERSION}). "
-                f"Please rebuild the tree with 'slideshow --input_file {txt_filename} --outputtree'."
+            logger.info(
+                "[tree] '%s' outdated (pickle_version=%d, required=%d).\n"
+                "Please rebuild with: slideshow --input_file %s --outputtree",
+                tree_filename,
+                version_in_pickle,
+                Tree.PICKLE_VERSION,
+                txt_filename,
             )
             return None
         return tree
@@ -76,7 +82,7 @@ class InputProcessor:
                     # Load a pre-built tree from a file
                     tree = self._load_tree_if_current(input_filename_full)
                     if tree:
-                        print(f"Loaded current tree from {input_filename_full}")
+                        logger.info("Loaded current tree from %s", input_filename_full)
                         return tree
                     stem = os.path.splitext(input_filename_full)[0]
                     for ext in (".lst", ".txt"):
@@ -257,7 +263,7 @@ class InputProcessor:
                 dont_recurse = True
                 self.filters.add_dont_recurse_beyond_folder(path)
             else:
-                print(f"Unknown modifier '{mod_content}' in line: {line}")
+                logger.warning("Unknown modifier '%s' in line: %s", mod_content, line)
             # Handle directory or specific image
         if path == "*":
             if group:
@@ -294,6 +300,6 @@ class InputProcessor:
                 "mode_modifier": mode_modifier,
             }
         else:
-            print(f"Path '{path}' is neither a file nor a directory.")
+            logger.warning("Path '%s' is neither a file nor a directory.", path)
 
         return None, None

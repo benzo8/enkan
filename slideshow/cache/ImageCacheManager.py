@@ -1,5 +1,6 @@
 import threading
 import time
+import logging
 
 from PIL import Image
 
@@ -10,6 +11,7 @@ from slideshow.plugables.ImageLoaders import ImageLoaders
 from slideshow.utils.utils import is_videofile
 from slideshow import constants
 
+logger: logging.Logger = logging.getLogger("slideshow.cache")     
 
 class ImageCacheManager:
     """
@@ -18,14 +20,13 @@ class ImageCacheManager:
     Supports background preloading of images.
     """
 
-    def __init__(self, image_provider, current_image_index, debug=False, background_preload=True):
+    def __init__(self, image_provider, current_image_index, background_preload=True):
         self.lru_cache = LRUCache(constants.CACHE_SIZE)
         self.preload_queue = PreloadQueue(constants.PRELOAD_QUEUE_LENGTH)
         self.history_manager = HistoryManager(constants.HISTORY_QUEUE_LENGTH)
         self.image_provider = image_provider
         self.image_loader = ImageLoaders()
         self.current_image_index = current_image_index
-        self.debug = debug
         self.background_preload = background_preload
 
         self._lock = threading.Lock()
@@ -38,14 +39,6 @@ class ImageCacheManager:
             self._preload_refill()
 
     # -----------------------
-    # Logging
-    # -----------------------
-
-    def _log(self, message):
-        if self.debug:
-            print(f"[DEBUG] {message}")
-
-    # -----------------------
     # Preload
     # -----------------------
 
@@ -56,7 +49,7 @@ class ImageCacheManager:
                 image_path: str = next(self.image_provider)
             except ValueError as e:
                 if "generator already executing" in str(e):
-                    self._log("Generator busy, waiting before retry...")
+                    logger.debug("Generator busy, waiting before retry...")
                     time.sleep(0.01)  # Wait 10ms before retrying
                     continue
                 else:
@@ -69,19 +62,19 @@ class ImageCacheManager:
                 continue
             image_obj: Image.Image = self._load_image(image_path)
             self.preload_queue.push(image_path, image_obj)
-            self._log(f"Preloaded: {image_path}")
+            logger.debug(f"Preloaded: {image_path}")
 
     def _background_refill(self):
         """Start a background refill thread if not already running."""
         with self._lock:
             if self._refill_thread and self._refill_thread.is_alive():
-                self._log("Background refill aborted. Already refilling.")
+                logger.debug("Background refill aborted. Already refilling.")
                 return  # Already refilling
             self._refill_thread = threading.Thread(
                 target=self._preload_refill, daemon=True
             )
             self._refill_thread.start()
-            self._log("Background refill started.")
+            logger.debug("Background refill started.")
 
     # -----------------------
     # Image Loading
@@ -92,11 +85,11 @@ class ImageCacheManager:
             return None
         image_obj: Image.Image = self.lru_cache.get(image_path)
         if image_obj is None:
-            self._log(f"Loading from Disk: {image_path}")
+            logger.debug(f"Loading from Disk: {image_path}")
             image_obj: Image.Image = self.image_loader.load_image(image_path)
             self.lru_cache.put(image_path, image_obj)
         else:
-            self._log(f"Loaded from LRUCache: {image_path}")
+            logger.debug(f"Loaded from LRUCache: {image_path}")
         return image_obj
 
     # -----------------------
@@ -132,16 +125,16 @@ class ImageCacheManager:
                     except ValueError as e:
                         if "generator already executing" in str(e):
                             if retry_count >= max_retries:
-                                self._log("Generator busy after max retries, giving up.")
+                                logger.debug("Generator busy after max retries, giving up.")
                                 return None, None
-                            self._log("Generator busy in get_next, waiting before retry...")
+                            logger.debug("Generator busy in get_next, waiting before retry...")
                             time.sleep(0.01)  # Wait 10ms before retrying
                             retry_count += 1
                             continue
                         else:
                             raise
                     except StopIteration:
-                        self._log("No image provided (empty provider).")
+                        logger.debug("No image provided (empty provider).")
                         return None, None
                 image_obj = self._load_image(image_path)
                 source = "Disk"
@@ -164,7 +157,7 @@ class ImageCacheManager:
             self._preload_refill()
 
         # Step 4: Debug output
-        self._log(f"Loaded: {image_path} (from {source})")
+        logger.debug(f"Loaded: {image_path} (from {source})")
 
         return image_path, image_obj
 
@@ -191,7 +184,7 @@ class ImageCacheManager:
         self.lru_cache.clear()
         self.preload_queue.clear()
         self.history_manager.clear()
-        self._log("Cache, preload queue, and history cleared.")
+        logger.debug("Cache, preload queue, and history cleared.")
 
         if self.background_preload:
             self._background_refill()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 import os
+import logging
 
 from .Tree import Tree
 from .TreeNode import TreeNode
@@ -9,6 +10,7 @@ from .TreeNode import TreeNode
 if TYPE_CHECKING:  # pragma: no cover
     from .Tree import Tree
 
+logger = logging.getLogger(__name__)
 
 class Grafting:
     """Encapsulates subtree grafting logic for a Tree instance.
@@ -42,8 +44,8 @@ class Grafting:
 
         current_node: TreeNode | None = t.find_node(root, lookup_dict=t.path_lookup)
         if not current_node:
-            print(
-                f"Warning: Node '{root}' not found for grafting. Skipping."
+            logger.debug(
+                "Warning: Node '%s' not found for grafting. Skipping.", root
             )
             return
         current_node_parent: TreeNode | None = current_node.parent

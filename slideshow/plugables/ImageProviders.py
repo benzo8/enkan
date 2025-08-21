@@ -1,7 +1,10 @@
 import random
+import logging
+
 from slideshow.cache.ImageCacheManager import ImageCacheManager
 from slideshow.utils.utils import weighted_choice
 
+logger: logging.Logger = logging.getLogger("__name__")  
 
 class ImageProviders:
     def __init__(self):
@@ -29,7 +32,6 @@ class ImageProviders:
         self.manager = ImageCacheManager(
             image_provider,
             kwargs.get("index", 0),
-            debug=kwargs.get("debug", False),
             background_preload=kwargs.get("background_preload", True)
         )
         self.current_provider_name = provider_name
@@ -54,7 +56,7 @@ class ImageProviders:
             for path in image_paths[index:]:
                 yield path
         except GeneratorExit:
-            print("Sequential image provider closed unexpectedly.")
+            logger.debug("Sequential image provider closed unexpectedly.")
             return
 
     def image_provider_random(self, image_paths, **kwargs):
@@ -62,7 +64,7 @@ class ImageProviders:
             while True:
                 yield random.choice(image_paths)
         except GeneratorExit:
-            print("Random image provider closed unexpectedly.")
+            logger.debug("Random image provider closed unexpectedly.")
             return
 
     def image_provider_weighted(self, image_paths, cum_weights, **kwargs):
@@ -70,7 +72,7 @@ class ImageProviders:
             while True:
                 yield weighted_choice(image_paths, cum_weights=cum_weights)
         except GeneratorExit:
-            print("Weighted image provider closed unexpectedly.")
+            logger.debug("Weighted image provider closed unexpectedly.")
             return
         
     def image_provider_folder_burst(self, image_paths, cum_weights, burst_size=5, **kwargs):
@@ -96,5 +98,5 @@ class ImageProviders:
                 # Yield one image per call
                 yield burst_images.pop(0)
         except GeneratorExit:
-            print("Folder burst image provider closed unexpectedly.")
+            logger.debug("Folder burst image provider closed unexpectedly.")
             return

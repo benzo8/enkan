@@ -4,6 +4,8 @@ import sys
 import random
 import tkinter as tk
 from tkinter import messagebox
+from itertools import accumulate
+import logging
 
 # ——— Third-party ———
 import vlc
@@ -23,6 +25,9 @@ from slideshow.tree.tree_logic import (
     extract_image_paths_and_weights_from_tree,
 )
 from .ZoomPan import ZoomPan
+
+# Configure logging
+logger: logging.Logger = logging.getLogger("slideshow.ui")
 
 class ImageSlideshow:
     def __init__(
@@ -238,7 +243,6 @@ class ImageSlideshow:
         self.manager: ImageCacheManager = self.providers.select_manager(
             image_paths=self.image_paths,
             provider_name=provider_name,
-            debug=self.defaults.debug,
             background_preload=self.defaults.background,
             **provider_kwargs,
         )
@@ -288,8 +292,8 @@ class ImageSlideshow:
                 parent_tree
             )
         else:
-            print("No valid directory found.")
-        new_cum_weights = utils.prepare_cumulative_weights(new_weights)
+            logger.debug("No valid directory found.")
+        new_cum_weights = list(accumulate(new_weights))
         self.update_slide_show(new_image_paths, new_cum_weights)
 
     def _check_video_ended(self):
@@ -318,7 +322,7 @@ class ImageSlideshow:
                 self.root.after_cancel(self.auto_advance_id)
             self.auto_advance_id = None
             self.auto_advance_running = False
-            print("[DEBUG] Auto-advance stopped.")
+            logger.debug("Auto-advance stopped.")
         else:
             if interval is not None:
                 self.auto_advance_interval = interval
@@ -326,7 +330,7 @@ class ImageSlideshow:
                 self.auto_advance_interval = 5000
             self._schedule_next_image()
             self.auto_advance_running = True
-            print(f"[DEBUG] Auto-advance started ({self.auto_advance_interval} ms).")
+            logger.debug("Auto-advance started (%s ms).", self.auto_advance_interval)
 
         self.update_filename_display()
 
@@ -435,7 +439,7 @@ class ImageSlideshow:
         ]
         temp_weights = [1] * len(temp_image_paths)
         self.subfolder_mode = True
-        temp_cum_weights = utils.prepare_cumulative_weights(temp_weights)
+        temp_cum_weights = list(accumulate(temp_weights))
         self.update_slide_show(image_paths=temp_image_paths, cum_weights=temp_cum_weights)
 
     def subfolder_mode_off(self):
@@ -453,15 +457,15 @@ class ImageSlideshow:
             case "L":
                 self.set_provider("sequential", index=self.current_image_index + 1)
             case "W":
-                self.set_provider("weighted", weights=self.cum_weights)
+                self.set_provider("weighted", cum_weights=self.cum_weights)
             case "B":
-                self.set_provider("burst", weights=self.cum_weights, burst_size=5)
+                self.set_provider("burst", cum_weights=self.cum_weights, burst_size=5)
 
 # -- Parent Mode Navigation ---
 
     def navigate_up(self):
         if self.parentFolderStack.is_full() or not self.parent_mode:
-            print("Cannot navigate up - Stack is full or not in parent mode.")
+            logger.warning("Cannot navigate up - Stack is full or not in parent mode.")
             return
 
         current_path = os.path.dirname(self.current_image_path)
@@ -484,7 +488,7 @@ class ImageSlideshow:
                         child_path, self.image_paths, self.cum_weights
                     )
             else:
-                print("No valid child directory found.")
+                logger.warning("No valid child directory found.")
         elif self.navigation_mode == "branch":
             current_path_node = self.original_tree.find_node(
                 current_path, self.original_tree.path_lookup
@@ -496,7 +500,7 @@ class ImageSlideshow:
                 node = node.parent
 
             if node != self.navigation_node:
-                print("No valid child node found in the branch.")
+                logger.warning("No valid child node found in the branch.")
                 return
 
             path.reverse()
@@ -537,7 +541,7 @@ class ImageSlideshow:
 
     def step_backwards(self):
         if self.parentFolderStack.is_empty():
-            print("Cannot step back - Stack is empty.")
+            logger.warning("Cannot step back - Stack is empty.")
             return
         _, images, cum_weights = self.parentFolderStack.pop()
         self.update_slide_show(images, cum_weights)
@@ -547,7 +551,7 @@ class ImageSlideshow:
             self.toggle_subfolder_mode()
             return
         if self.parentFolderStack.is_full():
-            print("Cannot navigate down - Stack is full.")
+            logger.warning("Cannot navigate down - Stack is full.")
         else:
             self.navigate_down()
 
@@ -566,7 +570,7 @@ class ImageSlideshow:
         self.cum_weights = self.original_cum_weights[:]
         self.update_slide_show(self.image_paths, self.cum_weights)
         self.show_image(self.image_paths[self.current_image_index])
-        print("[DEBUG] Parent mode reset and modes updated.")
+        logger.debug("Parent mode reset and modes updated.")
 
 # --- Filename and Mode Display Methods ---
 

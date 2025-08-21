@@ -1,146 +1,285 @@
+from __future__ import annotations
+
 import os
 import bisect
 import random
 from datetime import datetime
+from pathlib import Path
+from typing import Iterable, Sequence, List, Set, Optional
 
 from slideshow import constants
 
-def prepare_cumulative_weights(weights):
-    cum_weights = []
-    total = 0
-    for w in weights:
-        total += w
-        cum_weights.append(total)
-    return cum_weights
+def weighted_choice(image_paths: Sequence[str], cum_weights: Sequence[float]) -> str:
+    """
+    Choose an image path according to cumulative weights.
 
-def weighted_choice(image_paths, cum_weights):
-    x = random.uniform(0, cum_weights[-1])
+    Args:
+        image_paths: Sequence of items (must align with cum_weights length).
+        cum_weights: Monotonically non‑decreasing cumulative totals.
+
+    Returns:
+        Selected image path.
+
+    Raises:
+        ValueError: If inputs are empty or lengths mismatch.
+    """
+    if not image_paths or not cum_weights:
+        raise ValueError("weighted_choice received empty inputs")
+    if len(image_paths) != len(cum_weights):
+        raise ValueError("image_paths and cum_weights length mismatch")
+    total = cum_weights[-1]
+    if total <= 0:
+        raise ValueError("Total cumulative weight must be > 0")
+    x = random.random() * total  # marginally cheaper than uniform(0, total)
     idx = bisect.bisect_left(cum_weights, x)
+    # Clamp (in pathological float edge)
+    if idx >= len(image_paths):
+        idx = len(image_paths) - 1
     return image_paths[idx]
 
-def level_of(path):
-    return len([item for item in path.split(os.sep) if item != ""])
 
-
-def truncate_path(path, levels_up):
+def level_of(path: str) -> int:
     """
-    Truncate the path based on the balance level.
+    Count path components (ignoring empty segments).
+
+    Args:
+        path: Filesystem path.
+
+    Returns:
+        Number of non‑empty components.
     """
-    return "\\".join(
-        path.split("\\")[
-            : ((level_of(path) - levels_up) if levels_up < 0 else levels_up)
-        ]
-    )
+    return sum(1 for part in path.split(os.sep) if part)
 
 
-def get_drive_or_root(path):
+def truncate_path(path: str, levels_up: int) -> str:
+    """
+    Truncate a path to a certain depth.
+
+    Args:
+        path: Original path.
+        levels_up:
+            If >= 0: keep only the first 'levels_up' components.
+            If <  0: remove 'levels_up' components from the end (negative trim).
+
+    Returns:
+        Truncated path string (components rejoined with backslash).
+    """
+    parts = [p for p in path.split("\\") if p]
+    if levels_up < 0:
+        keep = len(parts) + levels_up  # levels_up negative
+        if keep < 0:
+            keep = 0
+        parts = parts[:keep]
+    else:
+        parts = parts[:levels_up]
+    return "\\".join(parts)
+
+
+def get_drive_or_root(path: str) -> str:
+    """
+    Extract drive root (Windows) or root slash (Unix).
+
+    Args:
+        path: Path string.
+
+    Returns:
+        'C:\\' style drive root, '/' for POSIX absolute, or '' for relative paths.
+    """
     drive, _ = os.path.splitdrive(path)
     if drive:
-        # Windows case, drive letter present
-        return drive + os.path.sep  # E.g., 'C:\\'
-    else:
-        # Unix case
-        if path.startswith(os.path.sep):
-            return os.path.sep  # Root
-        else:
-            # Relative path, no explicit root
-            return ""
+        return drive + os.path.sep
+    if path.startswith(os.path.sep):
+        return os.path.sep
+    return ""
 
 
-def contains_subdirectory(path):
-    for root, directories, files in os.walk(path):
-        if directories:
-            return len(directories)
-    return False
+def contains_subdirectory(path: str) -> int | bool:
+    """
+    Determine if a directory contains (at least one) subdirectory.
+
+    Args:
+        path: Directory path.
+
+    Returns:
+        Number of immediate child directories (truthy count) or False if none / path invalid.
+    """
+    try:
+        with os.scandir(path) as it:
+            dirs = [e for e in it if e.is_dir()]
+        return len(dirs) if dirs else False
+    except OSError:
+        return False
 
 
-def contains_files(path):
-    for root, directories, files in os.walk(path):
-        if files:
-            return True
-    return False
+def contains_files(path: str) -> bool:
+    """
+    Quickly test if any file exists somewhere under path.
+
+    Args:
+        path: Directory path.
+
+    Returns:
+        True if at least one file found, else False.
+    """
+    try:
+        for root, _, files in os.walk(path):
+            if files:
+                return True
+        return False
+    except OSError:
+        return False
 
 
-def is_textfile(file):
+def is_textfile(file: str) -> bool:
+    """Return True if filename has a text extension."""
     return file.lower().endswith(constants.TEXT_FILES)
 
 
-def is_imagefile(file):
+def is_imagefile(file: str) -> bool:
+    """Return True if filename has an image extension."""
     return file.lower().endswith(constants.IMAGE_FILES)
 
 
-def is_videofile(file):
+def is_videofile(file: str) -> bool:
+    """Return True if filename has a video extension."""
     return file.lower().endswith(constants.VIDEO_FILES)
 
 
-def is_videoallowed(data_video, defaults):
+def is_videoallowed(data_video: bool | None, defaults) -> bool:
+    """
+    Determine if video inclusion is allowed for a node.
+
+    Precedence:
+        1. defaults.args_video (explicit CLI override)
+        2. data_video (per node specification)
+        3. defaults.video (global default)
+    """
     if data_video is False:
         return False
-    if defaults.args_video is not None:
+    if getattr(defaults, "args_video", None) is not None:
         return defaults.args_video
-    else:
-        return data_video if data_video is not None else defaults.video
-    
-def log(message, debug):
-    if debug:
-        print(f"[DEBUG] {message}")
+    return data_video if data_video is not None else defaults.video
 
 
-def filter_valid_files(path, files, ignored_files, is_videoallowed=None):
-    if path in {os.path.dirname(f) for f in ignored_files}:
-        valid_files = [f for f in files if os.path.join(path, f) not in ignored_files]
-    else:
-        valid_files = files
-    return [
-        os.path.join(path, f)
-        for f in valid_files
-        if is_imagefile(f) or (is_videofile(f) and is_videoallowed)
-    ]
+def filter_valid_files(
+    path: str,
+    files: Sequence[str],
+    ignored_files: Iterable[str],
+    video_allowed: bool | None = None,
+) -> List[str]:
+    """
+    Filter a directory listing for valid image/video files, excluding ignored files.
 
-def find_input_file(input_filename, additional_search_paths=[]):
-    # List of potential directories to search
-    possible_locations = [
-        os.path.dirname(os.path.abspath(__file__)),  # Script's directory
-        os.getcwd(),  # Current working directory
-        *additional_search_paths,  # Additional paths (e.g., main input file's directory)
-        os.path.join(
-            os.getcwd(), "lists"
-        ),  # Fixed "lists" folder in the current working directory
-    ]
+    Args:
+        path: Directory path.
+        files: Filenames in the directory.
+        ignored_files: Iterable of full paths to ignore.
+        video_allowed: Whether videos may be included (pre-filtered).
 
-    # If input_filename has no extension, try .lst then .txt
-    _, ext = os.path.splitext(input_filename)
-    candidates = [input_filename]
+    Returns:
+        List of full paths (image/video only).
+    """
+    ignored_set: Set[str] = set(ignored_files)
+    # If many files per directory & large ignored_set, this is fine O(n).
+    out: List[str] = []
+    join = os.path.join
+    for f in files:
+        full = join(path, f)
+        if full in ignored_set:
+            continue
+        if is_imagefile(f) or (video_allowed and is_videofile(f)):
+            out.append(full)
+    return out
+
+
+def find_input_file(
+    input_filename: str,
+    additional_search_paths: Sequence[str] | None = None,
+) -> Optional[str]:
+    """
+    Locate an input file (.tree / .lst / .txt) by searching common locations.
+
+    Args:
+        input_filename: Base filename or explicit file (with or without extension).
+        additional_search_paths: Extra directories to search (before the fixed 'lists' dir).
+
+    Returns:
+        Absolute path string if found, else None.
+    """
+    add_paths = list(additional_search_paths or [])
+    script_dir = Path(__file__).resolve().parent
+    cwd = Path.cwd()
+
+    possible_locations: List[Path] = [script_dir, cwd, *map(Path, add_paths), cwd / "lists"]
+
+    base = Path(input_filename)
+    ext = base.suffix.lower()
     if not ext:
-        candidates = [input_filename + ".tree", input_filename + ".lst", input_filename + ".txt"]
+        candidates = [base.with_suffix(".tree"), base.with_suffix(".lst"), base.with_suffix(".txt")]
+    else:
+        candidates = [base]
 
     for location in possible_locations:
-        for candidate in candidates:
-            potential_path = os.path.join(location, candidate)
-            if os.path.isfile(potential_path):
-                return potential_path
-
+        for cand in candidates:
+            candidate_path = location / cand
+            if candidate_path.is_file():
+                return str(candidate_path)
     return None
 
-def write_image_list(all_images, weights, input_files, mode_args, output_path):
+
+def write_image_list(
+    all_images: Sequence[str],
+    weights: Sequence[float],
+    input_files: Sequence[str],
+    mode_args: dict | str,
+    output_path: str | os.PathLike[str],
+) -> None:
+    """
+    Write image paths and their weights to a CSV-like text file.
+
+    Args:
+        all_images: Sequence of image paths.
+        weights: Parallel sequence of weights.
+        input_files: Source list filenames.
+        mode_args: Mode parameters (serialized or dict).
+        output_path: Destination filepath.
+    """
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    header = [
-        f"# Written: {now}",
-        f"# Input files: {', '.join(input_files)}",
-        f"# Mode arguments: {mode_args}",
-        "# Format: image_path,weight",
-    ]
+    header = (
+        f"# Written: {now}\n"
+        f"# Input files: {', '.join(input_files)}\n"
+        f"# Mode arguments: {mode_args}\n"
+        "# Format: image_path,weight\n"
+    )
     with open(output_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(header) + "\n")
+        f.write(header)
         for img, w in zip(all_images, weights):
             f.write(f"{img},{w}\n")
-            
-def write_tree_to_file(tree, output_path):
+
+
+def write_tree_to_file(tree, output_path: str | os.PathLike[str]) -> None:
+    """
+    Pickle (serialize) a Tree object to disk.
+
+    Args:
+        tree: The Tree instance.
+        output_path: Destination file path.
+    """
     import pickle
     with open(output_path, "wb") as f:
         pickle.dump(tree, f, protocol=pickle.HIGHEST_PROTOCOL)
-    
-def load_tree_from_file(input_path):
+
+
+def load_tree_from_file(input_path: str | os.PathLike[str]):
+    """
+    Load a pickled Tree from disk.
+
+    Args:
+        input_path: Path to .tree pickle file.
+
+    Returns:
+        Unpickled object (expected Tree).
+    """
     import pickle
     with open(input_path, "rb") as f:
         return pickle.load(f)

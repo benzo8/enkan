@@ -1,17 +1,19 @@
 # ——— Standard library ———
 import os
+import logging
 from typing import List
+from itertools import accumulate
 
 # ——— Local ———
 from slideshow.utils.InputProcessor import InputProcessor
 from slideshow.utils.Defaults import Defaults
 from slideshow.utils.Filters import Filters
-from slideshow.utils.utils import prepare_cumulative_weights
 from slideshow.tree.tree_logic import (
     build_tree,
     extract_image_paths_and_weights_from_tree
 )
 
+logger = logging.getLogger("slideshow.main")  
 
 def main_with_args(args) -> None:
     
@@ -47,7 +49,7 @@ def main_with_args(args) -> None:
             output_name = "_".join(base_names) + ".tree"
             output_path = os.path.join(os.getcwd(), output_name)
             write_tree_to_file(tree, output_path)
-            print(f"Tree written to {output_path}")
+            logger.info("Tree written to %s", output_path)
             return
 
         # Extract paths and weights from the tree
@@ -57,7 +59,7 @@ def main_with_args(args) -> None:
         all_images.extend(extracted_images)
         weights.extend(extracted_weights)
         
-    cum_weights = prepare_cumulative_weights(weights)
+    cum_weights = list(accumulate(weights))
 
     if args.outputlist:
         from slideshow.utils.utils import write_image_list
@@ -66,7 +68,7 @@ def main_with_args(args) -> None:
         output_name = "_".join(base_names) + ".lst"
         output_path = os.path.join(os.getcwd(), output_name)
         write_image_list(all_images, weights, args.input_file, args.mode, output_path)
-        print(f"Output written to {output_path}")
+        logger.info("Output written to %s", output_path)
         return
 
     # Test or start the slideshow
