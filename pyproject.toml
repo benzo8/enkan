@@ -1,7 +1,7 @@
 [project]
 name = "Slideshow"
 description = "A not-so-simple slideshow application"
-version = "2.0.0-rc1"
+version = "2.0.0-rc2"
 authors = [
     { name = "John Sullivan", email = "benzo8@gmail.com" },
 ]

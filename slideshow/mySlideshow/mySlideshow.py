@@ -444,7 +444,7 @@ class ImageSlideshow:
             self.image_paths
         )
         self.subfolder_mode = False
-        self.update_slide_show(image_paths=self.image_paths, weights=self.cum_weights)
+        self.update_slide_show(image_paths=self.image_paths, cum_weights=self.cum_weights)
 
     def select_mode(self, event=None):
         match event.char.upper():
