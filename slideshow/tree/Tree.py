@@ -143,7 +143,9 @@ class Tree:
             extension: list[str] = [
                 f"{extension_root}_{i - 1}" for i in range(current_level, level)
             ]
-            extended: list[str] = path_components[:-1] + extension + [path_components[-1]]
+            extended: list[str] = (
+                path_components[:-1] + extension + [path_components[-1]]
+            )
             return os.path.join(*extended)
         return path
 
@@ -156,33 +158,6 @@ class Tree:
         if lookup_dict is None:
             lookup_dict = self.node_lookup
         return lookup_dict.get(name)
-
-    def copy_subtree_as_tree(self, start_node: TreeNode) -> Tree:
-        def deep_copy(node: TreeNode) -> TreeNode:
-            new_node = TreeNode(
-                name=node.name,
-                path=node.path,
-                weight_modifier=getattr(node, "weight_modifier", None),
-                is_percentage=getattr(node, "is_percentage", None),
-                proportion=getattr(node, "proportion", None),
-                mode_modifier=getattr(node, "mode_modifier", None),
-                images=list(getattr(node, "images", [])),
-            )
-            for child in node.children:
-                new_node.add_child(deep_copy(child))
-            return new_node
-
-        new_tree = Tree(self.defaults, self.filters)
-        new_tree.root = deep_copy(start_node)
-
-        def index(node: TreeNode) -> None:
-            new_tree.node_lookup[node.name] = node
-            new_tree.path_lookup[node.path] = node
-            for c in node.children:
-                index(c)
-
-        index(new_tree.root)
-        return new_tree
 
     def get_nodes_at_level(self, target_level: int) -> list[TreeNode]:
         result: list[TreeNode] = []
@@ -199,41 +174,6 @@ class Tree:
 
     def calculate_level(self, path: str) -> int:
         return len([c for c in path.split(os.path.sep) if c])
-
-    def set_proportion(self, group: str, current_node: TreeNode) -> int | None:
-        group_config: dict[str, Any] | None = self.defaults.groups.get(group)
-        if not group_config:
-            return None
-        proportion: int | None = group_config.get("proportion")
-        if proportion is None:
-            return None
-
-        group_graft_level: int | None = group_config.get("graft_level")
-        if group_graft_level is not None:
-            effective_level: int = group_graft_level
-        else:
-            mode_modifiers = group_config.get("mode_modifier")
-            mode_modifier_level = min(mode_modifiers.keys()) if mode_modifiers else None
-            child_levels: list[Any | None] = [
-                getattr(child, "graft_level", None)
-                for child in current_node.children
-                if getattr(child, "graft_level", None) is not None
-            ]
-            child_level: int | None = min(child_levels) if child_levels else None
-            candidates: list = [
-                lvl for lvl in (mode_modifier_level, child_level) if lvl is not None
-            ]
-            effective_level = min(candidates) if candidates else None
-
-        if effective_level is None:
-            return None
-
-        node: TreeNode = current_node
-        while node and node.level > effective_level:
-            node = node.parent
-        if node and node.level == effective_level:
-            node.proportion = proportion
-        return effective_level
 
     def count_branches(self, node: TreeNode) -> tuple[int, int]:
         if not node:

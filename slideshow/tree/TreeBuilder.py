@@ -240,7 +240,7 @@ class TreeBuilder:
             {
                 "weight_modifier": data.get("weight_modifier", 100),
                 "is_percentage": data.get("is_percentage", True),
-                "proportion": None,
+                "proportion": data.get("proportion", None),
                 "mode_modifier": data.get("mode_modifier"),
                 "images": images,
             },
