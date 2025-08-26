@@ -11,16 +11,16 @@ import logging
 import vlc
 
 # ——— Local ———
-from slideshow import constants
-from slideshow.cache.ImageCacheManager import ImageCacheManager
-from slideshow.tree import Tree
-from slideshow.tree.TreeNode import TreeNode
-from slideshow.utils import utils
-from slideshow.utils.Defaults import Defaults, resolve_mode
-from slideshow.utils.Filters import Filters
-from slideshow.utils.myStack import Stack
-from slideshow.plugables.ImageProviders import ImageProviders
-from slideshow.tree.tree_logic import (
+from enkan import constants
+from enkan.cache.ImageCacheManager import ImageCacheManager
+from enkan.tree import Tree
+from enkan.tree.TreeNode import TreeNode
+from enkan.utils import utils
+from enkan.utils.Defaults import Defaults, resolve_mode
+from enkan.utils.Filters import Filters
+from enkan.utils.myStack import Stack
+from enkan.plugables.ImageProviders import ImageProviders
+from enkan.tree.tree_logic import (
     build_tree,
     extract_image_paths_and_weights_from_tree,
 )

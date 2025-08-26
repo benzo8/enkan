@@ -1,5 +1,5 @@
 [project]
-name = "Slideshow"
+name = "enkan"
 description = "A not-so-simple slideshow application"
 version = "2.0.0-rc3"
 authors = [
@@ -21,8 +21,8 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["slideshow*"]
-exclude = ["slideshow.tests*", "slideshow.*.scratch*"]
+include = ["enkan*"]
+exclude = ["enkan.tests*", "enkan.*.scratch*"]
 
 [project.scripts]
-slideshow = "slideshow.__main__:main"
+slideshow = "enkan.__main__:main"

@@ -1,8 +1,8 @@
 import random
 import logging
 
-from slideshow.cache.ImageCacheManager import ImageCacheManager
-from slideshow.utils.utils import weighted_choice
+from enkan.cache.ImageCacheManager import ImageCacheManager
+from enkan.utils.utils import weighted_choice
 
 logger: logging.Logger = logging.getLogger("__name__")  
 

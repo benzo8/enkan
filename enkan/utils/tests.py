@@ -5,9 +5,9 @@ from functools import wraps
 from collections import defaultdict
 from tqdm import tqdm
 
-from slideshow.constants import TOTAL_WEIGHT
-from slideshow.utils.Defaults import resolve_mode
-from slideshow.utils.utils import weighted_choice
+from enkan.constants import TOTAL_WEIGHT
+from enkan.utils.Defaults import resolve_mode
+from enkan.utils.utils import weighted_choice
 
 
 def timeit(func):

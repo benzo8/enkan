@@ -1,5 +1,5 @@
 from collections import deque
-from slideshow import constants
+from enkan import constants
 
 class HistoryManager:
     """

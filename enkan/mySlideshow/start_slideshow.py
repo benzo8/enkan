@@ -1,8 +1,8 @@
 import tkinter as tk
 
-from slideshow.utils.Defaults import Defaults
-from slideshow.utils.Filters import Filters
-from slideshow.tree.Tree import Tree
+from enkan.utils.Defaults import Defaults
+from enkan.utils.Filters import Filters
+from enkan.tree.Tree import Tree
 from .mySlideshow import ImageSlideshow
 
 

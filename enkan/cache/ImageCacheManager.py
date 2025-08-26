@@ -7,9 +7,9 @@ from PIL import Image
 from .LRUCache import LRUCache
 from .PreloadQueue import PreloadQueue
 from .HistoryManager import HistoryManager
-from slideshow.plugables.ImageLoaders import ImageLoaders
-from slideshow.utils.utils import is_videofile
-from slideshow import constants
+from enkan.plugables.ImageLoaders import ImageLoaders
+from enkan.utils.utils import is_videofile
+from enkan import constants
 
 logger: logging.Logger = logging.getLogger("slideshow.cache")     
 
