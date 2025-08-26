@@ -126,6 +126,7 @@ class InputProcessor:
                             else:  # Probably an irfanview-style list
                                 all_images.append(line)
                                 weights.append(0.01)  # Default weight for single lines
+                    logger.info("Loaded slide list from %s", input_filename_full)
                 case ".txt":
                     with open(
                         input_filename_full, "r", buffering=65536, encoding="utf-8"

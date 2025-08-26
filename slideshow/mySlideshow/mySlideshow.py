@@ -365,15 +365,18 @@ class ImageSlideshow:
             self.reset_auto_advance()
 
     def navigate_image_sequential(self, event=None):
-        match event.keysym:
-            case "Up":
-                image_path = self.image_paths[self.current_image_index + 1]
-            case "Down":
-                image_path = self.image_paths[self.current_image_index - 1]
-        if self.rotation_angle != 0:
-            self.rotation_angle = 0
-        self.show_image(image_path)
-        self.reset_auto_advance()
+        try:
+            match event.keysym:
+                case "Up":
+                    image_path = self.image_paths[self.current_image_index + 1]
+                case "Down":
+                    image_path = self.image_paths[self.current_image_index - 1]
+            if self.rotation_angle != 0:
+                self.rotation_angle = 0
+            self.show_image(image_path)
+            self.reset_auto_advance()
+        except IndexError:
+            logger.debug("navigate_image_sequential: Index out of range for image_paths.")
 
     def delete_image(self, event=None):
         if self.current_image_path:
