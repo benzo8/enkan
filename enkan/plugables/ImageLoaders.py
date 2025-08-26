@@ -4,7 +4,7 @@ from typing import Callable, Optional
 import logging
 from PIL import Image, UnidentifiedImageError
 
-logger: logging.Logger = logging.getLogger("slideshow.imageloaders")
+logger: logging.Logger = logging.getLogger("enkan.imageloaders")
 
 class ImageLoaders:
     def __init__(self):

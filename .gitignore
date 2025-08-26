@@ -3,7 +3,7 @@ lists/
 test_zone/
 input-file-tests/
 old versions/
-slideshow/TODO.md
+enkan/TODO.md
 
 # IDE/Editor settings
 .vscode/
@@ -20,4 +20,4 @@ build/
 
 # Optional config files
 .vscode/launch.json
-slideshow/ruff.toml
+enkan/ruff.toml

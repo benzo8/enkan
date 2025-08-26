@@ -206,22 +206,22 @@ def find_input_file(
     Returns:
         Absolute path string if found, else None.
     """
-    add_paths = list(additional_search_paths or [])
-    script_dir = Path(__file__).resolve().parent
-    cwd = Path.cwd()
+    add_paths: List[str] = list(additional_search_paths or [])
+    script_dir: Path = Path(__file__).resolve().parent
+    cwd: Path = Path.cwd()
 
     possible_locations: List[Path] = [script_dir, cwd, *map(Path, add_paths), cwd / "lists"]
 
     base = Path(input_filename)
-    ext = base.suffix.lower()
+    ext: str = base.suffix.lower()
     if not ext:
-        candidates = [base.with_suffix(".tree"), base.with_suffix(".lst"), base.with_suffix(".txt")]
+        candidates: List[Path] = [base.with_suffix(".tree"), base.with_suffix(".lst"), base.with_suffix(".txt")]
     else:
         candidates = [base]
 
     for location in possible_locations:
         for cand in candidates:
-            candidate_path = location / cand
+            candidate_path: Path = location / cand
             if candidate_path.is_file():
                 return str(candidate_path)
     return None

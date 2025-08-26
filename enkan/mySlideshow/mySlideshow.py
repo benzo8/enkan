@@ -27,7 +27,7 @@ from enkan.tree.tree_logic import (
 from .ZoomPan import ZoomPan
 
 # Configure logging
-logger: logging.Logger = logging.getLogger("slideshow.ui")
+logger: logging.Logger = logging.getLogger("enkan.ui")
 
 class ImageSlideshow:
     def __init__(

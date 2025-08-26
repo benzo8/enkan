@@ -1,7 +1,5 @@
 # -----------------------------------------------------------------------------
-# slideshow-new.py
-#
-# A Python script to create a slideshow from a list of files, with various
+# # A Python script to create a slideshow from a list of files, with various
 # modes and features including weighted, balanced, and random selection.
 #
 # Author:      John Sullivan
@@ -15,7 +13,7 @@
 #   It uses Tkinter for the GUI and Pillow for image handling.
 #
 # Usage:
-#   python slideshow-new.py --input_file <file_or_folder> [options]
+#   enkan --input_file <file_or_folder> [options]
 # 
 # Dependencies:
 #   - Python 3.8+
@@ -36,7 +34,7 @@ def main() -> None:
     try:
         main_with_args(args)
     except Exception as e:
-        logging.getLogger("slideshow").error("Fatal: %s", e)
+        logging.getLogger("enkan").error("Fatal: %s", e)
         # No traceback shown unless debug enabled
         if getattr(args, "debug", False):
             raise

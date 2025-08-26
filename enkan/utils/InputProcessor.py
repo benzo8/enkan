@@ -57,7 +57,7 @@ class InputProcessor:
             txt_filename = os.path.splitext(tree_filename)[0] + ".txt"
             logger.info(
                 "[tree] '%s' outdated (pickle_version=%d, required=%d).\n"
-                "Please rebuild with: slideshow --input_file %s --outputtree",
+                "Please rebuild with: enkan --input_file %s --outputtree",
                 tree_filename,
                 version_in_pickle,
                 Tree.PICKLE_VERSION,

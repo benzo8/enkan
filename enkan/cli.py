@@ -13,7 +13,7 @@ from enkan.tree.tree_logic import (
     extract_image_paths_and_weights_from_tree
 )
 
-logger = logging.getLogger("slideshow.main")  
+logger = logging.getLogger("enkan.main")  
 
 def main_with_args(args) -> None:
     

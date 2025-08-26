@@ -1,7 +1,7 @@
 import re
 from importlib.metadata import version as _pkg_version, PackageNotFoundError
 
-PACKAGE_NAME = "Slideshow"
+PACKAGE_NAME = "enkan"
 
 try:
     VERSION = _pkg_version(PACKAGE_NAME)

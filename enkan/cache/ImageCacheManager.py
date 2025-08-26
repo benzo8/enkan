@@ -11,7 +11,7 @@ from enkan.plugables.ImageLoaders import ImageLoaders
 from enkan.utils.utils import is_videofile
 from enkan import constants
 
-logger: logging.Logger = logging.getLogger("slideshow.cache")     
+logger: logging.Logger = logging.getLogger("enkan.cache")     
 
 class ImageCacheManager:
     """
