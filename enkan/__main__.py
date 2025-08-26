@@ -25,9 +25,9 @@
 # -----------------------------------------------------------------------------
 
 import logging
-from slideshow.utils.argparse_setup import get_arg_parser
-from slideshow.utils.logging import configure_logging
-from slideshow.main_logic import main_with_args
+from enkan.utils.argparse_setup import get_arg_parser
+from enkan.utils.logging import configure_logging
+from enkan.cli import main_with_args
 
 def main() -> None:
     """Console script / module entry point."""

@@ -6,9 +6,9 @@ from typing import Any, Optional, Literal
 
 # ——— Local ———
 from .TreeNode import TreeNode
-from slideshow.utils import utils
-from slideshow.utils.Defaults import Defaults
-from slideshow.utils.Filters import Filters
+from enkan.utils import utils
+from enkan.utils.Defaults import Defaults
+from enkan.utils.Filters import Filters
 
 
 class Tree:

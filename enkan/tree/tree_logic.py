@@ -5,9 +5,9 @@ from typing import Callable, Literal, Mapping, Optional, Sequence, Tuple, List
 from .Tree import Tree
 from .TreeBuilder import TreeBuilder
 from .TreeNode import TreeNode
-from slideshow.utils.Defaults import Defaults, resolve_mode
-from slideshow.utils.Filters import Filters
-from slideshow.constants import TOTAL_WEIGHT
+from enkan.utils.Defaults import Defaults, resolve_mode
+from enkan.utils.Filters import Filters
+from enkan.constants import TOTAL_WEIGHT
 
 
 def build_tree(

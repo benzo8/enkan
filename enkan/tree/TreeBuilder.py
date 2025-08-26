@@ -5,7 +5,7 @@ from typing import Dict, List, Mapping, Optional
 
 from tqdm import tqdm
 
-import slideshow.utils.utils as utils
+import enkan.utils.utils as utils
 from .TreeNode import TreeNode
 from .Tree import Tree
 from .Grafting import Grafting

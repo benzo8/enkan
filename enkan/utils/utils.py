@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Sequence, List, Set, Optional
 
-from slideshow import constants
+from enkan import constants
 
 def weighted_choice(image_paths: Sequence[str], cum_weights: Sequence[float]) -> str:
     """

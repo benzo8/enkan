@@ -1,5 +1,5 @@
 import argparse
-from slideshow.constants import CX_PATTERN, VERSION
+from enkan.constants import CX_PATTERN, VERSION
 
 
 # Argument parsing setup

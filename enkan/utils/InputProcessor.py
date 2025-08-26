@@ -4,10 +4,10 @@ from typing import Dict, List
 import logging
 from tqdm import tqdm
 
-from slideshow import constants
-from slideshow.tree.Tree import Tree
-from slideshow.utils import utils
-from slideshow.utils.Defaults import parse_mode_string
+from enkan import constants
+from enkan.tree.Tree import Tree
+from enkan.utils import utils
+from enkan.utils.Defaults import parse_mode_string
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class InputProcessor:
         """
         Attempt to load a pickled Tree; return None if version missing/outdated.
         """
-        from slideshow.utils.utils import load_tree_from_file
+        from enkan.utils.utils import load_tree_from_file
         try:
             tree = load_tree_from_file(filename)
         except Exception as e:

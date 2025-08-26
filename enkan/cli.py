@@ -5,10 +5,10 @@ from typing import List
 from itertools import accumulate
 
 # ——— Local ———
-from slideshow.utils.InputProcessor import InputProcessor
-from slideshow.utils.Defaults import Defaults
-from slideshow.utils.Filters import Filters
-from slideshow.tree.tree_logic import (
+from enkan.utils.InputProcessor import InputProcessor
+from enkan.utils.Defaults import Defaults
+from enkan.utils.Filters import Filters
+from enkan.tree.tree_logic import (
     build_tree,
     extract_image_paths_and_weights_from_tree
 )
@@ -39,12 +39,12 @@ def main_with_args(args) -> None:
 
         # Print tree if requested
         if args.printtree:
-            from slideshow.utils.tests import print_tree
+            from enkan.utils.tests import print_tree
             print_tree(defaults, tree.root, max_depth=args.testdepth or 9999)
             return
 
         if args.outputtree:
-            from slideshow.utils.utils import write_tree_to_file
+            from enkan.utils.utils import write_tree_to_file
             base_names = [os.path.splitext(os.path.basename(f))[0] for f in args.input_file]
             output_name = "_".join(base_names) + ".tree"
             output_path = os.path.join(os.getcwd(), output_name)
@@ -62,7 +62,7 @@ def main_with_args(args) -> None:
     cum_weights = list(accumulate(weights))
 
     if args.outputlist:
-        from slideshow.utils.utils import write_image_list
+        from enkan.utils.utils import write_image_list
         # Build output filename
         base_names = [os.path.splitext(os.path.basename(f))[0] for f in args.input_file]
         output_name = "_".join(base_names) + ".lst"
@@ -73,12 +73,12 @@ def main_with_args(args) -> None:
 
     # Test or start the slideshow
     if args.test:
-        from slideshow.utils.tests import test_distribution
+        from enkan.utils.tests import test_distribution
         test_distribution(all_images, cum_weights, args.test, args.testdepth, args.histo, defaults, args.quiet or False)
         return
     
-    from slideshow.mySlideshow.start_slideshow import start_slideshow
+    from enkan.mySlideshow.start_slideshow import start_slideshow
     if not tree:
-        from slideshow.tree.Tree import Tree
+        from enkan.tree.Tree import Tree
         tree = Tree(defaults, filters)
     start_slideshow(tree, all_images, cum_weights, defaults, filters, args.quiet or False, args.interval)
