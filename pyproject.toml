@@ -25,4 +25,4 @@ include = ["enkan*"]
 exclude = ["enkan.tests*", "enkan.*.scratch*"]
 
 [project.scripts]
-slideshow = "enkan.__main__:main"
+enkan = "enkan.__main__:main"
