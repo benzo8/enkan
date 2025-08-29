@@ -29,17 +29,18 @@ from .ZoomPan import ZoomPan
 # Configure logging
 logger: logging.Logger = logging.getLogger("enkan.ui")
 
+
 class ImageSlideshow:
     def __init__(
-        self, 
-        root: TreeNode, 
-        tree: Tree, 
-        image_paths: list, 
-        cum_weights: list, 
-        defaults: Defaults, 
-        filters: Filters, 
+        self,
+        root: TreeNode,
+        tree: Tree,
+        image_paths: list,
+        cum_weights: list,
+        defaults: Defaults,
+        filters: Filters,
         quiet: bool,
-        interval: int | float | None = None
+        interval: int | float | None = None,
     ) -> None:
         self.root: TreeNode = root
         self.original_tree: Tree = tree
@@ -84,7 +85,9 @@ class ImageSlideshow:
         self.mode_label = tk.Label(self.root, bg="black", fg="white", anchor="ne")
 
         # Zoom/Pan controller (binds mouse events on the label)
-        self.zoompan = ZoomPan(self.label, self.screen_width, self.screen_height, on_image_changed=None)
+        self.zoompan = ZoomPan(
+            self.label, self.screen_width, self.screen_height, on_image_changed=None
+        )
 
         self.root.attributes("-fullscreen", True)
         self.root.bind("<space>", self.next_image)
@@ -114,7 +117,9 @@ class ImageSlideshow:
         self.root.bind("<a>", self.toggle_auto_advance)
 
         # Zoom/Pan key bindings (avoid clashing with existing navigation)
-        self.root.bind("=", lambda e: self.zoompan.zoom_in())  # '=' key (shift+'+' also triggers)
+        self.root.bind(
+            "=", lambda e: self.zoompan.zoom_in()
+        )  # '=' key (shift+'+' also triggers)
         self.root.bind("+", lambda e: self.zoompan.zoom_in())
         self.root.bind("-", lambda e: self.zoompan.zoom_out())
         self.root.bind("0", self._reset_zoom)
@@ -133,22 +138,18 @@ class ImageSlideshow:
 
         self.show_image()
         if interval:
-            self.auto_advance_interval = interval
+            self.auto_advance_interval: int | float = interval
             self._schedule_next_image()
             self.auto_advance_running = True
 
     def _reset_zoom(self, event=None) -> None:
         self.zoompan.reset_view()
 
-    def update_slide_show(
-        self, 
-        image_paths: list, 
-        cum_weights: list
-    ) -> None:
+    def update_slide_show(self, image_paths: list, cum_weights: list) -> None:
         """Updates the slideshow with the new set of images and weights."""
         self.image_paths = image_paths
         self.cum_weights = cum_weights
-        self.current_image_index = self.safe_current_image_index(image_paths)
+        self.current_image_index: int = self.safe_current_image_index(image_paths)
         self.manager: ImageCacheManager = self.providers.reset_manager(
             image_paths=image_paths,
             provider_name=self.providers.get_current_provider_name(),
@@ -157,11 +158,7 @@ class ImageSlideshow:
         )
         self.show_image(self.image_paths[self.current_image_index])
 
-    def show_image(
-        self, 
-        image_path: str = None, 
-        record_history: bool = True
-    ) -> None:
+    def show_image(self, image_path: str = None, record_history: bool = True) -> None:
         # Stop existing video playback and clean up resources
         if hasattr(self, "video_player") and self.video_player:
             self.video_player.stop()
@@ -174,7 +171,7 @@ class ImageSlideshow:
             image_path, record_history=record_history
         )
 
-        self.current_image_path = image_path
+        self.current_image_path: str = image_path
         self.current_image_index = self.image_paths.index(image_path)
 
         if image:
@@ -208,7 +205,7 @@ class ImageSlideshow:
             self.video_player.set_media(media)
             self.video_player.audio_set_mute(self.video_muted)
 
-            window_id = self.video_frame.winfo_id()
+            window_id: int = self.video_frame.winfo_id()
             if sys.platform.startswith("win"):
                 self.video_player.set_hwnd(window_id)
             elif sys.platform.startswith("linux"):
@@ -231,13 +228,9 @@ class ImageSlideshow:
         self.show_image()
         self.reset_auto_advance()
 
-# --- Utility Methods ---
+    # --- Utility Methods ---
 
-    def set_provider(
-        self, 
-        provider_name: str, 
-        **provider_kwargs
-    ) -> None:
+    def set_provider(self, provider_name: str, **provider_kwargs) -> None:
         # Easily switch to any provider by name/key
         self.current_provider: str = provider_name
         self.manager: ImageCacheManager = self.providers.select_manager(
@@ -248,21 +241,17 @@ class ImageSlideshow:
         )
         self.update_filename_display()
 
-    def find_node_for_image(
-        self, 
-        image_path: str
-    ) -> TreeNode:
+    def find_node_for_image(self, image_path: str) -> TreeNode:
         # First: specific image mapping
         node: TreeNode = self.original_tree.virtual_image_lookup.get(image_path)
         if node:
             return node
         # Fallback: directory-based
-        return self.original_tree.find_node(os.path.dirname(image_path), self.original_tree.path_lookup)
-    
-    def safe_current_image_index(
-        self, 
-        image_paths: list
-    ) -> int:
+        return self.original_tree.find_node(
+            os.path.dirname(image_path), self.original_tree.path_lookup
+        )
+
+    def safe_current_image_index(self, image_paths: list) -> int:
         number_of_images: int = len(image_paths)
         try:
             current_image_index: int = self.image_paths.index(self.current_image_path)
@@ -271,7 +260,7 @@ class ImageSlideshow:
 
         return current_image_index
 
-    def traverse_directory(self, new_path=None, navigation_node=None):
+    def traverse_directory(self, new_path=None, navigation_node=None) -> None:
         """Set up for a new directory and create an updated slideshow."""
         if navigation_node:
             new_image_paths, new_weights = extract_image_paths_and_weights_from_tree(
@@ -285,7 +274,7 @@ class ImageSlideshow:
                     "proportion": None,
                 }
             }
-            parent_tree = build_tree(
+            parent_tree: Tree.Tree = build_tree(
                 self.defaults, self.filters, parent_image_dirs, None, self.quiet
             )
             new_image_paths, new_weights = extract_image_paths_and_weights_from_tree(
@@ -293,10 +282,10 @@ class ImageSlideshow:
             )
         else:
             logger.debug("No valid directory found.")
-        new_cum_weights = list(accumulate(new_weights))
+        new_cum_weights: list[float] = list(accumulate(new_weights))
         self.update_slide_show(new_image_paths, new_cum_weights)
 
-    def _check_video_ended(self):
+    def _check_video_ended(self) -> None:
         if not self.video_player:
             return
 
@@ -310,9 +299,9 @@ class ImageSlideshow:
 
         self.root.after(500, self._check_video_ended)
 
-# --- Auto Advance Methods ---
+    # --- Auto Advance Methods ---
 
-    def toggle_auto_advance(self, event=None, interval=None):
+    def toggle_auto_advance(self, event=None, interval=None) -> None:
         """
         Toggle the automatic slideshow on/off.
         If enabling, optionally provide a new interval (ms).
@@ -334,7 +323,7 @@ class ImageSlideshow:
 
         self.update_filename_display()
 
-    def _schedule_next_image(self):
+    def _schedule_next_image(self) -> None:
         if getattr(self, "auto_advance_id", None) is not None:
             self.root.after_cancel(self.auto_advance_id)
         self.auto_advance_id = self.root.after(
@@ -342,17 +331,17 @@ class ImageSlideshow:
         )
         self.auto_advance_running = True
 
-    def _advance_image(self):
+    def _advance_image(self) -> None:
         self.show_image()
         self._schedule_next_image()
 
-    def reset_auto_advance(self):
+    def reset_auto_advance(self) -> None:
         if getattr(self, "auto_advance_running", False):
             self._schedule_next_image()
-    
-# -- Keyboard Hooks ---
 
-    def navigate_image_history(self, event=None):
+    # -- Keyboard Hooks ---
+
+    def navigate_image_history(self, event=None) -> None:
         match event.keysym:
             case "Left":
                 image_path, image_obj = self.manager.back()
@@ -364,7 +353,7 @@ class ImageSlideshow:
             self.show_image(image_path, record_history=False)
             self.reset_auto_advance()
 
-    def navigate_image_sequential(self, event=None):
+    def navigate_image_sequential(self, event=None) -> None:
         try:
             match event.keysym:
                 case "Up":
@@ -376,11 +365,13 @@ class ImageSlideshow:
             self.show_image(image_path)
             self.reset_auto_advance()
         except IndexError:
-            logger.debug("navigate_image_sequential: Index out of range for image_paths.")
+            logger.debug(
+                "navigate_image_sequential: Index out of range for image_paths."
+            )
 
-    def delete_image(self, event=None):
+    def delete_image(self, event=None) -> None:
         if self.current_image_path:
-            confirm = messagebox.askyesno(
+            confirm: bool = messagebox.askyesno(
                 "Delete Image",
                 f"Are you sure you want to delete {self.current_image_path}?",
             )
@@ -398,62 +389,85 @@ class ImageSlideshow:
                     self.image_paths.pop(index)
                     self.cum_weights.pop(index)
                     self.manager.history_manager.remove(self.current_image_path)
-                    self.update_slide_show(image_paths=self.image_paths, cum_weights=self.cum_weights)
+                    self.update_slide_show(
+                        image_paths=self.image_paths, cum_weights=self.cum_weights
+                    )
                 except Exception as e:
                     messagebox.showerror("Error", f"Could not delete the image: {e}")
 
-    def toggle_mute(self, event=None):
+    def toggle_mute(self, event=None) -> None:
         if hasattr(self, "video_player") and self.video_player:
-            current_mute = self.video_player.audio_get_mute()
-            new_mute = not current_mute
+            current_mute: bool = self.video_player.audio_get_mute()
+            new_mute: bool = not current_mute
             self.video_player.audio_set_mute(new_mute)
             self.video_muted = new_mute
 
-    def toggle_subfolder_mode(self, event=None):
+    def toggle_subfolder_mode(self, event=None) -> None:
         if not self.subfolder_mode:
             self.subfolder_mode_on()
         else:
             self.subfolder_mode_off()
         self.show_image(self.current_image_path)
 
-    def toggle_navigation_mode(self, event=None):
-        if self.navigation_mode == "branch":
-            self.navigation_node = None
-            self.navigation_mode = "folder"
-        else:
-            self.navigation_node = self.find_node_for_image(self.current_image_path)
-            if self.navigation_node:
-                self.navigation_mode = "branch"
-            else:
-                utils.log(
-                    f"Cannot change mode - {self.current_image_path} not in tree",
-                    self.defaults.debug,
+    def toggle_navigation_mode(self, event=None) -> None:
+        match (self.navigation_mode):
+            case "branch":
+                self.navigation_node = None
+                self.navigation_mode = "folder"
+            case "folder":
+                self.navigation_node: TreeNode = self.find_node_for_image(
+                    self.current_image_path
                 )
-                return
+                if self.navigation_node:
+                    self.navigation_mode = "branch"
+                else:
+                    logger.warning(
+                        "Cannot change mode - %s not in tree", self.current_image_path
+                    ),
+                    return
         self.reset_parent_mode()
         self.update_filename_display()
 
-    def subfolder_mode_on(self):
-        folder = os.path.dirname(self.current_image_path)
-        self.subFolderStack.push(folder, self.image_paths, self.cum_weights)
+    def subfolder_mode_on(self) -> None:
+        match (self.navigation_mode):
+            case "folder":
+                folder: str = os.path.dirname(self.current_image_path)
+                self.subFolderStack.push(folder, self.image_paths, self.cum_weights)
 
-        temp_image_paths = [
-            path for path in self.image_paths if path.startswith(folder)
-        ]
-        temp_weights = [1] * len(temp_image_paths)
-        self.subfolder_mode = True
-        temp_cum_weights = list(accumulate(temp_weights))
-        self.update_slide_show(image_paths=temp_image_paths, cum_weights=temp_cum_weights)
+                temp_image_paths = [
+                    path for path in self.image_paths if path.startswith(folder)
+                ]
+                temp_weights: list[int] = [1] * len(temp_image_paths)
+                self.subfolder_mode = True
+            case "branch":
+                node: TreeNode = self.find_node_for_image(self.current_image_path)
+                if not node:
+                    logger.debug(
+                        "subfolder_mode_on: No valid node found for current image."
+                    )
+                    return
+                self.subFolderStack.push(node.name, self.image_paths, self.cum_weights)
+                self.subfolder_mode = True
+                temp_image_paths, temp_weights = (
+                    extract_image_paths_and_weights_from_tree(
+                        tree=self.original_tree, start_node=node
+                    )
+                )
 
-    def subfolder_mode_off(self):
-        _, self.image_paths, self.cum_weights = self.subFolderStack.pop()
-        self.number_of_images = len(
-            self.image_paths
+        temp_cum_weights: list[int] = list(accumulate(temp_weights))
+        self.update_slide_show(
+            image_paths=temp_image_paths, cum_weights=temp_cum_weights
         )
-        self.subfolder_mode = False
-        self.update_slide_show(image_paths=self.image_paths, cum_weights=self.cum_weights)
 
-    def select_mode(self, event=None):
+    def subfolder_mode_off(self) -> None:
+        _, self.image_paths, self.cum_weights = self.subFolderStack.pop()
+        self.number_of_images = len(self.image_paths)
+        self.subfolder_mode = False
+        self.update_slide_show(
+            image_paths=self.image_paths, cum_weights=self.cum_weights
+        )
+
+    def select_mode(self, event=None) -> None:
         match event.char.upper():
             case "C":
                 self.set_provider("random")
@@ -464,22 +478,22 @@ class ImageSlideshow:
             case "B":
                 self.set_provider("burst", cum_weights=self.cum_weights, burst_size=5)
 
-# -- Parent Mode Navigation ---
+    # -- Parent Mode Navigation ---
 
-    def navigate_up(self):
+    def navigate_up(self) -> None:
         if self.parentFolderStack.is_full() or not self.parent_mode:
             logger.warning("Cannot navigate up - Stack is full or not in parent mode.")
             return
 
-        current_path = os.path.dirname(self.current_image_path)
+        current_path: str = os.path.dirname(self.current_image_path)
         current_top = self.parentFolderStack.read_top()
         child_path = None
 
         if self.navigation_mode == "folder":
             if utils.contains_subdirectory(current_top):
-                current_path_level = utils.level_of(current_top)
-                child_level = current_path_level + 1
-                child_path = utils.truncate_path(current_path, child_level)
+                current_path_level: int = utils.level_of(current_top)
+                child_level: int = current_path_level + 1
+                child_path: str = utils.truncate_path(current_path, child_level)
 
                 if child_path == self.parentFolderStack.read_top(2):
                     self.step_backwards()
@@ -496,8 +510,8 @@ class ImageSlideshow:
             current_path_node = self.original_tree.find_node(
                 current_path, self.original_tree.path_lookup
             )
-            path = []
-            node = current_path_node
+            path: list = []
+            node: TreeNode = current_path_node
             while node and node != self.navigation_node:
                 path.append(node)
                 node = node.parent
@@ -511,21 +525,23 @@ class ImageSlideshow:
 
         self.traverse_directory(child_path, self.navigation_node)
 
-    def navigate_down(self):
+    def navigate_down(self) -> None:
         parent_path = None
 
         match (self.navigation_mode, self.parent_mode):
             case ("folder", False):
-                current_path = os.path.dirname(self.current_image_path)
-                current_path_level = utils.level_of(current_path)
+                current_path: str = os.path.dirname(self.current_image_path)
+                current_path_level: int = utils.level_of(current_path)
                 for i in range(current_path_level - 1, 1, -1):
-                    parent_level = i
-                    parent_path = utils.truncate_path(current_path, parent_level)
+                    parent_level: int = i
+                    parent_path: str = utils.truncate_path(current_path, parent_level)
                     if utils.contains_subdirectory(
                         parent_path
                     ) > 1 or utils.contains_files(parent_path):
                         break
-                self.parentFolderStack.push(parent_path, self.image_paths, self.cum_weights)
+                self.parentFolderStack.push(
+                    parent_path, self.image_paths, self.cum_weights
+                )
             case ("folder", True):
                 previous_path = self.parentFolderStack.read_top()
                 parent_level = utils.level_of(previous_path) - 1
@@ -533,23 +549,27 @@ class ImageSlideshow:
                 if parent_path == self.parentFolderStack.read_top(2):
                     self.step_backwards()
                     return
-                self.parentFolderStack.push(parent_path, self.image_paths, self.cum_weights)
+                self.parentFolderStack.push(
+                    parent_path, self.image_paths, self.cum_weights
+                )
             case ("branch", False):
-                self.navigation_node = self.find_node_for_image(self.current_image_path).parent
+                self.navigation_node = self.find_node_for_image(
+                    self.current_image_path
+                ).parent
             case ("branch", True):
                 self.navigation_node = self.navigation_node.parent
 
         self.parent_mode = True
         self.traverse_directory(parent_path, self.navigation_node)
 
-    def step_backwards(self):
+    def step_backwards(self) -> None:
         if self.parentFolderStack.is_empty():
             logger.warning("Cannot step back - Stack is empty.")
             return
         _, images, cum_weights = self.parentFolderStack.pop()
         self.update_slide_show(images, cum_weights)
 
-    def follow_branch_down(self, event=None):
+    def follow_branch_down(self, event=None) -> None:
         if self.subfolder_mode:
             self.toggle_subfolder_mode()
             return
@@ -558,14 +578,14 @@ class ImageSlideshow:
         else:
             self.navigate_down()
 
-    def follow_branch_up(self, event=None):
+    def follow_branch_up(self, event=None) -> None:
         if self.subfolder_mode:
             self.subfolder_mode = False
             self.show_image(self.current_image_path)
             return
         self.navigate_up()
 
-    def reset_parent_mode(self, event=None):
+    def reset_parent_mode(self, event=None) -> None:
         self.parent_mode = False
         self.subfolder_mode = False
         self.parentFolderStack.clear()
@@ -575,24 +595,27 @@ class ImageSlideshow:
         self.show_image(self.image_paths[self.current_image_index])
         logger.debug("Parent mode reset and modes updated.")
 
-# --- Filename and Mode Display Methods ---
+    # --- Filename and Mode Display Methods ---
 
-    def toggle_filename_display(self, event=None):
-        self.show_filename = not self.show_filename
+    def toggle_filename_display(self, event=None) -> None:
+        self.show_filename: bool = not self.show_filename
         self.update_filename_display()
 
-    def update_filename_display(self):
+    def update_filename_display(self) -> None:
         if self.show_filename:
             fixed_colour = None
             fixed_path = None
             self.filename_label.config(state=tk.NORMAL)
             self.filename_label.delete("1.0", tk.END)
-            label_path = self.current_image_path
+            label_path: str = self.current_image_path
             if self.navigation_mode == "branch":
-                label_path = os.path.join(self.find_node_for_image(self.current_image_path).name, os.path.basename(self.current_image_path))
+                label_path = os.path.join(
+                    self.find_node_for_image(self.current_image_path).name,
+                    os.path.basename(self.current_image_path),
+                )
             match (self.navigation_mode, self.parent_mode, self.subfolder_mode):
                 case ("folder", True, False):
-                    fixed_path = self.parentFolderStack.read_top()
+                    fixed_path: str = self.parentFolderStack.read_top()
                     fixed_colour = "gold"
                 case ("folder", _, True):
                     fixed_path = self.subFolderStack.read_top()
@@ -602,14 +625,14 @@ class ImageSlideshow:
                     fixed_colour = "lightgreen"
                 case ("branch", _, True):
                     fixed_path = self.original_tree.find_node(
-                        self.subFolderStack.read_top(), self.original_tree.path_lookup
+                        self.subFolderStack.read_top(), self.original_tree.node_lookup
                     ).name
                     fixed_colour = "tomato"
 
             if fixed_colour:
                 if label_path.startswith(fixed_path):
-                    fixed_portion = fixed_path
-                    remaining_portion = label_path[len(fixed_path) :]
+                    fixed_portion: str = fixed_path
+                    remaining_portion: str = label_path[len(fixed_path) :]
                 else:
                     fixed_portion = ""
                     remaining_portion = label_path
@@ -626,15 +649,15 @@ class ImageSlideshow:
             self.filename_label.config(height=1, width=len(label_path) + 10, bg="black")
             self.filename_label.config(state=tk.DISABLED)
 
-            mode_text = (
+            mode_text: str = (
                 self.providers.get_current_provider_name()[0:3].upper()
                 if self.mode
                 else "-"
             )
             if self.subfolder_mode:
                 mode_text += " SUB"
-                count = len(self.image_paths)
-                idx = self.image_paths.index(self.current_image_path) + 1
+                count: int = len(self.image_paths)
+                idx: int = self.image_paths.index(self.current_image_path) + 1
                 mode_text = f"({idx}/{count}) {mode_text}"
             elif self.parent_mode:
                 mode_text += f" P{self.parentFolderStack.len()}"
@@ -644,7 +667,7 @@ class ImageSlideshow:
             else:
                 mode_text = f"({self.current_image_index + 1}/{self.number_of_images}) {mode_text}"
 
-            display_text = mode_text
+            display_text: str = mode_text
             if (
                 hasattr(self, "auto_advance_running")
                 and self.auto_advance_running
@@ -663,15 +686,15 @@ class ImageSlideshow:
             self.mode_label.place_forget()
         self.root.update_idletasks()
 
-# --- Image Manipulation Methods ---
+    # --- Image Manipulation Methods ---
 
-    def rotate_image(self, event=None):
+    def rotate_image(self, event=None) -> None:
         self.rotation_angle = (self.rotation_angle - 90) % 360
         self.show_image(self.current_image_path)
 
-# --- Exit Method ---
+    # --- Exit Method ---
 
-    def exit_slideshow(self, event=None):
+    def exit_slideshow(self, event=None) -> None:
         self.manager.lru_cache.clear()
         self.manager.preload_queue.clear()
         if hasattr(self, "video_player") and self.video_player:

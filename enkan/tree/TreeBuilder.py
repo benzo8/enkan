@@ -99,7 +99,9 @@ class TreeBuilder:
                 "is_percentage": data.get("is_percentage", True),
                 "proportion": data.get("proportion", None),
                 "mode_modifier": data.get("mode_modifier"),
-                "images": [],  # intentionally empty
+                "flat": data.get("flat", False),
+                "video": data.get("video", None),
+                "images": [],
             },
         )
 
@@ -149,14 +151,13 @@ class TreeBuilder:
         )
         if not images:
             return
-
-        path_level: int = self.tree.calculate_level(path)
+        
         if dirs:
             # Directory with both subdirs and images → special 'images' branch
-            self.add_images_branch(path, images, path_level + 1, data)
+            self.add_images_branch(path, images, data)
         else:
             # Terminal (no subdirs) → regular branch
-            self.add_regular_branch(path, images, path_level, data)
+            self.add_regular_branch(path, images, data)
 
     def add_flat_branch(
         self,
@@ -223,7 +224,6 @@ class TreeBuilder:
         self,
         path: str,
         images: List[str],
-        level: int,
         data: ImageDirConfig,
     ) -> None:
         """
@@ -245,7 +245,6 @@ class TreeBuilder:
         self,
         path: str,
         images: List[str],
-        level: int,
         data: ImageDirConfig,
     ) -> None:
         """
@@ -267,6 +266,7 @@ class TreeBuilder:
                     "is_percentage": data.get("is_percentage", True),
                     "proportion": None,
                     "mode_modifier": data.get("mode_modifier"),
+                    "video": data.get("video", None),
                     "images": images,
                 },
             )

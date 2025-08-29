@@ -209,6 +209,10 @@ class InputProcessor:
             return None, None
 
         # Initialize default modifiers
+        # Can be global: video, mute, mode_modifier, dont_recurse
+        # Can be inherited: weight_modifier, is_percentage, video
+        # Node-only: proportion, graft_level, group, flat
+        
         weight_modifier = 100
         proportion = None
         is_percentage = True
