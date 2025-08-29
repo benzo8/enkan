@@ -1,13 +1,16 @@
 from __future__ import annotations
-
+import logging
 from typing import Callable, Literal, Mapping, Optional, Sequence, Tuple, List
 
 from .Tree import Tree
 from .TreeBuilder import TreeBuilder
 from .TreeNode import TreeNode
 from enkan.utils.Defaults import Defaults, resolve_mode
+from enkan.utils.tests import report_branch_weight_sums
 from enkan.utils.Filters import Filters
 from enkan.constants import TOTAL_WEIGHT
+
+logger: logging.Logger = logging.getLogger("__name__")
 
 
 def build_tree(
@@ -137,8 +140,12 @@ def calculate_weights(tree: Tree) -> None:
                 for n in unset_nodes:
                     n.proportion = per_node
             else:
-                slope_value: int | Sequence[int] = slope[0] if isinstance(slope, (list, tuple)) else slope
-                image_counts: List[int] = [max(1, count_fn(n)) for n in unset_nodes]  # avoid zero
+                slope_value: int | Sequence[int] = (
+                    slope[0] if isinstance(slope, (list, tuple)) else slope
+                )
+                image_counts: List[int] = [
+                    max(1, count_fn(n)) for n in unset_nodes
+                ]  # avoid zero
                 if slope_value >= 0:
                     exp = 1 - (slope_value / 100)
                     exp: float = max(0.01, exp)
@@ -152,7 +159,9 @@ def calculate_weights(tree: Tree) -> None:
                     n.proportion = remaining * (p / total_powered)
 
         # Renormalize to exactly 100
-        total: float | Literal[0] = sum(n.proportion for n in nodes if n.proportion is not None)
+        total: float | Literal[0] = sum(
+            n.proportion for n in nodes if n.proportion is not None
+        )
         if total:
             factor: float = 100 / total
             for n in nodes:
@@ -176,8 +185,12 @@ def calculate_weights(tree: Tree) -> None:
         if node.proportion is None:
             # If still unset, give remaining equally (single node fallback)
             node.proportion = 100.0
-        apportioned_weight = TOTAL_WEIGHT * (node.proportion / 100)
+        apportioned_weight: float = TOTAL_WEIGHT * (node.proportion / 100)
         _process_node(node, apportioned_weight)
+
+    # DIAGNOSTIC REPORT (optional)
+    if logger.isEnabledFor(logging.DEBUG):
+        report_branch_weight_sums(starting_nodes)
 
 
 def extract_image_paths_and_weights_from_tree(

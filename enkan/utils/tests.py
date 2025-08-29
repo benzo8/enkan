@@ -1,6 +1,7 @@
 import os
 import random
 import time
+import logging
 from functools import wraps
 from collections import defaultdict
 from tqdm import tqdm
@@ -8,6 +9,9 @@ from tqdm import tqdm
 from enkan.constants import TOTAL_WEIGHT
 from enkan.utils.Defaults import resolve_mode
 from enkan.utils.utils import weighted_choice
+from enkan.tree.TreeNode import TreeNode
+
+logger: logging.Logger = logging.getLogger("enkan.tests")
 
 
 def timeit(func):
@@ -16,8 +20,11 @@ def timeit(func):
         start_time = time.perf_counter()
         result = func(*args, **kwargs)
         end_time = time.perf_counter()
-        print(f"Function {func.__name__} executed in {end_time - start_time:.4f} seconds")
+        print(
+            f"Function {func.__name__} executed in {end_time - start_time:.4f} seconds"
+        )
         return result
+
     return wrapper
 
 
@@ -56,7 +63,10 @@ def print_tree(
     for child in node.children:
         print_tree(defaults, child, indent + " + ", current_depth + 1, max_depth)
 
-def test_distribution(image_nodes, cum_weights, iterations, testdepth, histo, defaults, quiet=False):    
+
+def test_distribution(
+    image_nodes, cum_weights, iterations, testdepth, histo, defaults, quiet=False
+):
     hit_counts = defaultdict(int)
     for _ in tqdm(range(iterations), desc="Iterating tests", disable=quiet):
         if defaults.is_random:
@@ -78,12 +88,14 @@ def test_distribution(image_nodes, cum_weights, iterations, testdepth, histo, de
         print(
             f"Directory: {directory}, Hits: {count}, %age: {count / iterations * 100:.2f}%, Weight: {count / total_images * TOTAL_WEIGHT:.2f}"
         )
-        
+
     if histo:
         plot_distribution_histogram(directory_counts, iterations)
-        
+
+
 def plot_distribution_histogram(directory_counts, iterations):
     import matplotlib.pyplot as plt
+
     """
     Plots a histogram of hit counts per directory, ordered from least to most.
     """
@@ -116,7 +128,8 @@ def plot_distribution_histogram(directory_counts, iterations):
 
     plt.tight_layout()
     plt.show()
-        
+
+
 def test_node_lookup_consistency(tree) -> bool:
     """
     Test that every entry in tree.node_lookup has a key matching its node's name.
@@ -138,3 +151,54 @@ def test_node_lookup_consistency(tree) -> bool:
     else:
         print("node_lookup consistency check FAILED.")
     return all_good
+
+
+def _sum_leaf_image_weights(node: TreeNode) -> float:
+    """
+    Sum the total effective weight contributed by images in this subtree.
+    For a node:
+        - if is_percentage: each image gets node.weight / num_images, sum = node.weight
+        - if not is_percentage: each image gets node.weight / weight_modifier
+        (this can cause sum != node.weight if num_images != weight_modifier)
+    """
+    total = 0.0
+    if node.images:
+        if node.is_percentage:
+            total += node.weight
+        else:
+            # safeguard against zero modifier
+            denom = node.weight_modifier if node.weight_modifier else 1
+            total += (node.weight / denom) * len(node.images)
+    for c in node.children:
+        total += _sum_leaf_image_weights(c)
+    return total
+
+
+def _sum_node_weights(node: TreeNode) -> float:
+    """Sum node.weight for this subtree (diagnostic only)."""
+    s = node.weight or 0.0
+    for c in node.children:
+        s += _sum_node_weights(c)
+    return s
+
+
+def report_branch_weight_sums(start_nodes: list[TreeNode]) -> None:
+    lines: list[str] = []
+    grand_leaf = 0.0
+    grand_nodes = 0.0
+    for sn in start_nodes:
+        leaf = _sum_leaf_image_weights(sn)
+        nodes_sum = _sum_node_weights(sn)
+        grand_leaf += leaf
+        grand_nodes += nodes_sum
+        lines.append(
+            f"[weights] branch='{sn.name}' "
+            f"leaf_total={leaf:.4f} node_weight_sum={nodes_sum:.4f}"
+        )
+    lines.append(
+        f"[weights] aggregate leaf_total={grand_leaf:.4f} "
+        f"TOTAL_WEIGHT={TOTAL_WEIGHT:.4f} "
+        f"(diff={grand_leaf - TOTAL_WEIGHT:.6f})"
+    )
+    for line in lines:
+        logger.debug(line)

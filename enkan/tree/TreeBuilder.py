@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import os
-from typing import Dict, List, Mapping, Optional
+from typing import Dict, List, Mapping, Optional, Literal
 
 from tqdm import tqdm
 
+from enkan.tree.TreeNode import TreeNode
+from enkan.utils.Filters import Filters
 import enkan.utils.utils as utils
-from .TreeNode import TreeNode
 from .Tree import Tree
 from .Grafting import Grafting
 
@@ -58,34 +59,20 @@ class TreeBuilder:
             leave=False,
         ) as pbar:
             for root, data in image_dirs.items():
-                # Skip nonexistent roots early (helps catch typos)
                 if not os.path.isdir(root):
-                    # (Optional: emit a warning via utils.log if you have one)
                     continue
 
-                # Only construct branch structure if not already present
-                node: TreeNode | None = self.tree.find_node(
-                    root, lookup_dict=self.tree.path_lookup
-                )
-                if not node:
-                    if data.get("flat", False):
-                        self.add_flat_branch(root, data, pbar)
-                    else:
-                        self.process_directory(root, data, pbar)
-                else:
-                    # Ensure the is updated with current metadata
-                    self.tree.update_node(
-                        node,
-                        {
-                            "weight_modifier": data.get("weight_modifier", 100),
-                            "is_percentage": data.get("is_percentage", True),
-                            "proportion": data.get("proportion"),
-                            "mode_modifier": data.get("mode_modifier"),
-                            "images": [],  # directory node itself holds no direct images here
-                        },
-                    )
+                # 1. Ensure a structural node exists up-front so metadata (proportion, weight_modifier, etc.)
+                #    is not lost if the directory itself has zero images.
+                self._ensure_structural_root_node(root, data)
 
-                # Grafting (after node exists)
+                # 2. Populate children / image branches unless flat
+                if data.get("flat", False):
+                    self.add_flat_branch(root, data, pbar)
+                else:
+                    self.process_directory(root, data, pbar)
+
+                # 3. Grafting after node exists
                 self.grafting.handle_grafting(
                     root,
                     data.get("graft_level"),
@@ -94,6 +81,27 @@ class TreeBuilder:
 
         if specific_images:
             self.process_specific_images(specific_images)
+
+    # --- new helper ----------------------------------------------------------
+
+    def _ensure_structural_root_node(self, root: str, data: ImageDirConfig) -> None:
+        """
+        Create an empty node for the root directory if it does not already exist,
+        so that its metadata (weight_modifier / proportion / mode_modifier) participates
+        in later weight calculations even if the root has no direct images.
+        """
+        if root in self.tree.path_lookup:
+            return
+        self.tree.create_node(
+            root,
+            {
+                "weight_modifier": data.get("weight_modifier", 100),
+                "is_percentage": data.get("is_percentage", True),
+                "proportion": data.get("proportion", None),
+                "mode_modifier": data.get("mode_modifier"),
+                "images": [],  # intentionally empty
+            },
+        )
 
     def process_directory(
         self,
@@ -104,20 +112,19 @@ class TreeBuilder:
         """
         Walk a root directory, adding nodes (regular or 'images' sub-branches).
         """
-        root_level = utils.level_of(root)
-        filters = self.tree.filters
+        filters: Filters = self.tree.filters
 
         for path, dirs, files in os.walk(root, topdown=True):
-            result = filters.passes(path)
+            result: Literal[1] | Literal[2] | Literal[3] | Literal[0] = filters.passes(path)
             if result in (0, 3):
                 # Treat discovered files as processed for progress
-                file_count = len(files)
+                file_count: int = len(files)
                 if file_count:
                     pbar.total += file_count
                     pbar.desc = f"Processing {path}"
                     pbar.update(file_count)
                     pbar.refresh()
-                self.process_path(path, files, dirs, data, root_level)
+                self.process_path(path, files, dirs, data)
             # Prune (stop descending) if result is 1 or 3 OR global dont_recurse
             if result in (1, 3) or self.tree.defaults.dont_recurse:
                 del dirs[:]  # modifies in-place
@@ -128,14 +135,13 @@ class TreeBuilder:
         files: List[str],
         dirs: List[str],
         data: ImageDirConfig,
-        root_level: int,
     ) -> None:
         """
         For a given filesystem path, decide how to add it to the tree depending
         on whether it contains images and subdirectories.
         """
-        include_video = utils.is_videoallowed(data.get("video"), self.tree.defaults)
-        images = utils.filter_valid_files(
+        include_video: bool = utils.is_videoallowed(data.get("video"), self.tree.defaults)
+        images: List[str] = utils.filter_valid_files(
             path,
             files,
             self.tree.filters.ignored_files,
@@ -144,7 +150,7 @@ class TreeBuilder:
         if not images:
             return
 
-        path_level = self.tree.calculate_level(path)
+        path_level: int = self.tree.calculate_level(path)
         if dirs:
             # Directory with both subdirs and images → special 'images' branch
             self.add_images_branch(path, images, path_level + 1, data)
@@ -162,12 +168,12 @@ class TreeBuilder:
         Flatten a directory tree into one node accumulating all images.
         """
         traversed_paths: List[str] = []
-        include_video = utils.is_videoallowed(data.get("video"), self.tree.defaults)
+        include_video: bool = utils.is_videoallowed(data.get("video"), self.tree.defaults)
 
         def collect_images(root_dir: str) -> List[str]:
             images_accum: List[str] = []
             for dir_path, _, files in os.walk(root_dir):
-                valid_files = [
+                valid_files: List[str] = [
                     f
                     for f in files
                     if utils.is_imagefile(f)
@@ -175,7 +181,7 @@ class TreeBuilder:
                 ]
                 if valid_files:
                     traversed_paths.append(dir_path)
-                    count = len(valid_files)
+                    count: int = len(valid_files)
                     pbar.total += count
                     pbar.update(count)
                     pbar.refresh()
@@ -185,18 +191,28 @@ class TreeBuilder:
         pbar.desc = f"Flattening {path}"
         pbar.refresh()
 
-        images = collect_images(path)
+        images: List[str] = collect_images(path)
 
-        self.tree.create_node(
-            path,
-            {
-                "weight_modifier": data.get("weight_modifier", 100),
-                "is_percentage": data.get("is_percentage", True),
-                "proportion": None,
-                "mode_modifier": data.get("mode_modifier"),
-                "images": images,
-            },
-        )
+        node: TreeNode | None = self.tree.path_lookup.get(path)
+        if node:
+            # Update existing node (e.g. structural root)
+            self.tree.update_node(
+                node,
+                {
+                    "images": images,
+                },
+            )
+        else:
+            self.tree.create_node(
+                path,
+                {
+                    "weight_modifier": data.get("weight_modifier", 100),
+                    "is_percentage": data.get("is_percentage", True),
+                    "proportion": data.get("proportion", None),
+                    "mode_modifier": data.get("mode_modifier"),
+                    "images": images,
+                },
+            )
 
         # Alias every traversed sub-path to the flattened node
         flattened_node = self.tree.path_lookup[path]
@@ -219,7 +235,7 @@ class TreeBuilder:
             {
                 "weight_modifier": 100,
                 "is_percentage": True,
-                "proportion": None,
+                "proportion": data.get("proportion", None),
                 "mode_modifier": data.get("mode_modifier"),
                 "images": images,
             },
@@ -235,16 +251,25 @@ class TreeBuilder:
         """
         Create/overwrite a normal node that directly holds images.
         """
-        self.tree.create_node(
-            path,
-            {
-                "weight_modifier": data.get("weight_modifier", 100),
-                "is_percentage": data.get("is_percentage", True),
-                "proportion": data.get("proportion", None),
-                "mode_modifier": data.get("mode_modifier"),
-                "images": images,
-            },
-        )
+        node: TreeNode | None = self.tree.path_lookup.get(path)
+        if node:
+            self.tree.update_node(
+                node,
+                {
+                    "images": images,
+                },
+            )
+        else:
+            self.tree.create_node(
+                path,
+                {
+                    "weight_modifier": data.get("weight_modifier", 100),
+                    "is_percentage": data.get("is_percentage", True),
+                    "proportion": None,
+                    "mode_modifier": data.get("mode_modifier"),
+                    "images": images,
+                },
+            )
 
     def process_specific_images(
         self,

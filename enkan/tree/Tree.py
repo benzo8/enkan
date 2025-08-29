@@ -6,7 +6,6 @@ from typing import Any, Optional, Literal
 
 # ——— Local ———
 from .TreeNode import TreeNode
-from enkan.utils import utils
 from enkan.utils.Defaults import Defaults
 from enkan.utils.Filters import Filters
 
@@ -71,16 +70,33 @@ class Tree:
         self.add_node(new_node, self.convert_path_to_tree_format(parent_path))
 
     def update_node(self, node: TreeNode, node_data: dict | None = None) -> None:
-        if node:
-            # Overwrite core attributes
+        """
+        Update only the attributes explicitly present as keys in node_data.
+
+        node_data may contain any subset of:
+            weight_modifier, is_percentage, proportion, mode_modifier, images
+
+        Keys not present are left unchanged. (None values are applied—treat them as explicit.)
+        """
+        if node is None or not node_data:
+            return
+
+        if "weight_modifier" in node_data:
             node.weight_modifier = node_data["weight_modifier"]
+        if "is_percentage" in node_data:
             node.is_percentage = node_data["is_percentage"]
+        if "proportion" in node_data:
             node.proportion = node_data["proportion"]
+        if "mode_modifier" in node_data:
             node.mode_modifier = node_data["mode_modifier"]
-            """
-            TODO: Fix adding images to existing virtual nodes without duplicating images in other node types
-            """
-            # node.images.extend(node_data["images"])
+        if "images" in node_data:
+            # Replace only if explicitly provided
+            node.images = node_data["images"]
+
+        """
+        TODO: If later you want to merge images instead of replace, add a flag
+              e.g. if node_data.get("append_images"): node.images.extend(...)
+        """
 
     def detach_node(self, node: TreeNode) -> None:
         if node.parent:
@@ -96,23 +112,84 @@ class Tree:
         self.path_lookup[new_node.path] = new_node
 
     def ensure_parent_exists(self, path: str) -> TreeNode:
-        path_components: list[str] = path.split(os.path.sep)
-        current_node_path: str = (
-            utils.get_drive_or_root(path_components[0]) if path_components else ""
-        )
-        current_node: TreeNode = self.root
+        """
+        Ensure that all intermediate nodes for the given path exist.
 
-        for component in path_components[1:]:
-            next_node_path: str = os.path.join(current_node_path, component)
-            next_node_name: str = self.convert_path_to_tree_format(next_node_path)
-            node: TreeNode | None = self.node_lookup.get(next_node_name)
+        Supports:
+            - Tree-format names:     root\\foo\\bar\\baz
+            - Windows drive paths:   C:\\foo\\bar\\baz
+            - UNC paths:             \\\\server\\share\\dept\\set
+
+        Not supported / rejected:
+            - Relative paths (no drive, no UNC, not starting with 'root')
+        """
+        if not path:
+            return self.root
+
+        # Normalise separators
+        norm: str = os.path.normpath(path)
+
+        # Branch: tree-format (starts with 'root' component)
+        if norm.lower() == "root":
+            return self.root
+        if norm.lower().startswith("root" + os.path.sep):
+            parts = [p for p in norm.split(os.path.sep) if p]
+            # parts[0] is 'root'; build from parts[1:]
+            current_node: TreeNode = self.root
+            built_path = ""  # store subtree path without 'root' prefix
+            for segment in parts[1:]:
+                built_path: str = segment if not built_path else os.path.join(built_path, segment)
+                node_name: str = os.path.join("root", *built_path.split(os.path.sep)).lower()
+                node: TreeNode | None = self.node_lookup.get(node_name)
+                if node is None:
+                    node = TreeNode(name=node_name, path=built_path)
+                    current_node.add_child(node)
+                    self.node_lookup[node_name] = node
+                    self.path_lookup[built_path] = node
+                current_node = node
+            return current_node
+
+        # Windows UNC?
+        is_unc: bool = norm.startswith("\\\\")
+        drive, tail = os.path.splitdrive(norm)
+
+        parts: list[str]
+        start_index = 0
+        built_path = ""
+
+        if is_unc and not drive:
+            parts = [p for p in norm.split(os.path.sep) if p]
+            if len(parts) < 2:
+                raise ValueError(f"Malformed UNC path: {path}")
+            built_path = f"\\\\{parts[0]}\\{parts[1]}"
+            start_index = 2
+        else:
+            if drive:
+                parts = [p for p in tail.split(os.path.sep) if p]
+                built_path = drive + os.path.sep  # e.g. 'C:\\'
+            else:
+                # Relative path => reject (we do not support)
+                raise ValueError(f"Relative paths not supported: {path}")
+
+        current_node = self.root
+
+        for segment in parts[start_index:]:
+            if built_path and not built_path.endswith(os.path.sep) and not built_path.startswith("\\\\"):
+                next_path: str = os.path.join(built_path, segment)
+            else:
+                next_path = os.path.join(built_path, segment) if built_path else segment
+
+            node_name = self.convert_path_to_tree_format(next_path)
+            node = self.node_lookup.get(node_name)
             if node is None:
-                node = TreeNode(name=next_node_name, path=next_node_path)
+                node = TreeNode(name=node_name, path=next_path)
                 current_node.add_child(node)
-                self.node_lookup[next_node_name] = node
-                self.path_lookup[next_node_path] = node
+                self.node_lookup[node_name] = node
+                self.path_lookup[next_path] = node
+
             current_node = node
-            current_node_path = next_node_path
+            built_path = next_path
+
         return current_node
 
     def convert_path_to_tree_format(self, path: str) -> str:

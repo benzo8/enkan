@@ -50,8 +50,8 @@ class Grafting:
         levelled_name: str = t.convert_path_to_tree_format(
             t.set_path_to_level(root, graft_level, group)
         )
-        parent_path: str = os.path.dirname(levelled_name)
-        parent_node: TreeNode = t.ensure_parent_exists(parent_path)
+        parent_name: str = os.path.dirname(levelled_name)
+        parent_node: TreeNode = t.ensure_parent_exists(parent_name)
 
         # Detach and re-parent
         t.detach_node(current_node)
