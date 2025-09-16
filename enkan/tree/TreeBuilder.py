@@ -255,6 +255,9 @@ class TreeBuilder:
             self.tree.update_node(
                 node,
                 {
+                    "weight_modifier": data.get("weight_modifier", 100),
+                    "proportion": data.get("proportion", None),
+                    "mode_modifier": data.get("mode_modifier"),
                     "images": images,
                 },
             )
