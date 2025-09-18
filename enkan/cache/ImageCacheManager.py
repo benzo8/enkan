@@ -1,5 +1,4 @@
 import threading
-import time
 import logging
 
 from PIL import Image
@@ -31,6 +30,7 @@ class ImageCacheManager:
 
         self._lock = threading.Lock()
         self._refill_thread = None
+        self._provider_lock = threading.Lock()
 
         # Initial preload (async if background=True)
         if self.background_preload:
@@ -42,18 +42,16 @@ class ImageCacheManager:
     # Preload
     # -----------------------
 
+    def _provider_next(self) -> str:
+        """Thread-safe wrapper around the image provider."""
+        with self._provider_lock:
+            return next(self.image_provider)
+
     def _preload_refill(self) -> None:
         """Fill preload queue fully."""
         while len(self.preload_queue) < self.preload_queue.max_size:
             try:
-                image_path: str = next(self.image_provider)
-            except ValueError as e:
-                if "generator already executing" in str(e):
-                    logger.debug("Generator busy, waiting before retry...")
-                    time.sleep(0.01)  # Wait 10ms before retrying
-                    continue
-                else:
-                    raise
+                image_path: str = self._provider_next()
             except StopIteration:
                 break  # For linear/sequential provider; random providers never stop
             if image_path is None:
@@ -116,26 +114,11 @@ class ImageCacheManager:
                 image_path, image_obj = next(iter(popped.items()))
                 source = "PreloadQueue"
             else:
-                retry_count = 0
-                max_retries = 10
-                while True:
-                    try:
-                        image_path = next(self.image_provider)
-                        break
-                    except ValueError as e:
-                        if "generator already executing" in str(e):
-                            if retry_count >= max_retries:
-                                logger.debug("Generator busy after max retries, giving up.")
-                                return None, None
-                            logger.debug("Generator busy in get_next, waiting before retry...")
-                            time.sleep(0.01)  # Wait 10ms before retrying
-                            retry_count += 1
-                            continue
-                        else:
-                            raise
-                    except StopIteration:
-                        logger.debug("No image provided (empty provider).")
-                        return None, None
+                try:
+                    image_path = self._provider_next()
+                except StopIteration:
+                    logger.debug("No image provided (empty provider).")
+                    return None, None
                 image_obj = self._load_image(image_path)
                 source = "Disk"
         else:
@@ -190,6 +173,21 @@ class ImageCacheManager:
             self._background_refill()
         else:
             self._preload_refill()
+
+    def reset_provider(self) -> bool:
+        """Reset provider-specific state and clear pending preloads."""
+        reset_callable = getattr(self.image_provider, "reset_burst", None)
+        if not callable(reset_callable):
+            return False
+        with self._provider_lock:
+            reset_callable()
+        self.preload_queue.clear()
+        if self.background_preload:
+            self._background_refill()
+        else:
+            self._preload_refill()
+        logger.debug("Provider state reset; preload queue cleared.")
+        return True
 
     def __repr__(self):
         return (

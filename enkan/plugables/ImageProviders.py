@@ -1,8 +1,9 @@
 import random
 import logging
+from collections import deque
 
 from enkan.cache.ImageCacheManager import ImageCacheManager
-from enkan.utils.utils import weighted_choice
+from enkan.utils.utils import weighted_choice, images_from_path
 
 logger: logging.Logger = logging.getLogger("__name__")  
 
@@ -75,28 +76,94 @@ class ImageProviders:
             logger.debug("Weighted image provider closed unexpectedly.")
             return
         
-    def image_provider_folder_burst(self, image_paths, cum_weights, burst_size=5, **kwargs):
-        from collections import defaultdict
+
+
+
+    def image_provider_folder_burst(self, image_paths, cum_weights, burst_size=5, index=0, **kwargs):
         import os
-
-        folder_to_images = defaultdict(list)
-        for path in image_paths:
-            folder = os.path.dirname(path)
-            folder_to_images[folder].append(path)
-
-        burst_images = []
-        try:
-            while True:
-                if not burst_images:
-                    # Pick a new random folder and prepare a burst
-                    random_image = weighted_choice(image_paths, cum_weights=cum_weights)
-                    folder = os.path.dirname(random_image)
-                    images_in_folder = folder_to_images[folder]
-                    images = images_in_folder[:]
-                    random.shuffle(images)
-                    burst_images = images[:burst_size]
-                # Yield one image per call
-                yield burst_images.pop(0)
-        except GeneratorExit:
-            logger.debug("Folder burst image provider closed unexpectedly.")
-            return
+    
+        class _BurstIterator:
+            __slots__ = ("_gen", "reset_burst")
+    
+            def __init__(self, gen, reset_func):
+                self._gen = gen
+                self.reset_burst = reset_func
+    
+            def __iter__(self):
+                return self
+    
+            def __next__(self):
+                return next(self._gen)
+    
+        if not image_paths:
+            return _BurstIterator(iter(()), lambda: None)
+    
+        burst_size = max(1, int(burst_size or 1))
+        tree = kwargs.get("tree")
+        filters = kwargs.get("filters")
+        include_video = kwargs.get("include_video", False)
+        ignored_files = kwargs.get("ignored_files")
+    
+        burst_queue: deque[str] = deque()
+        folder_cache: dict[str, list[str]] = {}
+        next_seed = None
+        drop_first_seed = False
+        if isinstance(index, int) and 0 <= index < len(image_paths):
+            next_seed = image_paths[index]
+            drop_first_seed = True
+    
+        def folder_images(image_path: str) -> list[str]:
+            folder = os.path.dirname(image_path)
+            cached = folder_cache.get(folder)
+            if cached is None:
+                cached = images_from_path(
+                    folder,
+                    tree=tree,
+                    include_video=include_video,
+                    filters=filters,
+                    ignored_files=ignored_files,
+                )
+                folder_cache[folder] = cached or []
+            return cached or []
+    
+        def build_burst(seed_image: str, *, drop_seed: bool = False) -> list[str]:
+            if not seed_image:
+                return []
+            candidates = folder_images(seed_image)
+            if not candidates:
+                return [] if drop_seed else [seed_image]
+            others = [img for img in candidates if img != seed_image]
+            random.shuffle(others)
+            burst = [] if drop_seed else [seed_image]
+            needed = max(0, burst_size - len(burst))
+            burst.extend(others[:needed])
+            return burst
+    
+        def burst_generator():
+            nonlocal next_seed, drop_first_seed
+            try:
+                while True:
+                    if not burst_queue:
+                        if next_seed is None:
+                            next_seed = weighted_choice(image_paths, cum_weights=cum_weights)
+                            drop_seed = False
+                        else:
+                            drop_seed = drop_first_seed
+                        burst_items = build_burst(next_seed, drop_seed=drop_seed)
+                        next_seed = None
+                        drop_first_seed = False
+                        if not burst_items:
+                            continue
+                        burst_queue.extend(burst_items)
+                    yield burst_queue.popleft()
+            except GeneratorExit:
+                logger.debug("Folder burst image provider closed unexpectedly.")
+                return
+    
+        def reset_burst():
+            nonlocal next_seed, drop_first_seed
+            burst_queue.clear()
+            next_seed = None
+            drop_first_seed = False
+    
+        return _BurstIterator(burst_generator(), reset_burst)

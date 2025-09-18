@@ -5,9 +5,14 @@ import bisect
 import random
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Sequence, List, Set, Optional
+from typing import Iterable, Sequence, List, Set, Optional, TYPE_CHECKING
 
 from enkan import constants
+
+
+if TYPE_CHECKING:
+    from enkan.tree.Tree import Tree
+    from enkan.utils.Filters import Filters
 
 def weighted_choice(image_paths: Sequence[str], cum_weights: Sequence[float]) -> str:
     """
@@ -191,6 +196,58 @@ def filter_valid_files(
             out.append(full)
     return out
 
+
+def filtered_images_from_disk(
+    path: str,
+    *,
+    include_video: bool = False,
+    filters: "Filters" | None = None,
+    ignored_files: Iterable[str] | None = None,
+) -> List[str]:
+    """Return the filtered media files that exist directly under ``path``."""
+    candidates: List[str] = []
+    try:
+        with os.scandir(path) as entries:
+            for entry in entries:
+                if entry.is_file():
+                    candidates.append(entry.name)
+    except OSError:
+        return []
+
+    if ignored_files is not None:
+        effective_ignored = list(ignored_files)
+    elif filters is not None:
+        effective_ignored = list(getattr(filters, 'ignored_files', []))
+    else:
+        effective_ignored = []
+
+    return filter_valid_files(path, candidates, effective_ignored, include_video)
+
+
+def images_from_path(
+    path: str,
+    *,
+    tree: "Tree" | None = None,
+    include_video: bool = False,
+    filters: "Filters" | None = None,
+    ignored_files: Iterable[str] | None = None,
+) -> List[str]:
+    """Lookup images for ``path`` via tree cache; fall back to disk scan."""
+    if tree is not None:
+        lookup = getattr(tree, 'path_lookup', None)
+        if lookup is not None:
+            node = lookup.get(path) or lookup.get(os.path.normpath(path))
+            if node is not None:
+                node_images = getattr(node, 'images', None)
+                if node_images:
+                    return list(node_images)
+
+    return filtered_images_from_disk(
+        path,
+        include_video=include_video,
+        filters=filters,
+        ignored_files=ignored_files,
+    )
 
 def find_input_file(
     input_filename: str,

@@ -114,6 +114,7 @@ class ImageSlideshow:
         self.root.bind("<m>", self.toggle_mute)
         self.root.bind("<n>", self.toggle_filename_display)
         self.root.bind("<s>", self.toggle_subfolder_mode)
+        self.root.bind("<Control-b>", self.reset_burst_cycle)
         self.root.bind("<a>", self.toggle_auto_advance)
 
         # Zoom/Pan key bindings (avoid clashing with existing navigation)
@@ -233,6 +234,7 @@ class ImageSlideshow:
     def set_provider(self, provider_name: str, **provider_kwargs) -> None:
         # Easily switch to any provider by name/key
         self.current_provider: str = provider_name
+        provider_kwargs.setdefault("index", self.current_image_index)
         self.manager: ImageCacheManager = self.providers.select_manager(
             image_paths=self.image_paths,
             provider_name=provider_name,
@@ -433,10 +435,10 @@ class ImageSlideshow:
             case "folder":
                 folder: str = os.path.dirname(self.current_image_path)
                 self.subFolderStack.push(folder, self.image_paths, self.cum_weights)
-
-                temp_image_paths = [
-                    path for path in self.image_paths if path.startswith(folder)
-                ]
+                temp_image_paths: list[str] = utils.images_from_path(
+                    os.path.dirname(self.current_image_path),
+                    tree=self.original_tree,
+                ) 
                 temp_weights: list[int] = [1] * len(temp_image_paths)
                 self.subfolder_mode = True
             case "branch":
@@ -447,12 +449,12 @@ class ImageSlideshow:
                     )
                     return
                 self.subFolderStack.push(node.name, self.image_paths, self.cum_weights)
-                self.subfolder_mode = True
                 temp_image_paths, temp_weights = (
                     extract_image_paths_and_weights_from_tree(
                         tree=self.original_tree, start_node=node
                     )
                 )
+                self.subfolder_mode = True
 
         temp_cum_weights: list[int] = list(accumulate(temp_weights))
         self.update_slide_show(
@@ -476,9 +478,26 @@ class ImageSlideshow:
             case "W":
                 self.set_provider("weighted", cum_weights=self.cum_weights)
             case "B":
-                self.set_provider("burst", cum_weights=self.cum_weights, burst_size=5)
+                self.set_provider(
+                    "burst",
+                    cum_weights=self.cum_weights,
+                    burst_size=5,
+                    index=self.current_image_index,
+                )
 
     # -- Parent Mode Navigation ---
+
+    def reset_burst_cycle(self, event=None) -> None:
+        """Reset the current burst queue when running the burst provider."""
+        if self.providers.get_current_provider_name() != "burst":
+            return
+        if not getattr(self, "manager", None):
+            return
+        if self.manager.reset_provider():
+            logger.debug("Burst cycle reset on demand.")
+            self.show_image(self.current_image_path)
+        else:
+            logger.debug("Burst reset requested but provider lacks reset hook.")
 
     def navigate_up(self) -> None:
         if self.parentFolderStack.is_full() or not self.parent_mode:
