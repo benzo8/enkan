@@ -21,3 +21,4 @@ build/
 # Optional config files
 .vscode/launch.json
 enkan/ruff.toml
+results.csv
