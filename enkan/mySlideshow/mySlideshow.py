@@ -485,8 +485,6 @@ class ImageSlideshow:
                     index=self.current_image_index,
                 )
 
-    # -- Parent Mode Navigation ---
-
     def reset_burst_cycle(self, event=None) -> None:
         """Reset the current burst queue when running the burst provider."""
         if self.providers.get_current_provider_name() != "burst":
@@ -495,9 +493,11 @@ class ImageSlideshow:
             return
         if self.manager.reset_provider():
             logger.debug("Burst cycle reset on demand.")
-            self.show_image(self.current_image_path)
+            self.next_image()
         else:
             logger.debug("Burst reset requested but provider lacks reset hook.")
+
+    # -- Parent Mode Navigation ---
 
     def navigate_up(self) -> None:
         if self.parentFolderStack.is_full() or not self.parent_mode:
@@ -608,6 +608,7 @@ class ImageSlideshow:
         self.parent_mode = False
         self.subfolder_mode = False
         self.parentFolderStack.clear()
+        self.subFolderStack.clear()
         self.image_paths = self.original_image_paths[:]
         self.cum_weights = self.original_cum_weights[:]
         self.update_slide_show(self.image_paths, self.cum_weights)
