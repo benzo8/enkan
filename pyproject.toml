@@ -1,7 +1,7 @@
 [project]
 name = "enkan"
 description = "A not-so-simple slideshow application"
-version = "2.0.0-rc8"
+version = "2.0.0-rc9"
 authors = [
     { name = "John Sullivan", email = "benzo8@gmail.com" },
 ]
