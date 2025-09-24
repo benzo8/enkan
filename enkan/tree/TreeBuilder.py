@@ -50,7 +50,6 @@ class TreeBuilder:
         image_dirs: Mapping[str, ImageDirConfig],
         specific_images: Optional[SpecificImagesConfig],
         quiet: bool = False,
-        traversal: Literal["walk", "scandir"] = "scandir",
     ) -> None:
         """
         Build the tree from a mapping of root directories (image_dirs) and an optional
@@ -69,24 +68,9 @@ class TreeBuilder:
               "group": str|None
             }
 
-        traversal: Select directory traversal strategy ("walk" uses os.walk, "scandir" uses recursive os.scandir).
         """
         if not image_dirs and not specific_images:
             return
-
-        if traversal not in ("walk", "scandir"):
-            raise ValueError(f"Unknown traversal strategy: {traversal}")
-
-        directory_processor = (
-            self.process_directory_scandir
-            if traversal == "scandir"
-            else self.process_directory
-        )
-        flat_processor = (
-            self.add_flat_branch_scandir
-            if traversal == "scandir"
-            else self.add_flat_branch
-        )
 
         with tqdm(
             total=0,
@@ -106,9 +90,9 @@ class TreeBuilder:
 
                 # 2. Populate children / image branches unless flat
                 if data.get("flat", False):
-                    flat_processor(root, data, pbar)
+                    self.add_flat_branch(root, data, pbar)
                 else:
-                    directory_processor(root, data, pbar)
+                    self.process_directory(root, data, pbar)
 
                 # 3. Grafting after node exists
                 self.grafting.handle_grafting(
@@ -127,34 +111,7 @@ class TreeBuilder:
         pbar: tqdm,
     ) -> None:
         """
-        Walk a root directory, adding nodes (regular or 'images' sub-branches).
-        """
-        filters: Filters = self.tree.filters
-        for path, dirs, files in os.walk(root, topdown=True):
-            result: Literal[1] | Literal[2] | Literal[3] | Literal[0] = filters.passes(
-                path
-            )
-            if result in (0, 3):
-                # Treat discovered files as processed for progress
-                file_count: int = len(files)
-                if file_count:
-                    pbar.total += file_count
-                    pbar.desc = f"Processing {path}"
-                    pbar.update(file_count)
-                    pbar.refresh()
-                self.process_path(path, files, dirs, data)
-            # Prune (stop descending) if result is 1 or 3 OR global dont_recurse
-            if result in (1, 3) or self.tree.defaults.dont_recurse:
-                del dirs[:]  # modifies in-place
-
-    def process_directory_scandir(
-        self,
-        root: str,
-        data: ImageDirConfig,
-        pbar: tqdm,
-    ) -> None:
-        """
-        Walk a root directory using recursive os.scandir calls, mirroring process_directory.
+        Walk a root directory using recursive os.scandir calls.
         """
         filters: Filters = self.tree.filters
         dont_recurse_globally: bool = self.tree.defaults.dont_recurse
@@ -240,70 +197,7 @@ class TreeBuilder:
         pbar: tqdm,
     ) -> None:
         """
-        Flatten a directory tree into one node accumulating all images.
-        """
-        traversed_paths: List[str] = []
-        include_video: bool = utils.is_videoallowed(
-            data.get("video"), self.tree.defaults
-        )
-
-        def collect_images(root_dir: str) -> List[str]:
-            images_accum: List[str] = []
-            for dir_path, _, files in os.walk(root_dir):
-                valid_files: List[str] = [
-                    f
-                    for f in files
-                    if utils.is_imagefile(f)
-                    or (include_video and utils.is_videofile(f))
-                ]
-                if valid_files:
-                    traversed_paths.append(dir_path)
-                    count: int = len(valid_files)
-                    pbar.total += count
-                    pbar.update(count)
-                    pbar.refresh()
-                    images_accum.extend(os.path.join(dir_path, f) for f in valid_files)
-            return images_accum
-
-        pbar.desc = f"Flattening {path}"
-        pbar.refresh()
-
-        images: List[str] = collect_images(path)
-
-        node: TreeNode | None = self.tree.path_lookup.get(path)
-        if node:
-            # Update existing node (e.g. structural root)
-            self.tree.update_node(
-                node,
-                {
-                    "images": images,
-                },
-            )
-        else:
-            self.tree.create_node(
-                path,
-                {
-                    "weight_modifier": data.get("weight_modifier", 100),
-                    "is_percentage": data.get("is_percentage", True),
-                    "proportion": data.get("proportion", None),
-                    "mode_modifier": data.get("mode_modifier"),
-                    "images": images,
-                },
-            )
-
-        # Alias every traversed sub-path to the flattened node
-        flattened_node = self.tree.path_lookup[path]
-        for dir_path in traversed_paths:
-            self.tree.path_lookup[dir_path] = flattened_node
-
-    def add_flat_branch_scandir(
-        self,
-        path: str,
-        data: ImageDirConfig,
-        pbar: tqdm,
-    ) -> None:
-        """
-        Scandir-backed variant of add_flat_branch for flattened directories.
+        Flatten a directory tree into one node accumulating all images using os.scandir.
         """
         traversed_paths: List[str] = []
         include_video: bool = utils.is_videoallowed(
