@@ -23,3 +23,4 @@ build/
 .vscode/launch.json
 enkan/ruff.toml
 results.csv
+uv.lock
