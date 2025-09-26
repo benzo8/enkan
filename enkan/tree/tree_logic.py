@@ -181,6 +181,24 @@ def calculate_weights(tree: Tree) -> None:
         count_fn=(lambda n: tree.count_branches(n)[1]) if mode == "w" else None,
     )
 
+    offending: List[TreeNode] = []
+
+    def _collect_with_images_below_lowest_rung(node: TreeNode) -> None:
+        if node.level < lowest_rung and node.images:
+            offending.append(node)
+        for child in node.children:
+            _collect_with_images_below_lowest_rung(child)
+
+    _collect_with_images_below_lowest_rung(tree.root)
+
+    if offending:
+        details = "\n  ".join(sorted(n.path or n.name for n in offending))
+        raise ValueError(
+            "Images detected below the first mode rung "
+            f"(level {lowest_rung}):\n  {details}.\n"
+            "Use grafting to place those images at or above the balancing level."
+        )
+
     for node in starting_nodes:
         if node.proportion is None:
             # If still unset, give remaining equally (single node fallback)
