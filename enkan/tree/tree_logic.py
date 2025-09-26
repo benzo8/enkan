@@ -169,7 +169,7 @@ def calculate_weights(tree: Tree) -> None:
                     n.proportion *= factor
         return nodes
 
-    lowest_rung: int = min(tree.defaults.mode.keys())
+    lowest_rung: int = tree.filters.lowest_rung if tree.filters.lowest_rung is not None else min(tree.defaults.mode.keys())
     starting_nodes: List[TreeNode] = tree.get_nodes_at_level(lowest_rung) or [tree.root]
 
     mode, slope = resolve_mode(tree.defaults.mode, lowest_rung)
@@ -196,7 +196,7 @@ def calculate_weights(tree: Tree) -> None:
         raise ValueError(
             "Images detected below the first mode rung "
             f"(level {lowest_rung}):\n  {details}.\n"
-            "Use grafting to place those images at or above the balancing level."
+            "Use grafting to place those images at or above the balancing level or use the --ibb argument."
         )
 
     for node in starting_nodes:

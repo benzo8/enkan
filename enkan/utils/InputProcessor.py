@@ -187,6 +187,7 @@ class InputProcessor:
         mute_pattern: re.Pattern[str] = re.compile(r"^m$", re.IGNORECASE)
         no_mute_pattern: re.Pattern[str] = re.compile(r"^nm$", re.IGNORECASE)
         dont_recurse_pattern: re.Pattern[str] = re.compile(r"^/$", re.IGNORECASE)
+        ignore_below_bottom_pattern: re.Pattern[str] = re.compile(r"^ibb$", re.IGNORECASE)
 
         if line.startswith("[r]"):
             self.defaults.set_global_defaults(is_random=True)
@@ -224,6 +225,7 @@ class InputProcessor:
         flat = False
         video = None
         mute = None
+        ignore_below_bottom = False
 
         # Extract all modifiers
         modifiers: List[os.Any] = modifier_pattern.findall(line)
@@ -267,6 +269,8 @@ class InputProcessor:
             elif dont_recurse_pattern.match(mod_content):
                 dont_recurse = True
                 self.filters.add_dont_recurse_beyond_folder(path)
+            elif ignore_below_bottom_pattern.match(mod_content):
+                ignore_below_bottom = True
             else:
                 logger.warning("Unknown modifier '%s' in line: %s", mod_content, line)
             # Handle directory or specific image
@@ -282,6 +286,8 @@ class InputProcessor:
                 self.defaults.set_global_video(video=video, mute=mute)
             if recdepth == 1:
                 self.defaults.set_global_defaults(mode=mode_modifier or mode, dont_recurse=dont_recurse)
+            if ignore_below_bottom:
+                self.filters.configure_ignore_below_bottom(True, self.defaults.mode)
             return None, None
 
         if os.path.isdir(path):
