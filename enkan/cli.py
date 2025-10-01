@@ -22,11 +22,15 @@ def main_with_args(args) -> None:
     filters.preprocess_ignored_files()
     tree: Tree = None
 
-    # Use args.input_file directly as a list
-    input_files: str | List = args.input_file if args.input_file else []
-    
-    # Parse input files and directories
-    processor: InputProcessor[Defaults, Filters] = InputProcessor(defaults, filters, args.quiet or False)
+    # Normalize input_files to list
+    if not args.input_file:
+        input_files: List[str] = []
+    elif isinstance(args.input_file, str):
+        input_files = [args.input_file]
+    else:
+        input_files = list(args.input_file)
+
+    processor = InputProcessor(defaults, filters, args.quiet or False)
     tree, image_dirs, specific_images, all_images, weights = processor.process_inputs(input_files)
     if getattr(args, "ignore_below_bottom", False):
         filters.configure_ignore_below_bottom(True, defaults.mode)
