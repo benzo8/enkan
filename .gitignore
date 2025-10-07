@@ -24,3 +24,6 @@ build/
 enkan/ruff.toml
 results.csv
 uv.lock
+
+# Third-party binaries
+benchmarks/EmptyStandbyList.exe
