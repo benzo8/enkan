@@ -16,7 +16,7 @@ Of course, enkan can show you images completely at random, but its real power co
 
 ```bash
 git clone <your-fork-or-clone-url>
-cd slideshow
+cd enkan
 python -m venv .venv
 .venv\Scripts\pip install --upgrade pip
 .venv\Scripts\pip install -e .
@@ -98,7 +98,7 @@ A group definition stores graft level, proportion, and mode modifiers. Any line 
 
 | Option | Purpose |
 | --- | --- |
-| `-i`, `--input_file` | One or more `.txt`, `.lst`, `.tree` files or folders to process. |
+| `-i`, `--input_file` | One or more `.txt`, `.lst` or `.tree` files, or folder and/or file paths (including [modifiers] if desired) to process. |
 | `--run` | Explicitly launch the slideshow (optional when you omit `--output*`). |
 | `--outputlist` | Write a `.lst` file next to the inputs instead of launching the GUI. |
 | `--outputtree` | Persist the computed tree to a `.tree` file for fast reloads. |
@@ -106,6 +106,7 @@ A group definition stores graft level, proportion, and mode modifiers. Any line 
 | `--random` | Start in fully random mode (same as `[r]` in a file). |
 | `--auto N` | Advance automatically every `N` seconds. |
 | `--no-recurse` | Treat every supplied folder as non-recursive. |
+| `--ignore-below-bottom` | Ignore files in folders below lowest balance level. |
 | `--video` / `--no-video` | Force-enable or disable video globally. |
 | `--no-mute` | Keep audio tracks unmuted (video default is muted). |
 | `--quiet` | Suppress progress output. |
