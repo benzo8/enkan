@@ -22,3 +22,6 @@ build/
 .vscode/launch.json
 enkan/ruff.toml
 results.csv
+
+# Third-party binaries
+benchmarks/EmptyStandbyList.exe
