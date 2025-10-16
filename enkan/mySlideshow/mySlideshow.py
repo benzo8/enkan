@@ -30,6 +30,11 @@ from enkan.mySlideshow.ModeAdjustDialog import ModeAdjustDialog
 from .ZoomPan import ZoomPan
 from enkan.utils.tests import print_tree
 
+try:
+    import customtkinter as ctk  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    ctk = None
+
 # Configure logging
 logger: logging.Logger = logging.getLogger("enkan.ui")
 
@@ -449,7 +454,53 @@ class ImageSlideshow:
             )
 
     def _confirm_action(self, title: str, message: str) -> bool:
+        if ctk:
+            response = self._custom_dialog(title, message, [("Yes", True), ("No", False)])
+            return bool(response)
         return bool(messagebox.askyesno(title, message))
+
+    def _show_error(self, title: str, message: str) -> None:
+        if ctk:
+            self._custom_dialog(title, message, [("OK", None)])
+        else:
+            messagebox.showerror(title, message)
+
+    def _show_warning(self, title: str, message: str) -> None:
+        if ctk:
+            self._custom_dialog(title, message, [("OK", None)])
+        else:
+            messagebox.showwarning(title, message)
+
+    def _custom_dialog(self, title: str, message: str, buttons: list[tuple[str, Optional[bool]]]) -> Optional[bool]:
+        assert ctk is not None
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title(title)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        label = ctk.CTkLabel(dialog, text=message, justify="left", wraplength=400)
+        label.pack(padx=24, pady=(24, 12))
+
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(pady=(0, 20))
+
+        result: dict[str, Optional[bool]] = {"value": None}
+
+        def close(value: Optional[bool] = None) -> None:
+            result["value"] = value
+            dialog.destroy()
+
+        for text, value in buttons:
+            ctk.CTkButton(
+                btn_frame,
+                text=text,
+                command=lambda val=value: close(val),
+            ).pack(side="left", padx=6)
+
+        dialog.protocol("WM_DELETE_WINDOW", close)
+        dialog.wait_window()
+        return result["value"]
 
     def delete_image(self, event=None) -> None:
         if self.current_image_path:
@@ -475,7 +526,7 @@ class ImageSlideshow:
                         image_paths=self.image_paths, cum_weights=self.cum_weights
                     )
                 except Exception as e:
-                    messagebox.showerror("Error", f"Could not delete the image: {e}")
+                    self._show_error("Error", f"Could not delete the image: {e}")
 
     def persist_rotation_to_exif(self, event=None) -> None:
         if not self.current_image_path or not utils.is_imagefile(self.current_image_path):
@@ -497,7 +548,7 @@ class ImageSlideshow:
                 return
         except Exception as exc:
             logger.error("Failed to update EXIF orientation for %s", self.current_image_path, exc_info=exc)
-            messagebox.showerror(
+            self._show_error(
                 "Error", f"Could not update the image rotation metadata: {exc}"
             )
             return
@@ -550,14 +601,14 @@ class ImageSlideshow:
                 logger.warning(
                     "EXIF update failed (permission) for %s: %s", image_path, err
                 )
-                messagebox.showwarning(
+                self._show_warning(
                     "Permission Denied",
                     "Could not save the updated rotation because access was denied.",
                 )
                 return None
             except OSError as err:
                 logger.warning("EXIF update failed for %s: %s", image_path, err)
-                messagebox.showwarning(
+                self._show_warning(
                     "Save Failed",
                     "Could not write the updated rotation to this file.",
                 )
