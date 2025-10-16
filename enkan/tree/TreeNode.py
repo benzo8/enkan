@@ -7,6 +7,7 @@ class TreeNode:
         "name",
         "path",
         "proportion",
+        "user_proportion",
         "weight",
         "weight_modifier",
         "is_percentage",
@@ -22,6 +23,7 @@ class TreeNode:
         name: str,
         path: str,
         proportion: Optional[float] = None,
+        user_proportion: Optional[float] = None,
         weight_modifier: int = 100,
         is_percentage: bool = True,
         mode_modifier: Any = None,
@@ -32,6 +34,7 @@ class TreeNode:
         self.name: str = name
         self.path: str = path
         self.proportion: Optional[float] = proportion
+        self.user_proportion: Optional[float] = user_proportion
         self.weight: Optional[float] = None
         self.weight_modifier: int = weight_modifier
         self.is_percentage: bool = is_percentage

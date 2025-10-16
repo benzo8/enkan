@@ -23,6 +23,7 @@ def build_tree(
     tree = Tree(defaults, filters)
     builder = TreeBuilder(tree)
     builder.build_tree(image_dirs, specific_images, quiet)
+    tree.record_built_mode()
     _, num_images = tree.count_branches(tree.root)
     if num_images == 0:
         raise ValueError("No images found in the provided input files.")
@@ -168,6 +169,16 @@ def calculate_weights(tree: Tree) -> None:
                 if n.proportion is not None:
                     n.proportion *= factor
         return nodes
+
+    def _reset_proportions(node: TreeNode) -> None:
+        if node.user_proportion is not None:
+            node.proportion = float(node.user_proportion)
+        else:
+            node.proportion = None
+        for child in node.children:
+            _reset_proportions(child)
+
+    _reset_proportions(tree.root)
 
     lowest_rung: int = tree.filters.lowest_rung if tree.filters.lowest_rung is not None else min(tree.defaults.mode.keys())
     starting_nodes: List[TreeNode] = tree.get_nodes_at_level(lowest_rung) or [tree.root]

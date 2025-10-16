@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-# ——— Standard library ———
+# --- Standard library ---
 import os
-from typing import Any, Optional, Literal
+from typing import Any, Optional, Literal, Mapping, Sequence
 
-# ——— Local ———
+# --- Local ---
 from .TreeNode import TreeNode
 from enkan.utils.Defaults import Defaults
 from enkan.utils.Filters import Filters
 
 
 class Tree:
-    PICKLE_VERSION = 2
+    PICKLE_VERSION = 3
 
     def __init__(self, defaults: Defaults, filters: Filters) -> None:
         # Use string path, not int
@@ -21,12 +21,24 @@ class Tree:
         self.virtual_image_lookup: dict[str, TreeNode] = {"root": self.root}
         self.defaults: Defaults = defaults
         self.filters: Filters = filters
+        self.built_mode_string: Optional[str] = None
+        self.built_mode: Optional[dict[int, Any]] = None
         self._post_init_indexes()
 
     def _post_init_indexes(self) -> None:
         # Backward compatibility for older pickles
         if not hasattr(self, "virtual_image_lookup"):
             self.virtual_image_lookup = {}
+        if not hasattr(self, "built_mode_string"):
+            self.built_mode_string = None
+        if not hasattr(self, "built_mode"):
+            self.built_mode = None
+        # Ensure newer TreeNode fields exist after unpickling older trees
+        for node in getattr(self, "node_lookup", {}).values():
+            if not hasattr(node, "user_proportion"):
+                setattr(node, "user_proportion", None)
+        if self.built_mode and not self.built_mode_string:
+            self.built_mode_string = self._serialise_mode(self.built_mode)
         # (Add future index repairs here)
 
     def __getstate__(self) -> dict[str, Any]:
@@ -64,6 +76,7 @@ class Tree:
             weight_modifier=node_data["weight_modifier"],
             is_percentage=node_data["is_percentage"],
             proportion=node_data["proportion"],
+            user_proportion=node_data.get("user_proportion"),
             mode_modifier=node_data["mode_modifier"],
             images=node_data["images"],
         )
@@ -74,9 +87,9 @@ class Tree:
         Update only the attributes explicitly present as keys in node_data.
 
         node_data may contain any subset of:
-            weight_modifier, is_percentage, proportion, mode_modifier, images
+            weight_modifier, is_percentage, proportion, user_proportion, mode_modifier, images
 
-        Keys not present are left unchanged. (None values are applied—treat them as explicit.)
+        Keys not present are left unchanged. (None values are applied-treat them as explicit.)
         """
         if node is None or not node_data:
             return
@@ -87,6 +100,8 @@ class Tree:
             node.is_percentage = node_data["is_percentage"]
         if "proportion" in node_data:
             node.proportion = node_data["proportion"]
+        if "user_proportion" in node_data:
+            node.user_proportion = node_data["user_proportion"]
         if "mode_modifier" in node_data:
             node.mode_modifier = node_data["mode_modifier"]
         if "images" in node_data:
@@ -198,6 +213,39 @@ class Tree:
             c for c in path_without_drive.strip(os.path.sep).split(os.path.sep) if c
         ]
         return os.path.join("root", *components).lower()
+
+    def record_built_mode(self) -> None:
+        mode_snapshot = self.defaults.mode or {}
+        self.built_mode = dict(mode_snapshot)
+        raw_mode = getattr(self.defaults.args, "mode", None) if getattr(self.defaults, "args", None) else None
+        self.built_mode_string = raw_mode or self._serialise_mode(mode_snapshot)
+
+    @staticmethod
+    def _serialise_mode(mode_data: Mapping[int, Any]) -> Optional[str]:
+        if not mode_data:
+            return None
+
+        parts: list[str] = []
+        for level in sorted(mode_data.keys()):
+            info = mode_data[level]
+            if isinstance(info, tuple):
+                mode_char, slopes = info
+                slopes_seq: Sequence[int] | int
+                if isinstance(slopes, Sequence) and not isinstance(slopes, (str, bytes)):
+                    slopes_seq = slopes
+                else:
+                    slopes_seq = [slopes]
+                slopes_list = list(slopes_seq)
+                if len(slopes_list) < 2:
+                    slopes_list.extend([0] * (2 - len(slopes_list)))
+                part = f"{mode_char}{level}"
+                if slopes_list:
+                    part += "," + ",".join(str(int(s)) for s in slopes_list[:2])
+                parts.append(part)
+            else:
+                parts.append(f"{info}{level}")
+
+        return " ".join(parts)
 
     def set_path_to_level(self, path: str, level: int, group: str | None = None) -> str:
         current_level: int = self.calculate_level(path)

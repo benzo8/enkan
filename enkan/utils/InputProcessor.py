@@ -211,6 +211,7 @@ class InputProcessor:
         state: dict[str, Any] = {
             "weight_modifier": 100,
             "proportion": None,
+            "user_proportion": None,
             "is_percentage": True,
             "graft_level": None,
             "group": None,
@@ -233,7 +234,9 @@ class InputProcessor:
 
         def handle_proportion(s: str):
             # strip leading/trailing %: e.g. %33% or %10
-            state["proportion"] = int(s.strip("%"))
+            value = int(s.strip("%"))
+            state["proportion"] = value
+            state["user_proportion"] = value
 
         def handle_graft(s: str):
             state["graft_level"] = int(s[1:])
@@ -297,6 +300,7 @@ class InputProcessor:
             if state["group"]:
                 self.defaults.groups[state["group"]] = {
                     "proportion": state["proportion"] or None,
+                    "user_proportion": state["user_proportion"] or None,
                     "graft_level": state["graft_level"] or None,
                     "mode_modifier": state["mode_modifier"] or (),
                 }
@@ -314,6 +318,7 @@ class InputProcessor:
                 "weight_modifier": state["weight_modifier"],
                 "is_percentage": state["is_percentage"],
                 "proportion": state["proportion"],
+                "user_proportion": state["user_proportion"],
                 "graft_level": state["graft_level"],
                 "group": state["group"],
                 "mode_modifier": state["mode_modifier"],
@@ -325,6 +330,7 @@ class InputProcessor:
                 "weight_modifier": state["weight_modifier"],
                 "is_percentage": state["is_percentage"],
                 "proportion": state["proportion"],
+                "user_proportion": state["user_proportion"],
                 "graft_level": state["graft_level"],
                 "group": state["group"],
                 "mode_modifier": state["mode_modifier"],
