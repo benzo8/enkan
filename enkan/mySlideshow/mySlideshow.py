@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import messagebox
 from itertools import accumulate
 import logging
+from typing import Optional
 
 # ——— Third-party ———
 import vlc
@@ -16,15 +17,18 @@ from enkan.cache.ImageCacheManager import ImageCacheManager
 from enkan.tree import Tree
 from enkan.tree.TreeNode import TreeNode
 from enkan.utils import utils
-from enkan.utils.Defaults import Defaults, resolve_mode
+from enkan.utils.Defaults import Defaults, resolve_mode, parse_mode_string
 from enkan.utils.Filters import Filters
 from enkan.utils.myStack import Stack
 from enkan.plugables.ImageProviders import ImageProviders
 from enkan.tree.tree_logic import (
     build_tree,
+    calculate_weights,
     extract_image_paths_and_weights_from_tree,
 )
+from enkan.mySlideshow.ModeAdjustDialog import ModeAdjustDialog
 from .ZoomPan import ZoomPan
+from enkan.utils.tests import print_tree
 
 # Configure logging
 logger: logging.Logger = logging.getLogger("enkan.ui")
@@ -87,6 +91,8 @@ class ImageSlideshow:
         )
         self.filename_label.config(state=tk.DISABLED)
         self.mode_label = tk.Label(self.root, bg="black", fg="white", anchor="ne")
+        self.mode_dialog: ModeAdjustDialog | None = None
+        self._ignore_user_proportion: bool = False
 
         # Zoom/Pan controller (binds mouse events on the label)
         self.zoompan = ZoomPan(
@@ -124,6 +130,8 @@ class ImageSlideshow:
         self.root.bind("<s>", self.toggle_subfolder_mode)
         self.root.bind("<Control-b>", self.reset_burst_cycle)
         self.root.bind("<a>", self.toggle_auto_advance)
+        self.root.bind("<Control-Shift-M>", self.open_mode_dialog)
+        self.root.bind("<Control-Shift-T>", self.print_tree_to_console)
 
         # Zoom/Pan key bindings (avoid clashing with existing navigation)
         self.root.bind(
@@ -158,6 +166,7 @@ class ImageSlideshow:
         """Updates the slideshow with the new set of images and weights."""
         self.image_paths = image_paths
         self.cum_weights = cum_weights
+        self.number_of_images = len(image_paths)
         self.current_image_index: int = self.safe_current_image_index(image_paths)
         self.manager: ImageCacheManager = self.providers.reset_manager(
             image_paths=image_paths,
@@ -166,6 +175,64 @@ class ImageSlideshow:
             index=self.current_image_index,
         )
         self.show_image(self.image_paths[self.current_image_index])
+
+    # --- Dynamic mode adjustment ---
+
+    def open_mode_dialog(self, event=None) -> None:
+        if self.mode_dialog:
+            try:
+                self.mode_dialog.top.lift()
+                return
+            except tk.TclError:
+                self.mode_dialog = None
+
+        current_mode = self.original_tree.current_mode_string() or ""
+        dialog = ModeAdjustDialog(
+            self.root,
+            current_mode,
+            on_apply=self._handle_mode_apply,
+            on_reset=self._handle_mode_reset,
+            ignore_default=self._ignore_user_proportion,
+        )
+        dialog.top.bind("<Destroy>", self._on_dialog_closed)
+        self.mode_dialog = dialog
+
+    def _handle_mode_apply(self, mode_str: str, ignore_user: bool) -> Optional[str]:
+        mode_dict = parse_mode_string(mode_str)
+        if not mode_dict:
+            raise ValueError("Unable to parse mode string.")
+        self._ignore_user_proportion = ignore_user
+        self.defaults.set_global_defaults(mode=mode_dict)
+        self._recalculate_slideshow(ignore_user=ignore_user)
+        return self.original_tree.current_mode_string() or mode_str
+
+    def _handle_mode_reset(self) -> Optional[str]:
+        if not self.original_tree.built_mode:
+            raise ValueError("Tree does not have a recorded original mode.")
+        return self.original_tree.built_mode_string or self.original_tree.current_mode_string()
+
+    def _recalculate_slideshow(self, ignore_user: bool) -> None:
+        calculate_weights(self.original_tree, ignore_user_proportion=ignore_user)
+        images, weights = extract_image_paths_and_weights_from_tree(self.original_tree)
+        if not images:
+            raise ValueError("Recalculation produced no images.")
+        cum_weights = list(accumulate(weights))
+        self.original_image_paths = images[:]
+        self.original_cum_weights = cum_weights[:]
+        self.update_slide_show(images, cum_weights)
+        mode_dict = self.defaults.mode or {}
+        if mode_dict:
+            lowest = min(mode_dict.keys())
+            self.mode, _ = resolve_mode(mode_dict, lowest)
+        else:
+            self.mode = None
+        self.update_filename_display()
+
+    def _on_dialog_closed(self, _event=None) -> None:
+        self.mode_dialog = None
+
+    def print_tree_to_console(self, event=None) -> None:
+        print_tree(self.defaults, self.original_tree.root, max_depth=9999)
 
     def show_image(self, image_path: str = None, record_history: bool = True) -> None:
         # Stop existing video playback and clean up resources

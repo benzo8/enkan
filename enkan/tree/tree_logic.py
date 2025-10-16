@@ -31,7 +31,7 @@ def build_tree(
     return tree
 
 
-def calculate_weights(tree: Tree) -> None:
+def calculate_weights(tree: Tree, ignore_user_proportion: bool = False) -> None:
     """
     Calculates and assigns weights to all nodes in the tree based on the current mode and slope settings.
 
@@ -171,7 +171,7 @@ def calculate_weights(tree: Tree) -> None:
         return nodes
 
     def _reset_proportions(node: TreeNode) -> None:
-        if node.user_proportion is not None:
+        if not ignore_user_proportion and node.user_proportion is not None:
             node.proportion = float(node.user_proportion)
         else:
             node.proportion = None

@@ -220,6 +220,9 @@ class Tree:
         raw_mode = getattr(self.defaults.args, "mode", None) if getattr(self.defaults, "args", None) else None
         self.built_mode_string = raw_mode or self._serialise_mode(mode_snapshot)
 
+    def current_mode_string(self) -> Optional[str]:
+        return self._serialise_mode(self.defaults.mode or {})
+
     @staticmethod
     def _serialise_mode(mode_data: Mapping[int, Any]) -> Optional[str]:
         if not mode_data:
