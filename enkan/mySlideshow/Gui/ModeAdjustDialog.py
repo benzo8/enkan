@@ -41,7 +41,8 @@ class ModeAdjustDialog:
         self.ignore_var = self._make_boolvar(ignore_default)
 
         ui["label"](self.top, text="Mode string:").grid(row=0, column=0, sticky="w", padx=10, pady=(10, 2))
-        self.entry = ui["entry"](self.top, width=320 if ctk else 40, textvariable=self.mode_var)
+        # Make the entry reasonably wide (pixels for CTk, characters for Tk)
+        self.entry = ui["entry"](self.top, width=520 if ctk else 60, textvariable=self.mode_var)
         self.entry.grid(row=1, column=0, columnspan=3, padx=10, pady=(0, 10))
         self.entry.focus_set()
 
@@ -66,8 +67,18 @@ class ModeAdjustDialog:
         self.cancel_btn = ui["button"](btn_frame, text="Cancel", command=self.close)
         self.cancel_btn.pack(side="left", padx=5)
 
+        # Enforce a sensible minimum dialog size before centering
+        try:
+            self.top.update_idletasks()
+            self.top.minsize(560, 180)
+        except Exception:
+            pass
+
         self.entry.bind("<Return>", lambda *_: self._on_apply())
         self.top.protocol("WM_DELETE_WINDOW", self.close)
+
+        # Center on screen after widgets are laid out
+        self._center_on_screen()
 
     def _initialise_ui(self, parent: tk.Misc) -> tuple[tk.Toplevel, dict[str, Callable[..., Any]], bool]:
         if ctk:
@@ -104,6 +115,25 @@ class ModeAdjustDialog:
         if not value:
             return False
         return bool(CX_PATTERN.fullmatch(value.strip()))
+
+    def _center_on_screen(self) -> None:
+        """Center the dialog on the primary screen."""
+        try:
+            self.top.update_idletasks()
+            width = self.top.winfo_width()
+            height = self.top.winfo_height()
+            # When not yet drawn, winfo_width/height can be very small; fallback to requested size
+            if width <= 1 or height <= 1:
+                width = self.top.winfo_reqwidth()
+                height = self.top.winfo_reqheight()
+            screen_w = self.top.winfo_screenwidth()
+            screen_h = self.top.winfo_screenheight()
+            x = max((screen_w - width) // 2, 0)
+            y = max((screen_h - height) // 2, 0)
+            self.top.geometry(f"{width}x{height}+{x}+{y}")
+        except Exception:
+            # Positioning isn't critical; ignore failures gracefully
+            pass
 
     def _on_apply(self) -> None:
         value = self.mode_var.get().strip()

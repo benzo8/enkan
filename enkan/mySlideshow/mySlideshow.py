@@ -3,7 +3,6 @@ import os
 import sys
 import random
 import tkinter as tk
-from tkinter import messagebox
 from itertools import accumulate
 import logging
 from typing import Optional
@@ -26,14 +25,9 @@ from enkan.tree.tree_logic import (
     calculate_weights,
     extract_image_paths_and_weights_from_tree,
 )
-from enkan.mySlideshow.ModeAdjustDialog import ModeAdjustDialog
-from .ZoomPan import ZoomPan
+from enkan.mySlideshow.Gui.Gui import Gui
+from enkan.mySlideshow.ZoomPan import ZoomPan
 from enkan.utils.tests import print_tree
-
-try:
-    import customtkinter as ctk  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover - optional dependency
-    ctk = None
 
 # Configure logging
 logger: logging.Logger = logging.getLogger("enkan.ui")
@@ -98,7 +92,7 @@ class ImageSlideshow:
         )
         self.filename_label.config(state=tk.DISABLED)
         self.mode_label = tk.Label(self.root, bg="black", fg="white", anchor="ne")
-        self.mode_dialog: ModeAdjustDialog | None = None
+        self.mode_dialog: object | None = None
         self._ignore_user_proportion: bool = False
 
         # Zoom/Pan controller (binds mouse events on the label)
@@ -153,7 +147,10 @@ class ImageSlideshow:
         self.root.bind("<Shift-Up>", lambda e: self.zoompan.pan(0, -80))
         self.root.bind("<Shift-Down>", lambda e: self.zoompan.pan(0, 80))
 
+        # Instantiate Classes
+        self.gui = Gui(use_customtkinter=True)
         self.providers = ImageProviders()
+        
         if self.defaults.is_random:
             self.set_provider("random")
         else:
@@ -377,9 +374,9 @@ class ImageSlideshow:
                 self.mode_dialog = None
 
         current_mode = self.original_tree.current_mode_string() or ""
-        dialog = ModeAdjustDialog(
-            self.root,
-            current_mode,
+        dialog = self.gui.create_mode_adjust_dialog(
+            parent=self.root,
+            current_mode=current_mode,
             on_apply=self._handle_mode_apply,
             on_reset=self._handle_mode_reset,
             ignore_default=self._ignore_user_proportion,
@@ -430,57 +427,13 @@ class ImageSlideshow:
     # -- Keyboard Hooks ---
 
     def _confirm_action(self, title: str, message: str) -> bool:
-        if ctk:
-            response = self._custom_dialog(
-                title, message, [("Yes", True), ("No", False)]
-            )
-            return bool(response)
-        return bool(messagebox.askyesno(title, message))
-
-    def _custom_dialog(
-        self, title: str, message: str, buttons: list[tuple[str, Optional[bool]]]
-    ) -> Optional[bool]:
-        assert ctk is not None
-        dialog = ctk.CTkToplevel(self.root)
-        dialog.title(title)
-        dialog.transient(self.root)
-        dialog.grab_set()
-        dialog.resizable(False, False)
-
-        label = ctk.CTkLabel(dialog, text=message, justify="left", wraplength=400)
-        label.pack(padx=24, pady=(24, 12))
-
-        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        btn_frame.pack(pady=(0, 20))
-
-        result: dict[str, Optional[bool]] = {"value": None}
-
-        def close(value: Optional[bool] = None) -> None:
-            result["value"] = value
-            dialog.destroy()
-
-        for text, value in buttons:
-            ctk.CTkButton(
-                btn_frame,
-                text=text,
-                command=lambda val=value: close(val),
-            ).pack(side="left", padx=6)
-
-        dialog.protocol("WM_DELETE_WINDOW", close)
-        dialog.wait_window()
-        return result["value"]
+        return bool(self.gui.messagebox(title=title, message=message, type_="yesno"))
 
     def _show_error(self, title: str, message: str) -> None:
-        if ctk:
-            self._custom_dialog(title, message, [("OK", None)])
-        else:
-            messagebox.showerror(title, message)
+        self.gui.messagebox(title, message, icon="error")
 
     def _show_warning(self, title: str, message: str) -> None:
-        if ctk:
-            self._custom_dialog(title, message, [("OK", None)])
-        else:
-            messagebox.showwarning(title, message)
+        self.gui.messagebox(title, message, icon="warning")
 
     def _write_exif_orientation(self, image_path: str) -> int | None:
         from PIL import Image
