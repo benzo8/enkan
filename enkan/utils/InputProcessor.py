@@ -220,7 +220,6 @@ class InputProcessor:
             "video": None,
             "mute": None,
             "dont_recurse": None,
-            "ignore_below_bottom": False,
         }
         base_mode = self.defaults.mode
         
@@ -266,9 +265,6 @@ class InputProcessor:
             state["dont_recurse"] = True
             self.filters.add_dont_recurse_beyond_folder(path)
 
-        def handle_ignore_below_bottom(_s: str):
-            state["ignore_below_bottom"] = True
-
         # Ordered list of (pattern, handler)
         HANDLERS = (
             (constants.WEIGHT_MODIFIER_PATTERN, handle_weight),
@@ -281,8 +277,7 @@ class InputProcessor:
             (constants.NO_VIDEO_PATTERN, handle_no_video),
             (constants.MUTE_PATTERN, handle_mute),
             (constants.NO_MUTE_PATTERN, handle_no_mute),
-            (constants.DONT_RECURSE_PATTERN, handle_dont_recurse),
-            (constants.IGNORE_BELOW_BOTTOM_PATTERN, handle_ignore_below_bottom),
+            (constants.DONT_RECURSE_PATTERN, handle_dont_recurse)
         )
 
         for mod in modifiers:
@@ -309,8 +304,6 @@ class InputProcessor:
                 self.defaults.set_global_video(video=state["video"], mute=state["mute"])
             if recdepth == 1:
                 self.defaults.set_global_defaults(mode=state["mode_modifier"] or base_mode, dont_recurse=state["dont_recurse"])
-            if state["ignore_below_bottom"]:
-                self.filters.configure_ignore_below_bottom(True, self.defaults.mode)
             return None, None
 
         if os.path.isdir(path):

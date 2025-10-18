@@ -180,7 +180,7 @@ def calculate_weights(tree: Tree, ignore_user_proportion: bool = False) -> None:
 
     _reset_proportions(tree.root)
 
-    lowest_rung: int = tree.filters.lowest_rung if tree.filters.lowest_rung is not None else min(tree.defaults.mode.keys())
+    lowest_rung: int = min(tree.defaults.mode.keys())
     starting_nodes: List[TreeNode] = tree.get_nodes_at_level(lowest_rung) or [tree.root]
 
     mode, slope = resolve_mode(tree.defaults.mode, lowest_rung)
@@ -191,24 +191,6 @@ def calculate_weights(tree: Tree, ignore_user_proportion: bool = False) -> None:
         slope,
         count_fn=(lambda n: tree.count_branches(n)[1]) if mode == "w" else None,
     )
-
-    offending: List[TreeNode] = []
-
-    def _collect_with_images_below_lowest_rung(node: TreeNode) -> None:
-        if node.level < lowest_rung and node.images:
-            offending.append(node)
-        for child in node.children:
-            _collect_with_images_below_lowest_rung(child)
-
-    _collect_with_images_below_lowest_rung(tree.root)
-
-    if offending:
-        details = "\n  ".join(sorted(n.path or n.name for n in offending))
-        raise ValueError(
-            "Images detected below the first mode rung "
-            f"(level {lowest_rung}):\n  {details}.\n"
-            "Use grafting to place those images at or above the balancing level or use the --ibb argument."
-        )
 
     for node in starting_nodes:
         if node.proportion is None:

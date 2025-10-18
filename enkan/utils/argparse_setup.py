@@ -68,12 +68,6 @@ def get_arg_parser() -> argparse.ArgumentParser:
     )
     parser.set_defaults(dont_recurse=None)
     parser.add_argument(
-        "--ignore-below-bottom",
-        "--ibb",
-        action="store_true",
-        help="Ignore images in folders below the first mode rung",
-    )
-    parser.add_argument(
         "--video", dest="video", action="store_true", help="Enable video playback"
     )
     parser.add_argument(
