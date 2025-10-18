@@ -25,10 +25,12 @@ class ModeAdjustDialog:
         on_apply: Callable[[str, bool], Optional[str]],
         on_reset: Callable[[], Optional[str]],
         ignore_default: bool = False,
+        gui: Optional[Any] = None,
     ) -> None:
         self.parent = parent
         self.on_apply = on_apply
         self.on_reset = on_reset
+        self.gui = gui
 
         self.top, ui, self._using_custom = self._initialise_ui(parent)
 
@@ -138,12 +140,12 @@ class ModeAdjustDialog:
     def _on_apply(self) -> None:
         value = self.mode_var.get().strip()
         if not self._validate_entry(value):
-            messagebox.showerror("Invalid Mode", "Mode string must match CX pattern.", parent=self.top)
+            self._show_error("Invalid Mode", "Mode string must match CX pattern.")
             return
         try:
             new_value = self.on_apply(value, bool(self.ignore_var.get()))
         except ValueError as exc:  # pragma: no cover - UI feedback path
-            messagebox.showerror("Update Failed", str(exc), parent=self.top)
+            self._show_error("Update Failed", str(exc))
             return
         if new_value is not None:
             self.mode_var.set(new_value.strip())
@@ -153,11 +155,25 @@ class ModeAdjustDialog:
         try:
             value = self.on_reset()
         except ValueError as exc:  # pragma: no cover - UI feedback path
-            messagebox.showerror("Reset Failed", str(exc), parent=self.top)
+            self._show_error("Reset Failed", str(exc))
             return
         if value:
             self.mode_var.set(value.strip())
             self.ignore_var.set(False)
+
+    def _show_error(self, title: str, message: str) -> None:
+        """Show an error using Gui.messagebox when available, else fallback to tkinter.messagebox."""
+        try:
+            if self.gui and hasattr(self.gui, "messagebox"):
+                self.gui.messagebox(title=title, message=message, icon="error", type_="ok", parent=self.top)
+            else:
+                messagebox.showerror(title, message, parent=self.top)
+        except Exception:
+            # Last resort fallback without parent if something odd happens
+            try:
+                messagebox.showerror(title, message)
+            except Exception:
+                pass
 
     def close(self) -> None:
         self.top.grab_release()

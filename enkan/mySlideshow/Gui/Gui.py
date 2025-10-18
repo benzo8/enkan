@@ -59,6 +59,7 @@ class Gui:
         message: str,
         icon: Literal["info", "warning", "error"] = "info",
         type_: Literal["ok", "okcancel", "yesno"] = "ok",
+        parent: Optional[tk.Misc] = None,
     ) -> Optional[bool]:
         """
         Show a messagebox using CTkMessagebox (if enabled) or standard tkinter.
@@ -74,12 +75,12 @@ class Gui:
             - True/False for okcancel/yesno (True = OK/Yes, False = Cancel/No).
         """
         if self.ctk_enabled:
-            return self._ctk_messagebox(title, message, icon, type_)
+            return self._ctk_messagebox(title, message, icon, type_, parent)
         else:
-            return self._tk_messagebox(title, message, icon, type_)
+            return self._tk_messagebox(title, message, icon, type_, parent)
 
     def _ctk_messagebox(
-        self, title: str, message: str, icon: str, type_: str
+        self, title: str, message: str, icon: str, type_: str, parent: Optional[tk.Misc] = None
     ) -> Optional[bool]:
         """CTkMessagebox wrapper."""
         # CTkMessagebox icon names: "check", "cancel", "info", "question", "warning"
@@ -87,47 +88,71 @@ class Gui:
         ctk_icon = icon_map.get(icon, "info")
 
         if type_ == "ok":
-            CTkMessagebox(title=title, message=message, icon=ctk_icon)
+            # Try to pass master if supported by this CTkMessagebox version
+            try:
+                CTkMessagebox(master=parent, title=title, message=message, icon=ctk_icon)
+            except TypeError:
+                CTkMessagebox(title=title, message=message, icon=ctk_icon)
             return None
         elif type_ == "okcancel":
-            result = CTkMessagebox(
-                title=title,
-                message=message,
-                icon=ctk_icon,
-                option_1="Cancel",
-                option_2="OK",
-            )
+            try:
+                result = CTkMessagebox(
+                    master=parent,
+                    title=title,
+                    message=message,
+                    icon=ctk_icon,
+                    option_1="Cancel",
+                    option_2="OK",
+                )
+            except TypeError:
+                result = CTkMessagebox(
+                    title=title,
+                    message=message,
+                    icon=ctk_icon,
+                    option_1="Cancel",
+                    option_2="OK",
+                )
             return result.get() == "OK"
         elif type_ == "yesno":
-            result = CTkMessagebox(
-                title=title,
-                message=message,
-                icon=ctk_icon,
-                option_1="No",
-                option_2="Yes",
-            )
+            try:
+                result = CTkMessagebox(
+                    master=parent,
+                    title=title,
+                    message=message,
+                    icon=ctk_icon,
+                    option_1="No",
+                    option_2="Yes",
+                )
+            except TypeError:
+                result = CTkMessagebox(
+                    title=title,
+                    message=message,
+                    icon=ctk_icon,
+                    option_1="No",
+                    option_2="Yes",
+                )
             return result.get() == "Yes"
         return None
 
     def _tk_messagebox(
-        self, title: str, message: str, icon: str, type_: str
+        self, title: str, message: str, icon: str, type_: str, parent: Optional[tk.Misc] = None
     ) -> Optional[bool]:
         """Standard tkinter messagebox wrapper."""
         if type_ == "ok":
             if icon == "info":
-                messagebox.showinfo(title, message)
+                messagebox.showinfo(title, message, parent=parent) if parent else messagebox.showinfo(title, message)
             elif icon == "warning":
-                messagebox.showwarning(title, message)
+                messagebox.showwarning(title, message, parent=parent) if parent else messagebox.showwarning(title, message)
             elif icon == "error":
-                messagebox.showerror(title, message)
+                messagebox.showerror(title, message, parent=parent) if parent else messagebox.showerror(title, message)
             return None
         elif type_ == "okcancel":
             if icon == "warning":
-                return messagebox.askokcancel(title, message, icon="warning")
+                return messagebox.askokcancel(title, message, icon="warning", parent=parent) if parent else messagebox.askokcancel(title, message, icon="warning")
             else:
-                return messagebox.askokcancel(title, message)
+                return messagebox.askokcancel(title, message, parent=parent) if parent else messagebox.askokcancel(title, message)
         elif type_ == "yesno":
-            return messagebox.askyesno(title, message, icon=icon)
+            return messagebox.askyesno(title, message, icon=icon, parent=parent) if parent else messagebox.askyesno(title, message, icon=icon)
         return None
 
     def custom_dialog(
@@ -266,4 +291,5 @@ class Gui:
             on_apply=on_apply,
             on_reset=on_reset,
             ignore_default=ignore_default,
+            gui=self,
         )
