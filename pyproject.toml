@@ -1,17 +1,35 @@
 [project]
 name = "enkan"
 description = "A not-so-simple slideshow application"
-version = "2.0.2"
+version = "2.0.3"
 authors = [
     { name = "John Sullivan", email = "benzo8@gmail.com" },
 ]
 requires-python = ">=3.11"
+readme = { file = "README.md", content-type = "text/markdown" }
+license = { text = "MIT" }
+keywords = [
+    "slideshow", "images", "video", "gui", "tkinter", "vlc"
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: Microsoft :: Windows",
+  "Intended Audience :: End Users/Desktop",
+  "Topic :: Multimedia :: Graphics",
+]
+
 dependencies = [
     "matplotlib>=3.10.5",
     "pillow>=11.3.0",
     "python-vlc>=3.0.21203",
     "tqdm>=4.67.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/benzo8/enkan"
+Repository = "https://github.com/benzo8/enkan"
+Issues = "https://github.com/benzo8/enkan/issues"
 
 [build-system]
 requires = [
