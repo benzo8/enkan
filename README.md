@@ -6,23 +6,43 @@ Of course, enkan can show you images completely at random, but its real power co
 
 ## Requirements
 
-- Python 3.11 or newer
-- VLC desktop client (needed by `python-vlc` for video playback)
-- Pillow, matplotlib, tqdm (pulled in automatically by pip)
+- Python ≥3.11
+- Pillow
+- python-vlc (for video support)
+- matplotlib (for tree visualization)
+- tqdm (progress bars)
+
+Optional:
+
+- customtkinter (enhanced GUI appearance)
 
 ## Installation
 
-### From a source checkout
+### From PyPI (recommended)
 
 ```bash
-git clone <your-fork-or-clone-url>
+pip install enkan
+```
+
+### From source
+
+```bash
+git clone https://github.com/yourusername/enkan.git
 cd enkan
-python -m venv .venv
-.venv\Scripts\pip install --upgrade pip
-.venv\Scripts\pip install -e .
+pip install -e .
 ```
 
 If you install into a fresh environment, remember to install VLC separately so that `python-vlc` can find the native libraries.
+
+## Features
+
+- Weighted and balanced image selection modes
+- Tree-based directory organization with grafting
+- EXIF orientation support
+- Image caching for performance
+- Video playback support (via VLC)
+- Interactive GUI with zoom/pan
+- Rotation persistence to EXIF
 
 ## Quick Start
 
@@ -162,4 +182,4 @@ enkan can navigate in two modes:
 - When emphasising a single standout image, prefer an absolute modifier like `[25]` on the image line instead of inflating nearby branches.
 - Large libraries benefit from building a `.tree` once and reusing it until the folder structure changes; enkan automatically regenerates it if the pickle version does not match.
 
-Have fun curating!
+Have fun!
