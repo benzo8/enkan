@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 import logging
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 logger: logging.Logger = logging.getLogger("enkan.imageloaders")
 
@@ -48,7 +48,12 @@ class ImageLoaders:
     ) -> Image.Image | None:
         try:
             with Image.open(path) as img:
-                return img.copy()
+                exif = img.getexif()
+                orientation = exif.get(0x0112, 1) if exif else 1
+                transposed = ImageOps.exif_transpose(img)
+                copy_img = transposed.copy()
+                copy_img.info["exif_orientation"] = orientation
+                return copy_img
         except (FileNotFoundError, PermissionError) as e:
             logger.info("File access issue: %s (%s)", path, e)
         except UnidentifiedImageError as e:

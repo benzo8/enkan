@@ -135,6 +135,8 @@ A group definition stores graft level, proportion, and mode modifiers. Any line 
 | B | Select Folder Burst Mode - pick 5 images from the current folder, then randomly select the next folder and repeat |
 | L | Select Liner / Sequential Mode |
 | Ctrl-B | Reset Folder Burst Mode - pick a new folder and begin Folder Burst mode again |
+| R | Rotate image clockwise by 90 degrees |
+| Ctrl-R | Try to write current orientation to image EXIF data |
 | = / + / - | Zoom image |
 | 0 | Reset Zoom |
 | Shift-Cursor | Move viewport around zoomed image |

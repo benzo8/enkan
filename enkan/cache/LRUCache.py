@@ -26,6 +26,9 @@ class LRUCache:
             return None
         self.cache.move_to_end(key, last=False)
         return self.cache[key]
+
+    def pop(self, key):
+        return self.cache.pop(key, None)
     
     def clear(self):
         """Remove all items from the cache."""

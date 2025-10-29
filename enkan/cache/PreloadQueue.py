@@ -39,6 +39,21 @@ class PreloadQueue:
         self.lookup.difference_update(item.keys())
         return item
     
+    def discard(self, path):
+        """
+        Remove a specific path from the queue if present.
+        Returns True if the path was removed, else False.
+        """
+        if path not in self.lookup:
+            return False
+        self.lookup.discard(path)
+        new_queue = deque(maxlen=self.max_size)
+        for item in self.queue:
+            if path not in item:
+                new_queue.append(item)
+        self.queue = new_queue
+        return True
+    
     def clear(self):
         """Remove all items from the queue."""
         self.queue.clear()

@@ -29,6 +29,9 @@ from .ZoomPan import ZoomPan
 # Configure logging
 logger: logging.Logger = logging.getLogger("enkan.ui")
 
+ORIENTATION_TO_CW: dict[int, int] = {1: 0, 3: 180, 6: 90, 8: 270}
+CW_TO_ORIENTATION: dict[int, int] = {value: key for key, value in ORIENTATION_TO_CW.items()}
+
 
 class ImageSlideshow:
     def __init__(
@@ -68,6 +71,7 @@ class ImageSlideshow:
         self.interval: int | float | None = interval
 
         self.rotation_angle: int | float = 0
+        self.current_exif_orientation: int = 1
 
         self.root.configure(background="black")  # Set root background to black
         self.label = tk.Label(root, bg="black")  # Set label background to black
@@ -86,7 +90,10 @@ class ImageSlideshow:
 
         # Zoom/Pan controller (binds mouse events on the label)
         self.zoompan = ZoomPan(
-            self.label, self.screen_width, self.screen_height, on_image_changed=None
+            self.label,
+            self.screen_width,
+            self.screen_height,
+            on_image_changed=self.update_filename_display,
         )
 
         self.root.attributes("-fullscreen", True)
@@ -109,6 +116,7 @@ class ImageSlideshow:
         self.root.bind("<i>", self.step_backwards)
 
         self.root.bind("<r>", self.rotate_image)
+        self.root.bind("<Control-r>", self.persist_rotation_to_exif)
         self.root.bind("<Delete>", self.delete_image)
 
         self.root.bind("<m>", self.toggle_mute)
@@ -176,6 +184,7 @@ class ImageSlideshow:
         self.current_image_index = self.image_paths.index(image_path)
 
         if image:
+            self.current_exif_orientation = image.info.get("exif_orientation", 1)
             # If rotating, apply before handing to ZoomPan
             if hasattr(self, "rotation_angle") and self.rotation_angle:
                 image = image.rotate(self.rotation_angle, expand=True)
@@ -183,6 +192,7 @@ class ImageSlideshow:
             self.zoompan.set_image(image)
             self.label.pack()
         else:
+            self.current_exif_orientation = 1
             # Clear any existing image from label
             self.label.config(image="")
             self.label.image = None
@@ -371,9 +381,12 @@ class ImageSlideshow:
                 "navigate_image_sequential: Index out of range for image_paths."
             )
 
+    def _confirm_action(self, title: str, message: str) -> bool:
+        return bool(messagebox.askyesno(title, message))
+
     def delete_image(self, event=None) -> None:
         if self.current_image_path:
-            confirm: bool = messagebox.askyesno(
+            confirm: bool = self._confirm_action(
                 "Delete Image",
                 f"Are you sure you want to delete {self.current_image_path}?",
             )
@@ -396,6 +409,100 @@ class ImageSlideshow:
                     )
                 except Exception as e:
                     messagebox.showerror("Error", f"Could not delete the image: {e}")
+
+    def rotate_image(self, event=None) -> None:
+        if utils.is_videofile(self.current_image_path):
+            return
+        self.rotation_angle = (self.rotation_angle - 90) % 360
+        self.show_image(self.current_image_path)
+
+    def persist_rotation_to_exif(self, event=None) -> None:
+        if not self.current_image_path or not utils.is_imagefile(self.current_image_path):
+            return
+        if utils.is_videofile(self.current_image_path):
+            return
+        if self.rotation_angle % 360 == 0:
+            return
+
+        confirm: bool = self._confirm_action(
+            "Update Rotation",
+            "Apply the current rotation to this image's EXIF orientation?",
+        )
+        if not confirm:
+            return
+        try:
+            new_orientation: int = self._write_exif_orientation(self.current_image_path)
+            if new_orientation is None:
+                return
+        except Exception as exc:
+            logger.error("Failed to update EXIF orientation for %s", self.current_image_path, exc_info=exc)
+            messagebox.showerror(
+                "Error", f"Could not update the image rotation metadata: {exc}"
+            )
+            return
+
+        self.manager.invalidate(self.current_image_path)
+        self.rotation_angle = 0
+        self.current_exif_orientation = new_orientation
+        self.show_image(self.current_image_path, record_history=False)
+
+    def _write_exif_orientation(self, image_path: str) -> int | None:
+        from PIL import Image
+
+        orientation_tag: int = 0x0112
+        rotation_cw: int = (-self.rotation_angle) % 360
+        if rotation_cw % 90 != 0:
+            logger.error(
+                "EXIF update aborted: rotation %s deg is not a multiple of 90 for %s.",
+                self.rotation_angle,
+                image_path,
+            )
+            return None
+
+        with Image.open(image_path) as img:
+            exif = img.getexif()
+            if exif is None:
+                if hasattr(Image, "Exif"):
+                    exif = Image.Exif()
+                else:
+                    logger.warning(
+                        "EXIF update skipped for %s: Pillow build lacks Exif support.",
+                        image_path,
+                    )
+                    return None
+            if not hasattr(exif, "tobytes"):
+                logger.warning(
+                    "EXIF update skipped for %s: Pillow Exif object has no tobytes().",
+                    image_path,
+                )
+                return None
+            current_orientation: int = exif.get(orientation_tag, 1)
+            base_cw: int = ORIENTATION_TO_CW.get(current_orientation, 0)
+            new_cw: int = (base_cw + rotation_cw) % 360
+            new_orientation: int = CW_TO_ORIENTATION.get(new_cw, 1)
+            exif[orientation_tag] = new_orientation
+            exif_bytes = exif.tobytes() if hasattr(exif, "tobytes") else None
+            save_kwargs = {"exif": exif_bytes} if exif_bytes else {}
+            try:
+                img.save(image_path, **save_kwargs)
+            except PermissionError as err:
+                logger.warning(
+                    "EXIF update failed (permission) for %s: %s", image_path, err
+                )
+                messagebox.showwarning(
+                    "Permission Denied",
+                    "Could not save the updated rotation because access was denied.",
+                )
+                return None
+            except OSError as err:
+                logger.warning("EXIF update failed for %s: %s", image_path, err)
+                messagebox.showwarning(
+                    "Save Failed",
+                    "Could not write the updated rotation to this file.",
+                )
+                return None
+
+        return new_orientation
 
     def toggle_mute(self, event=None) -> None:
         if hasattr(self, "video_player") and self.video_player:
@@ -621,6 +728,16 @@ class ImageSlideshow:
         self.show_filename: bool = not self.show_filename
         self.update_filename_display()
 
+    def _format_rotation_display(self) -> str:
+        exif_angle: int = ORIENTATION_TO_CW.get(self.current_exif_orientation, 0)
+        manual_delta: int = (-self.rotation_angle) % 360
+        if manual_delta:
+            total_angle: int = (exif_angle + manual_delta) % 360
+            return f"{total_angle}°"
+        if exif_angle:
+            return f"{exif_angle}° [EXIF]"
+        return "0°"
+
     def update_filename_display(self) -> None:
         if self.show_filename:
             fixed_colour = None
@@ -633,6 +750,7 @@ class ImageSlideshow:
                     self.find_node_for_image(self.current_image_path).name,
                     os.path.basename(self.current_image_path),
                 )
+
             match (self.navigation_mode, self.parent_mode, self.subfolder_mode):
                 case ("folder", True, False):
                     fixed_path: str = self.parentFolderStack.read_top()
@@ -663,10 +781,27 @@ class ImageSlideshow:
                 self.filename_label.insert(tk.END, label_path, "normal")
                 fixed_colour = "white"
 
+            is_video: bool = utils.is_videofile(self.current_image_path)
+            zoom_percent: int = (
+                self.zoompan.get_zoom_percent()
+                if hasattr(self, "zoompan") and self.zoompan
+                else 100
+            )
+            meta_parts = []
+            if not is_video:
+                meta_parts.append(self._format_rotation_display())
+            meta_parts.append(f"{zoom_percent}%")
+            meta_text: str = f" ({', '.join(meta_parts)})"
+            self.filename_label.insert(tk.END, meta_text, "meta")
+
             self.filename_label.tag_configure("fixed", foreground=fixed_colour)
             self.filename_label.tag_configure("normal", foreground="white")
+            self.filename_label.tag_configure("meta", foreground="white")
             self.filename_label.place(x=0, y=0)
-            self.filename_label.config(height=1, width=len(label_path) + 10, bg="black")
+            full_label_text: str = self.filename_label.get("1.0", "end-1c")
+            self.filename_label.config(
+                height=1, width=len(full_label_text) + 10, bg="black"
+            )
             self.filename_label.config(state=tk.DISABLED)
 
             mode_text: str = (
@@ -705,12 +840,6 @@ class ImageSlideshow:
             self.filename_label.place_forget()
             self.mode_label.place_forget()
         self.root.update_idletasks()
-
-    # --- Image Manipulation Methods ---
-
-    def rotate_image(self, event=None) -> None:
-        self.rotation_angle = (self.rotation_angle - 90) % 360
-        self.show_image(self.current_image_path)
 
     # --- Exit Method ---
 

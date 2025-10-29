@@ -95,6 +95,11 @@ class ZoomPan:
         self._fast_mode = False
         self._refresh()
 
+    def get_zoom_percent(self) -> int:
+        if not self.orig_image:
+            return 100
+        return int(round(self.zoom_factor * 100))
+
     # ---------- Internal computations ----------
 
     def _recompute_base_scale(self):
