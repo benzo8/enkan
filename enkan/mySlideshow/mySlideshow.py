@@ -410,6 +410,12 @@ class ImageSlideshow:
                 except Exception as e:
                     messagebox.showerror("Error", f"Could not delete the image: {e}")
 
+    def rotate_image(self, event=None) -> None:
+        if utils.is_videofile(self.current_image_path):
+            return
+        self.rotation_angle = (self.rotation_angle - 90) % 360
+        self.show_image(self.current_image_path)
+
     def persist_rotation_to_exif(self, event=None) -> None:
         if not self.current_image_path or not utils.is_imagefile(self.current_image_path):
             return
@@ -775,13 +781,17 @@ class ImageSlideshow:
                 self.filename_label.insert(tk.END, label_path, "normal")
                 fixed_colour = "white"
 
-            rotation_text: str = self._format_rotation_display()
+            is_video: bool = utils.is_videofile(self.current_image_path)
             zoom_percent: int = (
                 self.zoompan.get_zoom_percent()
                 if hasattr(self, "zoompan") and self.zoompan
                 else 100
             )
-            meta_text: str = f" ({rotation_text}, {zoom_percent}%)"
+            meta_parts = []
+            if not is_video:
+                meta_parts.append(self._format_rotation_display())
+            meta_parts.append(f"{zoom_percent}%")
+            meta_text: str = f" ({', '.join(meta_parts)})"
             self.filename_label.insert(tk.END, meta_text, "meta")
 
             self.filename_label.tag_configure("fixed", foreground=fixed_colour)
@@ -830,12 +840,6 @@ class ImageSlideshow:
             self.filename_label.place_forget()
             self.mode_label.place_forget()
         self.root.update_idletasks()
-
-    # --- Image Manipulation Methods ---
-
-    def rotate_image(self, event=None) -> None:
-        self.rotation_angle = (self.rotation_angle - 90) % 360
-        self.show_image(self.current_image_path)
 
     # --- Exit Method ---
 
