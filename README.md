@@ -18,18 +18,6 @@ Optional:
 
 ## Installation
 
-### Using uv (reccommended)
-
-```bash
-uv tool install enkan
-```
-
-### From PyPI
-
-```bash
-pip install enkan
-```
-
 ### From source
 
 ```bash

@@ -5,13 +5,15 @@ from typing import List
 from itertools import accumulate
 
 # ——— Local ———
-from enkan.utils.InputProcessor import InputProcessor
 from enkan.utils.Defaults import Defaults
 from enkan.utils.Filters import Filters
 from enkan.tree.tree_logic import (
     build_tree,
     extract_image_paths_and_weights_from_tree
 )
+from enkan.utils.input_models import should_bypass_merge
+from enkan.utils.InputProcessor import InputProcessor
+from enkan.utils.multi_inputs import MultiSourceBuilder
 
 logger = logging.getLogger("enkan.main")  
 
@@ -30,8 +32,23 @@ def main_with_args(args) -> None:
     else:
         input_files = list(args.input_file)
 
-    processor = InputProcessor(defaults, filters, args.quiet or False)
-    tree, image_dirs, specific_images, all_images, weights = processor.process_inputs(input_files)
+    merge_required = not should_bypass_merge(input_files)
+    if merge_required:
+        logger.debug("Multiple or nested inputs detected; merge path required (fallback to legacy processing for now).")
+
+    if merge_required:
+        builder = MultiSourceBuilder(defaults, filters, args.quiet or False)
+        tree, merge_warnings = builder.build(input_files)
+        if merge_warnings:
+            for msg in merge_warnings:
+                logger.warning(msg)
+        image_dirs: dict = {}
+        specific_images: dict = {}
+        all_images: List[str] = []
+        weights: List[float] = []
+    else:
+        processor = InputProcessor(defaults, filters, args.quiet or False)
+        tree, image_dirs, specific_images, all_images, weights = processor.process_inputs(input_files)
 
     if not any([tree, image_dirs, specific_images, all_images, weights]):
         raise ValueError("No images found in the provided input files.")

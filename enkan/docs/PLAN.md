@@ -33,6 +33,14 @@ Currently we have three main input types:
    * They contain all the possible information about the tree
    * Offers node-based navigation and full balancing control
 
+### Current Progress (dev-user_proportion branch, merge work)
+
+* `.tree + .txt` basic merge works with placement from the first tree and content updates from the txt; added/updated node counts logged before recalculation.
+* Mode precedence implemented: CLI > first source with built_mode (from .tree) > first source mode_string; weights recalculated post-merge with warnings surfaced on failures.
+* `.lst` can be backfilled into a tree via list reconstruction; merges like other sources (no graft-aware handling yet).
+* Merge matching is by filesystem path; base placement wins. No graft-aware duplicate resolution yet.
+* Remaining: harmonise globals across multiple `.txt` (lift later to first rung), graft-aware dedupe for duplicates moved via `[g]`/groups, explicit warnings for images below lowest rung even on success, and more merge tests (txt+txt, tree+tree, tree+lst/txt).
+
 ### Issues combining each combination
 
 #### .txt + .txt
