@@ -6,23 +6,49 @@ Of course, enkan can show you images completely at random, but its real power co
 
 ## Requirements
 
-- Python 3.11 or newer
-- VLC desktop client (needed by `python-vlc` for video playback)
-- Pillow, matplotlib, tqdm (pulled in automatically by pip)
+- Python ≥3.11
+- Pillow
+- python-vlc (for video support)
+- matplotlib (for tree visualization)
+- tqdm (progress bars)
+
+Optional:
+
+- customtkinter (enhanced GUI appearance)
 
 ## Installation
 
-### From a source checkout
+### Using uv (reccommended)
 
 ```bash
-git clone <your-fork-or-clone-url>
+uv tool install enkan
+```
+
+### From PyPI
+
+```bash
+pip install enkan
+```
+
+### From source
+
+```bash
+git clone https://github.com/yourusername/enkan.git
 cd enkan
-python -m venv .venv
-.venv\Scripts\pip install --upgrade pip
-.venv\Scripts\pip install -e .
+pip install -e .
 ```
 
 If you install into a fresh environment, remember to install VLC separately so that `python-vlc` can find the native libraries.
+
+## Features
+
+- Weighted and balanced image selection modes
+- Tree-based directory organization with grafting
+- EXIF orientation support
+- Image caching for performance
+- Video playback support (via VLC)
+- Interactive GUI with zoom/pan
+- Rotation persistence to EXIF
 
 ## Quick Start
 
@@ -106,6 +132,7 @@ A group definition stores graft level, proportion, and mode modifiers. Any line 
 | `--random` | Start in fully random mode (same as `[r]` in a file). |
 | `--auto N` | Advance automatically every `N` seconds. |
 | `--no-recurse` | Treat every supplied folder as non-recursive. |
+| `--ignore-below-bottom` | Ignore files in folders below lowest balance level. |
 | `--video` / `--no-video` | Force-enable or disable video globally. |
 | `--no-mute` | Keep audio tracks unmuted (video default is muted). |
 | `--quiet` | Suppress progress output. |
@@ -134,6 +161,8 @@ A group definition stores graft level, proportion, and mode modifiers. Any line 
 | B | Select Folder Burst Mode - pick 5 images from the current folder, then randomly select the next folder and repeat |
 | L | Select Liner / Sequential Mode |
 | Ctrl-B | Reset Folder Burst Mode - pick a new folder and begin Folder Burst mode again |
+| R | Rotate image clockwise by 90 degrees |
+| Ctrl-R | Try to write current orientation to image EXIF data |
 | = / + / - | Zoom image |
 | 0 | Reset Zoom |
 | Shift-Cursor | Move viewport around zoomed image |
@@ -159,4 +188,4 @@ enkan can navigate in two modes:
 - When emphasising a single standout image, prefer an absolute modifier like `[25]` on the image line instead of inflating nearby branches.
 - Large libraries benefit from building a `.tree` once and reusing it until the folder structure changes; enkan automatically regenerates it if the pickle version does not match.
 
-Have fun curating!
+Have fun!

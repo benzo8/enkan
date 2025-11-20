@@ -1,0 +1,8 @@
+{
+  "extends": "markdownlint/style/relaxed",
+  "default": true,
+  "MD024": { "siblings_only": true },
+  "MD013": false,
+  "MD033": false,
+  "MD041": false
+}
