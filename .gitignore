@@ -1,9 +1,11 @@
 # Project structure
+docs/
 lists/
 test_zone/
 input-file-tests/
 old versions/
 enkan/TODO.md
+benchmarks/
 
 # IDE/Editor settings
 .vscode/
@@ -22,6 +24,8 @@ build/
 .vscode/launch.json
 enkan/ruff.toml
 results.csv
+uv.lock
+.markdownlint.json
 
 # Third-party binaries
 benchmarks/EmptyStandbyList.exe
