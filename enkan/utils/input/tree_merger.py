@@ -7,7 +7,7 @@ from typing import Iterable, Optional, Tuple
 
 from enkan.tree.Tree import Tree
 from enkan.tree.TreeNode import TreeNode
-from enkan.utils.input_models import LoadedSource
+from enkan.utils.input.input_models import LoadedSource
 
 
 @dataclass

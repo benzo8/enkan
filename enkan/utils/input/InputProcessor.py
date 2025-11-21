@@ -16,28 +16,21 @@ class InputProcessor:
         self.filters = filters
         self.quiet = quiet
 
-    def process_inputs(self, input_files, recdepth=1):
+    def process_input(self, input_entry, recdepth=1, graft_offset: int = 0, apply_global_mode: bool = True):
         """
-        Parse input files and directories to create image_dirs and specific_images dictionaries.
-
-        Args:
-            input_files (list): List of input files or directories.
-            defaults (object): Defaults object containing configuration.
-
-        Returns:
-            tuple: (image_dirs, specific_images)
+        Parse a single input entry (file or directory) into a Tree or supporting structures.
+        Returns (tree, image_dirs, specific_images, all_images, weights)
         """
         image_dirs: Dict = {}
         specific_images: Dict = {}
         all_images: List = []
         weights: List = []
 
-        for input_entry in input_files:
-            tree: Tree = self.process_entry(
-                input_entry, recdepth, image_dirs, specific_images, all_images, weights
-            )
-            if tree:
-                return tree, {}, {}, [], []
+        tree: Tree = self.process_entry(
+            input_entry, recdepth, image_dirs, specific_images, all_images, weights, graft_offset, apply_global_mode
+        )
+        if tree:
+            return tree, {}, {}, [], []
         return None, image_dirs, specific_images, all_images, weights
 
     def _load_tree_if_current(self, filename: str) -> Tree | None:
@@ -66,14 +59,17 @@ class InputProcessor:
         return tree
 
     def process_entry(
-        self, entry, recdepth, image_dirs, specific_images, all_images, weights
+        self, entry, recdepth, image_dirs, specific_images, all_images, weights, graft_offset: int = 0, apply_global_mode: bool = True
     ) -> Tree | None:
         """
         Process a single input entry (file, directory, or image).
         """
 
         additional_search_paths = [os.path.dirname(entry)]
-        input_filename_full = utils.find_input_file(entry, additional_search_paths)
+        if os.path.isabs(entry) and os.path.isfile(entry):
+            input_filename_full = entry
+        else:
+            input_filename_full = utils.find_input_file(entry, additional_search_paths)
 
         if input_filename_full:
             match os.path.splitext(input_filename_full)[1].lower():
@@ -152,13 +148,13 @@ class InputProcessor:
                                 line
                             ):  # Recursively process nested text files
                                 sub_image_dirs, sub_specific_images, _, _ = (
-                                    self.process_inputs([line], recdepth + 1)
+                                    self.process_input(line, recdepth + 1, graft_offset=graft_offset, apply_global_mode=apply_global_mode)
                                 )
                                 image_dirs.update(sub_image_dirs)
                                 specific_images.update(sub_specific_images)
                             else:
                                 path, modifier_list = self.parse_input_line(
-                                    line, recdepth
+                                    line, recdepth, graft_offset=graft_offset, apply_global_mode=apply_global_mode
                                 )
                                 if modifier_list:
                                     if utils.is_imagefile(path):
@@ -166,14 +162,14 @@ class InputProcessor:
                                     else:
                                         image_dirs[path] = modifier_list
         else:  # Handle directories and images directly
-            path, modifier_list = self.parse_input_line(entry, recdepth)
+            path, modifier_list = self.parse_input_line(entry, recdepth, graft_offset=graft_offset, apply_global_mode=apply_global_mode)
             if modifier_list:
                 if utils.is_imagefile(path):
                     specific_images[path] = modifier_list
                 else:
                     image_dirs[path] = modifier_list
 
-    def parse_input_line(self, line, recdepth):
+    def parse_input_line(self, line, recdepth, graft_offset: int = 0, apply_global_mode: bool = True):
 
 
         if line.startswith("[r]"):
@@ -221,8 +217,6 @@ class InputProcessor:
             "mute": None,
             "dont_recurse": None,
         }
-        base_mode = self.defaults.mode
-        
         def handle_weight(s: str):
             if s.endswith("%"):
                 state["weight_modifier"] = int(s[:-1])
@@ -302,9 +296,17 @@ class InputProcessor:
                 return None, None
             if state["video"] is not None or state["mute"] is not None:
                 self.defaults.set_global_video(video=state["video"], mute=state["mute"])
-            if recdepth == 1:
-                self.defaults.set_global_defaults(mode=state["mode_modifier"] or base_mode, dont_recurse=state["dont_recurse"])
+            if recdepth == 1 and apply_global_mode:
+                self.defaults.set_global_defaults(mode=state["mode_modifier"] or self.defaults.mode, dont_recurse=state["dont_recurse"])
             return None, None
+
+        # Calculate an effective graft level when harmonising modes across inputs
+        def _effective_graft_level(path_str: str) -> int | None:
+            base_level = state["graft_level"]
+            if base_level is None:
+                parts = [p for p in os.path.normpath(path_str).split(os.path.sep) if p]
+                base_level = len(parts)
+            return base_level + graft_offset if graft_offset else base_level
 
         if os.path.isdir(path):
             return path, {
@@ -312,7 +314,7 @@ class InputProcessor:
                 "is_percentage": state["is_percentage"],
                 "proportion": state["proportion"],
                 "user_proportion": state["user_proportion"],
-                "graft_level": state["graft_level"],
+                "graft_level": _effective_graft_level(path),
                 "group": state["group"],
                 "mode_modifier": state["mode_modifier"],
                 "flat": state["flat"],
@@ -324,7 +326,7 @@ class InputProcessor:
                 "is_percentage": state["is_percentage"],
                 "proportion": state["proportion"],
                 "user_proportion": state["user_proportion"],
-                "graft_level": state["graft_level"],
+                "graft_level": _effective_graft_level(path),
                 "group": state["group"],
                 "mode_modifier": state["mode_modifier"],
             }

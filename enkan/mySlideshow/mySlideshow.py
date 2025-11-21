@@ -21,8 +21,8 @@ from enkan.utils.Filters import Filters
 from enkan.utils.myStack import Stack
 from enkan.plugables.ImageProviders import ImageProviders
 from enkan.tree.tree_logic import (
+    apply_mode_and_recalculate,
     build_tree,
-    calculate_weights,
     extract_image_paths_and_weights_from_tree,
 )
 from enkan.mySlideshow.Gui.Gui import Gui
@@ -346,11 +346,9 @@ class ImageSlideshow:
         )
 
     def _recalculate_slideshow(self, ignore_user: bool) -> None:
-        calculate_weights(self.original_tree, ignore_user_proportion=ignore_user)
-        images, weights = extract_image_paths_and_weights_from_tree(self.original_tree)
-        if not images:
-            raise ValueError("Recalculation produced no images.")
-        cum_weights = list(accumulate(weights))
+        images, _, cum_weights = apply_mode_and_recalculate(
+            self.original_tree, self.defaults, ignore_user_proportion=ignore_user
+        )
         self.original_image_paths = images[:]
         self.original_cum_weights = cum_weights[:]
         self.update_slide_show(images, cum_weights)

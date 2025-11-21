@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
-from typing import Iterable, List, Tuple
+from typing import List, Tuple
 
 from enkan.tree.Tree import Tree
 from enkan.tree.tree_logic import calculate_weights

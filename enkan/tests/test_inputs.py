@@ -8,8 +8,8 @@ from types import SimpleNamespace
 from enkan.utils.Defaults import Defaults
 from enkan.utils.Filters import Filters
 from enkan.tree.Tree import Tree
-from enkan.utils.input_models import SourceKind, LoadedSource, should_bypass_merge
-from enkan.utils.tree_merger import TreeMerger
+from enkan.utils.input.input_models import SourceKind, LoadedSource, should_bypass_merge
+from enkan.utils.input.tree_merger import TreeMerger
 
 
 class BypassDetectionTests(unittest.TestCase):
@@ -25,6 +25,15 @@ class BypassDetectionTests(unittest.TestCase):
     def test_single_txt_with_nested_requires_merge(self):
         with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
             f.write("other.txt\n")
+            path = f.name
+        try:
+            self.assertFalse(should_bypass_merge([path]))
+        finally:
+            os.unlink(path)
+
+    def test_single_lst_requires_merge(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".lst", delete=False) as f:
+            f.write("C:/images/foo.jpg,1\n")
             path = f.name
         try:
             self.assertFalse(should_bypass_merge([path]))

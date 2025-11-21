@@ -7,13 +7,10 @@ from itertools import accumulate
 # ——— Local ———
 from enkan.utils.Defaults import Defaults
 from enkan.utils.Filters import Filters
-from enkan.tree.tree_logic import (
-    build_tree,
-    extract_image_paths_and_weights_from_tree
-)
-from enkan.utils.input_models import should_bypass_merge
-from enkan.utils.InputProcessor import InputProcessor
-from enkan.utils.multi_inputs import MultiSourceBuilder
+from enkan.tree.tree_logic import extract_image_paths_and_weights_from_tree
+from enkan.utils.input.input_models import should_bypass_merge
+from enkan.utils.input.InputProcessor import InputProcessor
+from enkan.utils.input.multi_inputs import MultiSourceBuilder
 
 logger = logging.getLogger("enkan.main")  
 
@@ -34,9 +31,6 @@ def main_with_args(args) -> None:
 
     merge_required = not should_bypass_merge(input_files)
     if merge_required:
-        logger.debug("Multiple or nested inputs detected; merge path required (fallback to legacy processing for now).")
-
-    if merge_required:
         builder = MultiSourceBuilder(defaults, filters, args.quiet or False)
         tree, merge_warnings = builder.build(input_files)
         if merge_warnings:
@@ -48,37 +42,34 @@ def main_with_args(args) -> None:
         weights: List[float] = []
     else:
         processor = InputProcessor(defaults, filters, args.quiet or False)
-        tree, image_dirs, specific_images, all_images, weights = processor.process_inputs(input_files)
+        entry = input_files[0] if input_files else None
+        tree, image_dirs, specific_images, all_images, weights = processor.process_input(entry)
 
     if not any([tree, image_dirs, specific_images, all_images, weights]):
         raise ValueError("No images found in the provided input files.")
 
-    if image_dirs or specific_images or tree:
-        # Instantiate and build the tree
-        if not tree:
-            tree = build_tree(defaults, filters, image_dirs, specific_images, quiet=False)
 
-        # Print tree if requested
-        if args.printtree:
-            from enkan.utils.tests import print_tree
-            print_tree(defaults, tree.root, max_depth=args.testdepth or 9999)
-            return
+    # Print tree if requested
+    if args.printtree:
+        from enkan.utils.tests import print_tree
+        print_tree(defaults, tree.root, max_depth=args.testdepth or 9999)
+        return
 
-        if args.outputtree:
-            from enkan.utils.utils import write_tree_to_file
-            base_names = [os.path.splitext(os.path.basename(f))[0] for f in args.input_file]
-            output_name = "_".join(base_names) + ".tree"
-            output_path = os.path.join(os.getcwd(), output_name)
-            write_tree_to_file(tree, output_path)
-            logger.info("Tree written to %s", output_path)
-            return
+    if args.outputtree:
+        from enkan.utils.utils import write_tree_to_file
+        base_names = [os.path.splitext(os.path.basename(f))[0] for f in args.input_file]
+        output_name = "_".join(base_names) + ".tree"
+        output_path = os.path.join(os.getcwd(), output_name)
+        write_tree_to_file(tree, output_path)
+        logger.info("Tree written to %s", output_path)
+        return
 
-        # Extract paths and weights from the tree
-        extracted_images, extracted_weights = (
-            extract_image_paths_and_weights_from_tree(tree, test_iterations=args.test)
-        ) 
-        all_images.extend(extracted_images)
-        weights.extend(extracted_weights)
+    # Extract paths and weights from the tree
+    extracted_images, extracted_weights = (
+        extract_image_paths_and_weights_from_tree(tree, test_iterations=args.test)
+    ) 
+    all_images.extend(extracted_images)
+    weights.extend(extracted_weights)
         
     cum_weights = list(accumulate(weights))
 

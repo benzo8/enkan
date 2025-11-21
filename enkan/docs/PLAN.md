@@ -35,11 +35,11 @@ Currently we have three main input types:
 
 ### Current Progress (dev-user_proportion branch, merge work)
 
-* `.tree + .txt` basic merge works with placement from the first tree and content updates from the txt; added/updated node counts logged before recalculation.
-* Mode precedence implemented: CLI > first source with built_mode (from .tree) > first source mode_string; weights recalculated post-merge with warnings surfaced on failures.
-* `.lst` can be backfilled into a tree via list reconstruction; merges like other sources (no graft-aware handling yet).
-* Merge matching is by filesystem path; base placement wins. No graft-aware duplicate resolution yet.
-* Remaining: harmonise globals across multiple `.txt` (lift later to first rung), graft-aware dedupe for duplicates moved via `[g]`/groups, explicit warnings for images below lowest rung even on success, and more merge tests (txt+txt, tree+tree, tree+lst/txt).
+* Input parsing/merging modules regrouped under `enkan.utils.input`.
+* Merge baseline: path-based matching; base placement wins. `.tree + .txt` merges append content into existing branches and log added/updated node counts before recalculation.
+* Mode handling: CLI mode wins; otherwise the first `.txt` with a global mode sets the target. Later `.txt` inputs are harmonised via graft offsets to align their lowest rung to the target. Loaded trees are reweighted to the target when one has been established.
+* `.lst` inputs are reconstructed into trees and participate in merges (no graft-aware dedupe yet).
+* Remaining: graft-aware dedupe for duplicates moved via `[g]`/groups, explicit warnings for images below lowest rung even on success, more merge tests (txt+txt, tree+tree, tree+lst/txt), and mode harmonisation when only trees are provided with no CLI mode.
 
 ### Issues combining each combination
 

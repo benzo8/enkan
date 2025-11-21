@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import os
-
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional
 
 from enkan import constants
+from enkan.tree.tree_logic import Tree
 
 
 class SourceKind(str, Enum):
@@ -92,4 +91,7 @@ def should_bypass_merge(inputs: Iterable[str]) -> bool:
     kind = classify_input_path(single)
     if kind == SourceKind.TXT:
         return not _txt_contains_nested_inputs(single)
-    return kind in {SourceKind.TREE, SourceKind.LST, SourceKind.FOLDER}
+    # .lst files need to be reconstructed into a tree even when alone
+    if kind == SourceKind.LST:
+        return False
+    return kind in {SourceKind.TREE, SourceKind.FOLDER}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 import logging
+from itertools import accumulate
 from typing import Callable, Literal, Mapping, Optional, Sequence, Tuple, List
 
 from .Tree import Tree
@@ -249,3 +250,20 @@ def extract_image_paths_and_weights_from_tree(
     traverse_node(start_node)
 
     return all_images, weights
+
+
+def apply_mode_and_recalculate(
+    tree: Tree, defaults: Defaults, ignore_user_proportion: bool = False
+) -> tuple[list[str], list[float], list[float]]:
+    """
+    Apply the current defaults.mode to the tree, recalculate weights, and return
+    images/weights/cumulative weights for downstream consumers.
+    """
+    # Ensure the tree sees the latest defaults (mode may have just changed)
+    tree.defaults = defaults
+    calculate_weights(tree, ignore_user_proportion=ignore_user_proportion)
+    images, weights = extract_image_paths_and_weights_from_tree(tree)
+    if not images:
+        raise ValueError("Recalculation produced no images.")
+    cum_weights = list(accumulate(weights))
+    return images, weights, cum_weights
