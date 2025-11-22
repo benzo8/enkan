@@ -65,10 +65,10 @@ def print_tree(
 
 
 def test_distribution(
-    image_nodes, cum_weights, iterations, testdepth, histo, defaults, quiet=False
+    image_nodes, cum_weights, iterations, testdepth, histo, defaults
 ):
     hit_counts = defaultdict(int)
-    for _ in tqdm(range(iterations), desc="Iterating tests", disable=quiet):
+    for _ in tqdm(range(iterations), desc="Iterating tests"):
         if defaults.is_random:
             image_path = random.choice(image_nodes)
         else:

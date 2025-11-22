@@ -50,7 +50,6 @@ class TreeBuilder:
         self,
         image_dirs: Mapping[str, ImageDirConfig],
         specific_images: Optional[SpecificImagesConfig],
-        quiet: bool = False,
     ) -> None:
         """
         Build the tree from a mapping of root directories (image_dirs) and an optional
@@ -77,7 +76,6 @@ class TreeBuilder:
             total=0,
             desc="Building tree",
             unit="file",
-            disable=quiet,
             dynamic_ncols=True,
             leave=False,
         ) as pbar:

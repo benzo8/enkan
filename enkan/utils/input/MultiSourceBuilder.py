@@ -24,11 +24,10 @@ class MultiSourceBuilder:
     each to a Tree and merging left-to-right.
     """
 
-    def __init__(self, defaults: Defaults, filters: Filters, quiet: bool = False) -> None:
+    def __init__(self, defaults: Defaults, filters: Filters) -> None:
         self.defaults = defaults
         self.filters = filters
-        self.quiet = quiet
-        self.processor = InputProcessor(defaults, filters, quiet)
+        self.processor = InputProcessor(defaults, filters)
 
     def build(self, input_files: Iterable[str]):
         sources: List[LoadedSource] = []
@@ -82,7 +81,7 @@ class MultiSourceBuilder:
                 logger.debug("Loaded tree source '%s'.", entry_path_full)
             elif kind == SourceKind.LST:
                 logger.debug("Rebuilding tree from list '%s'.", entry_path_full)
-                tree = build_tree_from_list(entry_path_full, self.defaults, self.filters, self.quiet)
+                tree = build_tree_from_list(entry_path_full, self.defaults, self.filters)
             else:
                 logger.debug("Processing txt/source '%s' with graft offset %s.", entry_path_full, graft_offset)
                 tree = self._build_tree_from_entry(entry_path_full, graft_offset=graft_offset)
@@ -135,7 +134,7 @@ class MultiSourceBuilder:
             return tree
 
         if image_dirs or specific_images:
-            return build_tree(self.defaults, self.filters, image_dirs, specific_images, quiet=self.quiet)
+            return build_tree(self.defaults, self.filters, image_dirs, specific_images)
 
         # If only a flat list of images/weights was provided, surface a warning and skip
         if all_images:

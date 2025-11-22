@@ -41,8 +41,7 @@ def _normalise_proportions(entries: List[Tuple[str, float]]) -> List[Tuple[str, 
 def build_tree_from_list(
     list_path: str,
     defaults: Defaults,
-    filters: Filters,
-    quiet: bool = False,
+    filters: Filters
 ) -> Tree:
     """
     Reconstruct a Tree from a .lst file to enable navigation and reweighting.

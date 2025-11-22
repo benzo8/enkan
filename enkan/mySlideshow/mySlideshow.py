@@ -47,7 +47,6 @@ class ImageSlideshow:
         cum_weights: list,
         defaults: Defaults,
         filters: Filters,
-        quiet: bool,
         interval: int | float | None = None,
     ) -> None:
         self.root: TreeNode = root
@@ -72,7 +71,6 @@ class ImageSlideshow:
         self.defaults: Defaults = defaults
         self.filters: Filters = filters
         self.video_muted: bool = self.defaults.mute
-        self.quiet: bool = quiet
         self.interval: int | float | None = interval
 
         self.rotation_angle: int | float = 0
@@ -316,7 +314,7 @@ class ImageSlideshow:
                 }
             }
             parent_tree: Tree.Tree = build_tree(
-                self.defaults, self.filters, parent_image_dirs, None, self.quiet
+                self.defaults, self.filters, parent_image_dirs, None
             )
             new_image_paths, new_weights = extract_image_paths_and_weights_from_tree(
                 parent_tree

@@ -19,11 +19,10 @@ def build_tree(
     filters: Filters,
     image_dirs: Mapping[str, dict],
     specific_images: Optional[Mapping[str, dict]],
-    quiet: bool = False,
 ) -> Tree:
     tree = Tree(defaults, filters)
     builder = TreeBuilder(tree)
-    builder.build_tree(image_dirs, specific_images, quiet)
+    builder.build_tree(image_dirs, specific_images)
     tree.record_built_mode()
     _, num_images = tree.count_branches(tree.root)
     if num_images == 0:

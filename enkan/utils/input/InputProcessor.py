@@ -11,10 +11,9 @@ from enkan.utils.Defaults import parse_mode_string
 logger: logging.Logger = logging.getLogger(__name__)
 
 class InputProcessor:
-    def __init__(self, defaults, filters, quiet=False):
+    def __init__(self, defaults, filters):
         self.defaults = defaults
         self.filters = filters
-        self.quiet = quiet
 
     def process_input(self, input_entry, recdepth=1, graft_offset: int = 0, apply_global_mode: bool = True):
         """
@@ -99,8 +98,7 @@ class InputProcessor:
                             f,
                             desc=f"Parsing {input_filename_full}",
                             unit="line",
-                            total=total_lines,
-                            disable=self.quiet,
+                            total=total_lines
                         ):
                             line = line.strip()
                             if not line or line.startswith("#"):
@@ -132,8 +130,7 @@ class InputProcessor:
                             f,
                             desc=f"Parsing {input_filename_full}",
                             unit="line",
-                            total=total_lines,
-                            disable=self.quiet,
+                            total=total_lines
                         ):
                             line = line.strip()
                             if not line or line.startswith(

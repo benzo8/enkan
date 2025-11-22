@@ -10,7 +10,7 @@ from enkan.utils.Filters import Filters
 from enkan.tree.tree_logic import extract_image_paths_and_weights_from_tree
 from enkan.utils.input.input_models import should_bypass_merge
 from enkan.utils.input.InputProcessor import InputProcessor
-from enkan.utils.input.multi_inputs import MultiSourceBuilder
+from enkan.utils.input.MultiSourceBuilder import MultiSourceBuilder
 
 logger = logging.getLogger("enkan.main")  
 
@@ -29,9 +29,9 @@ def main_with_args(args) -> None:
     else:
         input_files = list(args.input_file)
 
-    merge_required = not should_bypass_merge(input_files)
+    merge_required: bool = not should_bypass_merge(input_files)
     if merge_required:
-        builder = MultiSourceBuilder(defaults, filters, args.quiet or False)
+        builder = MultiSourceBuilder(defaults, filters)
         tree, merge_warnings = builder.build(input_files)
         if merge_warnings:
             for msg in merge_warnings:
@@ -41,7 +41,7 @@ def main_with_args(args) -> None:
         all_images: List[str] = []
         weights: List[float] = []
     else:
-        processor = InputProcessor(defaults, filters, args.quiet or False)
+        processor = InputProcessor(defaults, filters)
         entry = input_files[0] if input_files else None
         tree, image_dirs, specific_images, all_images, weights = processor.process_input(entry)
 
@@ -86,11 +86,11 @@ def main_with_args(args) -> None:
     # Test or start the slideshow
     if args.test:
         from enkan.utils.tests import test_distribution
-        test_distribution(all_images, cum_weights, args.test, args.testdepth, args.histo, defaults, args.quiet or False)
+        test_distribution(all_images, cum_weights, args.test, args.testdepth, args.histo, defaults)
         return
     
     from enkan.mySlideshow.start_slideshow import start_slideshow
     if not tree:
         from enkan.tree.Tree import Tree
         tree = Tree(defaults, filters)
-    start_slideshow(tree, all_images, cum_weights, defaults, filters, args.quiet or False, args.interval)
+    start_slideshow(tree, all_images, cum_weights, defaults, filters, args.interval)
