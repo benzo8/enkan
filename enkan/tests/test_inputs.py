@@ -9,7 +9,7 @@ from enkan.utils.Defaults import Defaults
 from enkan.utils.Filters import Filters
 from enkan.tree.Tree import Tree
 from enkan.utils.input.input_models import SourceKind, LoadedSource, should_bypass_merge
-from enkan.utils.input.tree_merger import TreeMerger
+from enkan.utils.input.TreeMerger import TreeMerger
 
 
 class BypassDetectionTests(unittest.TestCase):

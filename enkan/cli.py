@@ -29,21 +29,21 @@ def main_with_args(args) -> None:
     else:
         input_files = list(args.input_file)
 
-    merge_required: bool = not should_bypass_merge(input_files)
-    if merge_required:
-        builder = MultiSourceBuilder(defaults, filters)
-        tree, merge_warnings = builder.build(input_files)
-        if merge_warnings:
-            for msg in merge_warnings:
-                logger.warning(msg)
-        image_dirs: dict = {}
-        specific_images: dict = {}
-        all_images: List[str] = []
-        weights: List[float] = []
-    else:
-        processor = InputProcessor(defaults, filters)
-        entry = input_files[0] if input_files else None
-        tree, image_dirs, specific_images, all_images, weights = processor.process_input(entry)
+    # merge_required: bool = not should_bypass_merge(input_files)
+    # if merge_required:
+    builder = MultiSourceBuilder(defaults, filters)
+    tree, merge_warnings = builder.build(input_files)
+    if merge_warnings:
+        for msg in merge_warnings:
+            logger.warning(msg)
+    image_dirs: dict = {}
+    specific_images: dict = {}
+    all_images: List[str] = []
+    weights: List[float] = []
+    # else:
+    #     processor = InputProcessor(defaults, filters)
+    #     entry = input_files[0] if input_files else None
+    #     tree, image_dirs, specific_images, all_images, weights = processor.process_input(entry)
 
     if not any([tree, image_dirs, specific_images, all_images, weights]):
         raise ValueError("No images found in the provided input files.")

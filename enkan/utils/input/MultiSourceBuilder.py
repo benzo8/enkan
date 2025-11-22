@@ -12,7 +12,7 @@ from enkan.utils.Defaults import Defaults, parse_mode_string
 from enkan.utils.Filters import Filters
 from enkan.utils.input.input_models import LoadedSource, SourceKind, classify_input_path
 from enkan.utils.input.list_tree_builder import build_tree_from_list
-from enkan.utils.input.tree_merger import TreeMerger
+from enkan.utils.input.TreeMerger import TreeMerger
 from enkan import constants
 
 logger = logging.getLogger(__name__)
