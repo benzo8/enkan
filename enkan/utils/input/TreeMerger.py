@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Iterable, Optional, Tuple
 
+from enkan.constants import ROOT_NODE_NAME
 from enkan.tree.Tree import Tree
 from enkan.tree.TreeNode import TreeNode
 from enkan.utils.input.input_models import LoadedSource
@@ -54,7 +55,7 @@ class TreeMerger:
         added = 0
         updated = 0
         for node in self._traverse(incoming.root):
-            if node.path == "root":
+            if node.path == ROOT_NODE_NAME:
                 continue
             existing = self._find_matching_node(base, node)
             if existing:

@@ -4,6 +4,7 @@ import os
 from collections import defaultdict
 from typing import List, Tuple
 
+from enkan.constants import ROOT_NODE_NAME
 from enkan.tree.Tree import Tree
 from enkan.tree.tree_logic import calculate_weights
 from enkan.utils.Filters import Filters
@@ -56,7 +57,7 @@ def build_tree_from_list(
                 path, weight = _parse_list_line(raw.strip())
                 if not path:
                     continue
-                dir_path = os.path.dirname(path) or "root"
+                dir_path = os.path.dirname(path) or ROOT_NODE_NAME
                 grouped[dir_path].append((path, weight))
     except OSError as exc:
         raise ValueError(f"Unable to read list file '{list_path}': {exc}") from exc

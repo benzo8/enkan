@@ -1,21 +1,24 @@
 from __future__ import annotations
-
 import os
 from typing import Dict, List, Mapping, Optional, Literal
 
 from tqdm import tqdm
 
-from enkan.tree.TreeNode import TreeNode
-from enkan.utils.Filters import Filters
 import enkan.utils.utils as utils
-from .Tree import Tree
-from .Grafting import Grafting
+from enkan.tree.TreeNode import TreeNode
+from enkan.tree.Tree import Tree
+from enkan.tree.Grafting import Grafting
+from enkan.utils.Filters import Filters
 
 ImageDirConfig = Dict[str, object]
 SpecificImagesConfig = Dict[str, Dict[str, object]]
 
+"""
+Builder for directory/text-sourced trees.
+"""
 
-class TreeBuilder:
+
+class TreeBuilderTXT:
     def __init__(self, tree: Tree) -> None:
         """
         Parameters:
@@ -75,9 +78,10 @@ class TreeBuilder:
         with tqdm(
             total=0,
             desc="Building tree",
+            leave=False,
             unit="file",
             dynamic_ncols=True,
-            leave=False,
+
         ) as pbar:
             for root, data in image_dirs.items():
                 if not os.path.isdir(root):
@@ -148,6 +152,7 @@ class TreeBuilder:
                 if file_count:
                     pbar.total += file_count
                     pbar.desc = f"Processing {current_path}"
+                    pbar.leave = True
                     pbar.update(file_count)
                     pbar.refresh()
                 self.process_path(current_path, files, dirs, data)
@@ -183,10 +188,10 @@ class TreeBuilder:
             return
 
         if dirs:
-            # Directory with both subdirs and images → special 'images' branch
+            # Directory with both subdirs and images – special 'images' branch
             self.add_images_branch(path, images, data)
         else:
-            # Terminal (no subdirs) → regular branch
+            # Terminal (no subdirs) – regular branch
             self.add_regular_branch(path, images, data)
 
     def add_flat_branch(

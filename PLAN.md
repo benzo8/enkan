@@ -11,19 +11,18 @@ Principles
 - Preserve mode harmonisation/graft offsets and filter/global directives; no behavioural regressions on modifiers.
 - Prefer stateless helpers reusable by MultiSourceBuilder; InputProcessor becomes thin or goes away.
 
-Plan
+Plan (status)
 
-1) Baseline behaviour: capture sample inputs (.tree/.lst/.txt with globals, nested txt, filters, grafts, flat, video/mute) and add regression tests where feasible.
-2) Move tree/lst dispatch into MultiSourceBuilder: adopt _load_tree_if_current, call build_tree_from_list, keep mode detection/harmonisation; warn/skip stale .tree.
-3) Extract parsing helpers: new module (e.g., tree_builders.py) exposing parse_input_line/parse_input_file → image_dirs/specific_images; migrate from InputProcessor.process_entry/process_input.
-4) Unify recursion: MultiSourceBuilder._build_tree_from_entry re-enters builder for nested files instead of processor recursion; ensure graft_offset propagates.
-5) Simplify InputProcessor or remove: leave thin shim if legacy callers; otherwise delete and update imports.
-6) CLI cleanup: always use MultiSourceBuilder; remove merge_required/InputProcessor path; keep output tree/list writing working.
-7) Tests/QA: cover directives ([r], [+]/[-], "*" globals), mode detection, graft offsets, list rebuild, nested txt, flat dirs, specific images; smoke slideshow/test distribution.
-8) Docs/notes: update README/help strings to describe single entry point and behaviour for .tree/.lst/.txt.
+- ✅ Move tree/lst dispatch into MultiSourceBuilder and tree_logic: dispatcher build_tree in tree_logic, TreeBuilderLST in tree/, .tree loading via tree_io.load_tree_if_current; mode harmonisation intact.
+- ✅ Extract parsing helpers / slim InputProcessor: now txt-only parser with nested handler hook; private _process_entry recursion.
+- ✅ Unify recursion: MultiSourceBuilder supplies nested_file_handler for nested .lst/.tree, merges resulting trees, recalculates weights; TreeBuilder.py removed.
+- ✅ CLI path simplified to always use MultiSourceBuilder (merge flag commented out).
+- ✅ Progress bars: tqdm added to .lst builder; future quiet handling deferred.
+- ⏳ Tests/QA: add regression for directives ([r], [+]/[-], "*" globals), mode detection/graft offsets, list rebuild (pre-weighted vs unweighted), nested txt/lst/tree, flat dirs, specific images; smoke slideshow/test distribution.
+- ⏳ Docs/notes: update README/help to describe single dispatcher, nested handling, stale .tree behaviour, progress bar/quiet flag handling.
 
 Open questions
 
-- Keep build_tree_from_list in utils/input or move beside tree builders?
-- Any external callers of InputProcessor needing a shim?
-- Keep warning on flat list-only inputs or auto-tree with default proportions?
+- Finalise .lst semantics: pre-weighted vs unweighted behaviour and mode inheritance when merged; ensure proportions match expectations.
+- Propagate/handle warnings from nested merges and weight recalcs back to CLI.
+- Consider quiet/leave behaviour for tqdm (TXT/LST) once CLI quiet flag is reintroduced.

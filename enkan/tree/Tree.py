@@ -6,6 +6,7 @@ from typing import Any, Optional, Literal, Mapping, Sequence
 
 # --- Local ---
 from .TreeNode import TreeNode
+from enkan.constants import ROOT_NODE_NAME
 from enkan.utils.Defaults import Defaults
 from enkan.utils.Filters import Filters
 
@@ -15,10 +16,10 @@ class Tree:
 
     def __init__(self, defaults: Defaults, filters: Filters) -> None:
         # Use string path, not int
-        self.root: TreeNode = TreeNode(name="root", path="root")
-        self.node_lookup: dict[str, TreeNode] = {"root": self.root}
-        self.path_lookup: dict[str, TreeNode] = {"root": self.root}
-        self.virtual_image_lookup: dict[str, TreeNode] = {"root": self.root}
+        self.root: TreeNode = TreeNode(name=ROOT_NODE_NAME, path=ROOT_NODE_NAME)
+        self.node_lookup: dict[str, TreeNode] = {ROOT_NODE_NAME: self.root}
+        self.path_lookup: dict[str, TreeNode] = {ROOT_NODE_NAME: self.root}
+        self.virtual_image_lookup: dict[str, TreeNode] = {ROOT_NODE_NAME: self.root}
         self.defaults: Defaults = defaults
         self.filters: Filters = filters
         self.built_mode_string: Optional[str] = None
@@ -145,16 +146,16 @@ class Tree:
         norm: str = os.path.normpath(path)
 
         # Branch: tree-format (starts with 'root' component)
-        if norm.lower() == "root":
+        if norm.lower() == ROOT_NODE_NAME:
             return self.root
-        if norm.lower().startswith("root" + os.path.sep):
+        if norm.lower().startswith(ROOT_NODE_NAME + os.path.sep):
             parts = [p for p in norm.split(os.path.sep) if p]
             # parts[0] is 'root'; build from parts[1:]
             current_node: TreeNode = self.root
             built_path = ""  # store subtree path without 'root' prefix
             for segment in parts[1:]:
                 built_path: str = segment if not built_path else os.path.join(built_path, segment)
-                node_name: str = os.path.join("root", *built_path.split(os.path.sep)).lower()
+                node_name: str = os.path.join(ROOT_NODE_NAME, *built_path.split(os.path.sep)).lower()
                 node: TreeNode | None = self.node_lookup.get(node_name)
                 if node is None:
                     node = TreeNode(name=node_name, path=built_path)
@@ -212,7 +213,7 @@ class Tree:
         components: list[str] = [
             c for c in path_without_drive.strip(os.path.sep).split(os.path.sep) if c
         ]
-        return os.path.join("root", *components).lower()
+        return os.path.join(ROOT_NODE_NAME, *components).lower()
 
     def record_built_mode(self) -> None:
         mode_snapshot = self.defaults.mode or {}

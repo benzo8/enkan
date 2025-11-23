@@ -1,5 +1,5 @@
 import os
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Callable, Optional, Tuple
 import logging
 from tqdm import tqdm
 
@@ -10,55 +10,57 @@ from enkan.utils.Defaults import parse_mode_string
 
 logger: logging.Logger = logging.getLogger(__name__)
 
+
 class InputProcessor:
     def __init__(self, defaults, filters):
         self.defaults = defaults
         self.filters = filters
 
-    def process_input(self, input_entry, recdepth=1, graft_offset: int = 0, apply_global_mode: bool = True):
+    def process_input(
+        self,
+        input_entry,
+        recdepth: int = 1,
+        graft_offset: int = 0,
+        apply_global_mode: bool = True,
+        nested_file_handler: Optional[
+            Callable[[str, int, bool], Tuple[Dict, Dict, List, List]]
+        ] = None,
+    ):
         """
-        Parse a single input entry (file or directory) into a Tree or supporting structures.
-        Returns (tree, image_dirs, specific_images, all_images, weights)
+        Parse a .txt entry into image_dirs/specific_images structures.
+        Returns (image_dirs, specific_images, all_images, weights) for compatibility.
         """
         image_dirs: Dict = {}
         specific_images: Dict = {}
         all_images: List = []
         weights: List = []
 
-        tree: Tree = self.process_entry(
-            input_entry, recdepth, image_dirs, specific_images, all_images, weights, graft_offset, apply_global_mode
+        self._process_entry(
+            input_entry,
+            recdepth,
+            image_dirs,
+            specific_images,
+            all_images,
+            weights,
+            graft_offset,
+            apply_global_mode,
+            nested_file_handler,
         )
-        if tree:
-            return tree, {}, {}, [], []
-        return None, image_dirs, specific_images, all_images, weights
+        return image_dirs, specific_images, all_images, weights
 
-    def _load_tree_if_current(self, filename: str) -> Tree | None:
-        """
-        Attempt to load a pickled Tree; return None if version missing/outdated.
-        """
-        from enkan.utils.utils import load_tree_from_file
-        try:
-            tree = load_tree_from_file(filename)
-        except Exception as e:
-            logger.warning("[tree] Failed to load '%s': %s.", filename, e)
-            return None
-        version_in_pickle = getattr(tree, "_pickle_version", None)
-        if version_in_pickle is None or version_in_pickle < Tree.PICKLE_VERSION:
-            tree_filename = os.path.basename(filename)
-            txt_filename = os.path.splitext(tree_filename)[0] + ".txt"
-            logger.info(
-                "[tree] '%s' outdated (pickle_version=%d, required=%d).\n"
-                "Please rebuild with: enkan --input_file %s --outputtree",
-                tree_filename,
-                version_in_pickle,
-                Tree.PICKLE_VERSION,
-                txt_filename,
-            )
-            return None
-        return tree
-
-    def process_entry(
-        self, entry, recdepth, image_dirs, specific_images, all_images, weights, graft_offset: int = 0, apply_global_mode: bool = True
+    def _process_entry(
+        self,
+        entry,
+        recdepth,
+        image_dirs,
+        specific_images,
+        all_images,
+        weights,
+        graft_offset: int = 0,
+        apply_global_mode: bool = True,
+        nested_file_handler: Optional[
+            Callable[[str, int, bool], Tuple[Dict, Dict, List, List]]
+        ] = None,
     ) -> Tree | None:
         """
         Process a single input entry (file, directory, or image).
@@ -71,104 +73,98 @@ class InputProcessor:
             input_filename_full = utils.find_input_file(entry, additional_search_paths)
 
         if input_filename_full:
-            match os.path.splitext(input_filename_full)[1].lower():
-                case ".tree":
-                    # Load a pre-built tree from a file
-                    tree = self._load_tree_if_current(input_filename_full)
-                    if tree:
-                        logger.info("Loaded current tree from %s", input_filename_full)
-                        return tree
-                    stem = os.path.splitext(input_filename_full)[0]
-                    for ext in (".lst", ".txt"):
-                        alt = stem + ext
-                        if os.path.isfile(alt):
-                            # Reinvoke processing on the alternate file
-                            return self.process_entry(
-                                alt, recdepth, image_dirs, specific_images, all_images, weights
-                            )
-                    # If no alternate source list, just stop (nothing else to parse here)
-                    return None                
-                case ".lst":
-                    with open(
-                        input_filename_full, "r", buffering=65536, encoding="utf-8"
-                    ) as f:
-                        total_lines = sum(1 for _ in f)
-                        f.seek(0)
-                        for line in tqdm(
-                            f,
-                            desc=f"Parsing {input_filename_full}",
-                            unit="line",
-                            total=total_lines
-                        ):
-                            line = line.strip()
-                            if not line or line.startswith("#"):
-                                continue
-                            image_path, weight_str = line.rsplit(
-                                ",", 1
-                            )  # Split on last comma
-                            if weight_str:  # Expecting "image_path,weight"
-                                try:
-                                    weights.append(float(weight_str))
-                                    all_images.append(image_path)
-                                except ValueError:
-                                    # weight_str is not a number, so it's part of the image path (comma in filename)
-                                    all_images.append(f"{image_path},{weight_str}")
-                                    weights.append(
-                                        0.01
-                                    )  # Default weight for single lines
-                            else:  # Probably an irfanview-style list
-                                all_images.append(line)
-                                weights.append(0.01)  # Default weight for single lines
-                    logger.info("Loaded slide list from %s", input_filename_full)
-                case ".txt":
-                    with open(
-                        input_filename_full, "r", buffering=65536, encoding="utf-8"
-                    ) as f:
-                        total_lines = sum(1 for _ in f)
-                        f.seek(0)
-                        for line in tqdm(
-                            f,
-                            desc=f"Parsing {input_filename_full}",
-                            unit="line",
-                            total=total_lines
-                        ):
-                            line = line.strip()
-                            if not line or line.startswith(
-                                "#"
-                            ):  # Skip comments/empty lines
-                                continue
-                            line = line.replace(
-                                '"', ""
-                            ).strip()  # Remove enclosing quotes
+            ext = os.path.splitext(input_filename_full)[1].lower()
+            if ext != ".txt":
+                if nested_file_handler and ext in {".lst", ".tree"}:
+                    nested_result = nested_file_handler(
+                        input_filename_full, graft_offset, apply_global_mode
+                    )
+                    if nested_result:
+                        n_image_dirs, n_specific_images, n_all_images, n_weights = (
+                            nested_result
+                        )
+                        image_dirs.update(n_image_dirs or {})
+                        specific_images.update(n_specific_images or {})
+                        all_images.extend(n_all_images or [])
+                        weights.extend(n_weights or [])
+                    return None
+                logger.warning(
+                    "Skipping non-txt input '%s' in InputProcessor.",
+                    input_filename_full,
+                )
+                return None
+            with open(input_filename_full, "r", buffering=65536, encoding="utf-8") as f:
+                total_lines = sum(1 for _ in f)
+                f.seek(0)
+                for line in tqdm(
+                    f,
+                    desc=f"Parsing {input_filename_full}",
+                    leave=True,
+                    unit="line",
+                    total=total_lines,
+                ):
+                    line = line.strip()
+                    if not line or line.startswith("#"):  # Skip comments/empty lines
+                        continue
+                    line = line.replace('"', "").strip()  # Remove enclosing quotes
 
-                            if utils.is_textfile(
-                                line
-                            ):  # Recursively process nested text files
-                                sub_image_dirs, sub_specific_images, _, _ = (
-                                    self.process_input(line, recdepth + 1, graft_offset=graft_offset, apply_global_mode=apply_global_mode)
-                                )
-                                image_dirs.update(sub_image_dirs)
-                                specific_images.update(sub_specific_images)
+                    line_ext = os.path.splitext(line)[1].lower()
+                    if utils.is_textfile(line):
+                        # Recursively process nested text files
+                        sub_image_dirs, sub_specific_images, _, _ = self.process_input(
+                            line,
+                            recdepth + 1,
+                            graft_offset=graft_offset,
+                            apply_global_mode=apply_global_mode,
+                            nested_file_handler=nested_file_handler,
+                        )
+                        image_dirs.update(sub_image_dirs)
+                        specific_images.update(sub_specific_images)
+                    elif line_ext in {".lst", ".tree"} and nested_file_handler:
+                        nested_result = nested_file_handler(
+                            line, graft_offset, apply_global_mode
+                        )
+                        if nested_result:
+                            n_image_dirs, n_specific_images, n_all_images, n_weights = (
+                                nested_result
+                            )
+                            image_dirs.update(n_image_dirs or {})
+                            specific_images.update(n_specific_images or {})
+                            all_images.extend(n_all_images or [])
+                            weights.extend(n_weights or [])
+                    elif line_ext in {".lst", ".tree"}:
+                        logger.warning(
+                            "Nested input '%s' requires external handler; skipping.",
+                            line,
+                        )
+                    else:
+                        path, modifier_list = self.parse_input_line(
+                            line,
+                            recdepth,
+                            graft_offset=graft_offset,
+                            apply_global_mode=apply_global_mode,
+                        )
+                        if modifier_list:
+                            if utils.is_imagefile(path):
+                                specific_images[path] = modifier_list
                             else:
-                                path, modifier_list = self.parse_input_line(
-                                    line, recdepth, graft_offset=graft_offset, apply_global_mode=apply_global_mode
-                                )
-                                if modifier_list:
-                                    if utils.is_imagefile(path):
-                                        specific_images[path] = modifier_list
-                                    else:
-                                        image_dirs[path] = modifier_list
+                                image_dirs[path] = modifier_list
         else:  # Handle directories and images directly
-            path, modifier_list = self.parse_input_line(entry, recdepth, graft_offset=graft_offset, apply_global_mode=apply_global_mode)
+            path, modifier_list = self.parse_input_line(
+                entry,
+                recdepth,
+                graft_offset=graft_offset,
+                apply_global_mode=apply_global_mode,
+            )
             if modifier_list:
                 if utils.is_imagefile(path):
                     specific_images[path] = modifier_list
                 else:
                     image_dirs[path] = modifier_list
 
-    def parse_input_line(self, line, recdepth, graft_offset: int = 0, apply_global_mode: bool = True):
-
-
+    def parse_input_line(
+        self, line, recdepth, graft_offset: int = 0, apply_global_mode: bool = True
+    ):
         if line.startswith("[r]"):
             self.defaults.set_global_defaults(is_random=True)
             return None, None
@@ -214,6 +210,7 @@ class InputProcessor:
             "mute": None,
             "dont_recurse": None,
         }
+
         def handle_weight(s: str):
             if s.endswith("%"):
                 state["weight_modifier"] = int(s[:-1])
@@ -268,7 +265,7 @@ class InputProcessor:
             (constants.NO_VIDEO_PATTERN, handle_no_video),
             (constants.MUTE_PATTERN, handle_mute),
             (constants.NO_MUTE_PATTERN, handle_no_mute),
-            (constants.DONT_RECURSE_PATTERN, handle_dont_recurse)
+            (constants.DONT_RECURSE_PATTERN, handle_dont_recurse),
         )
 
         for mod in modifiers:
@@ -279,9 +276,9 @@ class InputProcessor:
                     break
             else:
                 logger.warning("Unknown modifier '%s' in line: %s", mod_content, line)
-        
+
         # Handle directory or specific image
-            
+
         if path == "*":
             if state["group"]:
                 self.defaults.groups[state["group"]] = {
@@ -294,7 +291,10 @@ class InputProcessor:
             if state["video"] is not None or state["mute"] is not None:
                 self.defaults.set_global_video(video=state["video"], mute=state["mute"])
             if recdepth == 1 and apply_global_mode:
-                self.defaults.set_global_defaults(mode=state["mode_modifier"] or self.defaults.mode, dont_recurse=state["dont_recurse"])
+                self.defaults.set_global_defaults(
+                    mode=state["mode_modifier"] or self.defaults.mode,
+                    dont_recurse=state["dont_recurse"],
+                )
             return None, None
 
         # Calculate an effective graft level when harmonising modes across inputs

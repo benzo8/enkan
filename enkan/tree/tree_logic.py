@@ -4,7 +4,8 @@ from itertools import accumulate
 from typing import Callable, Literal, Mapping, Optional, Sequence, Tuple, List
 
 from .Tree import Tree
-from .TreeBuilder import TreeBuilder
+from .TreeBuilderTXT import TreeBuilderTXT
+from .TreeBuilderLST import TreeBuilderLST
 from .TreeNode import TreeNode
 from enkan.utils.Defaults import Defaults, resolve_mode
 from enkan.utils.tests import report_branch_weight_sums
@@ -17,12 +18,31 @@ logger: logging.Logger = logging.getLogger("__name__")
 def build_tree(
     defaults: Defaults,
     filters: Filters,
-    image_dirs: Mapping[str, dict],
-    specific_images: Optional[Mapping[str, dict]],
+    image_dirs: Mapping[str, dict] | None = None,
+    specific_images: Optional[Mapping[str, dict]] = None,
+    *,
+    kind: str | None = None,
+    list_path: str | None = None,
 ) -> Tree:
+    """
+    Dispatch tree construction by source kind.
+        kind="txt" (default): use directory/image mappings (image_dirs/specific_images)
+        kind="lst": build from a .lst path
+    """
     tree = Tree(defaults, filters)
-    builder = TreeBuilder(tree)
-    builder.build_tree(image_dirs, specific_images)
+
+    source_kind = (kind or "txt").lower()
+    if source_kind == "txt":
+        builder = TreeBuilderTXT(tree)
+        builder.build_tree(image_dirs or {}, specific_images)
+    elif source_kind == "lst":
+        if not list_path:
+            raise ValueError("list_path is required when building from a .lst file.")
+        builder = TreeBuilderLST(tree)
+        builder.build(list_path)
+    else:
+        raise ValueError(f"Unsupported build kind '{kind}'.")
+
     tree.record_built_mode()
     _, num_images = tree.count_branches(tree.root)
     if num_images == 0:

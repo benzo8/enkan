@@ -13,6 +13,7 @@ PARENT_STACK_MAX = 5
 HISTORY_QUEUE_LENGTH = 25
 CACHE_SIZE = 10
 PRELOAD_QUEUE_LENGTH = 3
+ROOT_NODE_NAME = "root"
 IMAGE_FILES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff")
 VIDEO_FILES = (".mp4", ".mkv", ".webm", ".avi", ".mov", ".wmv")
 TEXT_FILES = (".txt", ".lst")
