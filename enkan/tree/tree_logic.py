@@ -20,6 +20,7 @@ def build_tree(
     filters: Filters,
     image_dirs: Mapping[str, dict] | None = None,
     specific_images: Optional[Mapping[str, dict]] = None,
+    mode: Tuple[dict, int] | None = None,
     *,
     kind: str | None = None,
     list_path: str | None = None,
@@ -32,18 +33,19 @@ def build_tree(
     tree = Tree(defaults, filters)
 
     source_kind = (kind or "txt").lower()
-    if source_kind == "txt":
-        builder = TreeBuilderTXT(tree)
-        builder.build_tree(image_dirs or {}, specific_images)
-    elif source_kind == "lst":
-        if not list_path:
-            raise ValueError("list_path is required when building from a .lst file.")
-        builder = TreeBuilderLST(tree)
-        builder.build(list_path)
-    else:
-        raise ValueError(f"Unsupported build kind '{kind}'.")
+    match source_kind:
+        case "txt":
+            builder = TreeBuilderTXT(tree)
+            builder.build_tree(image_dirs or {}, specific_images, mode)
+        case "lst":
+            if not list_path:
+                raise ValueError("list_path is required when building from a .lst file.")
+            builder = TreeBuilderLST(tree)
+            builder.build(list_path)
+        case _:
+            raise ValueError(f"Unsupported build kind '{kind}'.")
 
-    tree.record_built_mode()
+    # tree.record_built_mode()
     _, num_images = tree.count_branches(tree.root)
     if num_images == 0:
         raise ValueError("No images found in the provided input files.")

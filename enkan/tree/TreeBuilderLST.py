@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 from enkan.constants import ROOT_NODE_NAME
 from enkan.tree.Tree import Tree
@@ -17,9 +17,9 @@ class TreeBuilderLST:
     def __init__(self, tree: Tree) -> None:
         self.tree = tree
 
-    def _parse_list_line(self, line: str) -> Tuple[str, float] | None:
+    def _parse_list_line(self, line: str) -> Tuple[str, float, bool] | None:
         """
-        Parse a single .lst line into (path, weight).
+        Parse a single .lst line into (path, weight, had_explicit_weight).
         Returns None for comments/blank lines.
         """
         if not line or line.startswith("#"):
@@ -27,7 +27,7 @@ class TreeBuilderLST:
 
         line = line.strip().strip('"')
         if "," not in line:
-            return line, 1.0
+            return line, 1.0, False
 
         path, weight_str = line.rsplit(",", 1)
         path = path.strip().strip('"')
@@ -36,8 +36,8 @@ class TreeBuilderLST:
             weight = float(weight_str)
         except ValueError:
             # Comma inside filename; treat whole line as path
-            return line, 1.0
-        return path, weight if weight > 0 else 1.0
+            return line, 1.0, False
+        return path, (weight if weight > 0 else 1.0), True
 
     def build(self, list_path: str) -> None:
         """
@@ -45,6 +45,7 @@ class TreeBuilderLST:
         Groups images by containing folder; proportions are derived from summed weights.
         """
         grouped: dict[str, List[Tuple[str, float]]] = defaultdict(list)
+        explicit_weights_found: bool = False
 
         try:
             with open(list_path, "r", encoding="utf-8", buffering=65536) as f:
@@ -60,7 +61,9 @@ class TreeBuilderLST:
                     parsed = self._parse_list_line(raw.strip())
                     if not parsed:
                         continue
-                    path, weight = parsed
+                    path, weight, had_weight = parsed
+                    if had_weight:
+                        explicit_weights_found = True
                     dir_path = os.path.dirname(path) or ROOT_NODE_NAME
                     grouped[dir_path].append((path, weight))
         except OSError as exc:
@@ -95,3 +98,43 @@ class TreeBuilderLST:
                     },
                 )
                 pbar.update(1)
+        # Record whether the source .lst had explicit weights for downstream inference
+        setattr(self.tree, "lst_has_weights", explicit_weights_found)
+        self._infer_mode_from_tree()
+
+    def _infer_mode_from_tree(self) -> None:
+        if not getattr(self.tree, "lst_has_weights", False):
+            self.tree.lst_inferred_mode = None
+            self.tree.lst_inferred_lowest = None
+            self.tree.lst_inferred_warning = "List has no explicit weights; mode not harmonised."
+            return
+
+        level_weights: Dict[int, List[float]] = {}
+        for node in self.tree.node_lookup.values():
+            if node.name == ROOT_NODE_NAME:
+                continue
+            if getattr(node, "weight", None) is None:
+                continue
+            level_weights.setdefault(node.level, []).append(node.weight)
+
+        if not level_weights:
+            self.tree.lst_inferred_mode = None
+            self.tree.lst_inferred_lowest = None
+            self.tree.lst_inferred_warning = "No nodes found while inferring mode."
+            return
+
+        tolerance = 1e-6
+        for level in sorted(level_weights.keys()):
+            weights = level_weights[level]
+            if not weights:
+                continue
+            if max(weights) - min(weights) <= tolerance:
+                self.tree.lst_inferred_mode = {level: ("b", (0, 0))}
+                self.tree.built_mode = self.tree.lst_inferred_mode
+                self.tree.lst_inferred_lowest = level
+                self.tree.lst_inferred_warning = None
+                return
+
+        self.tree.lst_inferred_mode = None
+        self.tree.lst_inferred_lowest = None
+        self.tree.lst_inferred_warning = "Could not infer a balanced rung."

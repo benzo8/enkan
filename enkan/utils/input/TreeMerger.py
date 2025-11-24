@@ -76,8 +76,14 @@ class TreeMerger:
             stack.extend(current.children)
 
     def _merge_node(self, target: TreeNode, incoming: TreeNode) -> bool:
+        """
+        Apply merge semantics:
+        - Preserve target placement/name.
+        - Later input wins for user_proportion, weight_modifier, is_percentage, images, and graft/group metadata.
+        - Replace images scoped to the incoming path only; leave other aliases intact (flatten/graft/group).
+        """
         changed = False
-        if self._merge_images(target, incoming):
+        if self._replace_images_for_path(target, incoming):
             changed = True
         if self._merge_metadata(target, incoming):
             changed = True
@@ -115,28 +121,44 @@ class TreeMerger:
             return candidate
         return None
 
-    def _merge_images(self, target: TreeNode, incoming: TreeNode) -> bool:
+    def _replace_images_for_path(self, target: TreeNode, incoming: TreeNode) -> bool:
+        """
+        Replace only the files belonging to the incoming path, leaving other aliases in shared nodes untouched.
+        """
         if not incoming.images:
             return False
-        seen = set(target.images)
-        changed = False
-        for img in incoming.images:
-            if img not in seen:
-                target.images.append(img)
-                seen.add(img)
-                changed = True
-        return changed
+
+        incoming_path = os.path.normpath(incoming.path)
+        kept = [img for img in target.images if not self._is_from_path(img, incoming_path)]
+        new_images = kept + list(incoming.images)
+        if new_images == target.images:
+            return False
+        target.images = new_images
+        return True
 
     def _merge_metadata(self, target: TreeNode, incoming: TreeNode) -> bool:
+        """
+        Field precedence per architecture:
+            - Left-most: name/location
+            - Right-most: user_proportion, weight_modifier, is_percentage, images (handled separately), and graft/group metadata (if present externally)
+            - Merge-when-empty: proportion, mode_modifier, video (as before)
+        """
         changed = False
+
+        # Right-most wins
+        if getattr(incoming, "user_proportion", None) is not None and getattr(target, "user_proportion", None) != incoming.user_proportion:
+            target.user_proportion = incoming.user_proportion
+            changed = True
+        if getattr(target, "weight_modifier", None) != getattr(incoming, "weight_modifier", None):
+            target.weight_modifier = incoming.weight_modifier
+            changed = True
+        if getattr(target, "is_percentage", None) != getattr(incoming, "is_percentage", None):
+            target.is_percentage = incoming.is_percentage
+            changed = True
+
+        # Merge-when-empty
         if target.proportion is None and incoming.proportion is not None:
             target.proportion = incoming.proportion
-            changed = True
-        if (
-            getattr(target, "user_proportion", None) is None
-            and getattr(incoming, "user_proportion", None) is not None
-        ):
-            target.user_proportion = incoming.user_proportion
             changed = True
         if target.mode_modifier is None and incoming.mode_modifier is not None:
             target.mode_modifier = incoming.mode_modifier
@@ -145,4 +167,14 @@ class TreeMerger:
             if getattr(target, "video", None) is None and getattr(incoming, "video", None) is not None:
                 target.video = incoming.video
                 changed = True
+
         return changed
+
+    @staticmethod
+    def _is_from_path(image_path: str, src_path: str) -> bool:
+        """
+        Determine if an image belongs to the given source path (directory or file), using dirname matching.
+        """
+        norm_src = os.path.normpath(src_path)
+        img_dir = os.path.normpath(os.path.dirname(image_path))
+        return img_dir == norm_src or img_dir.startswith(norm_src + os.path.sep)

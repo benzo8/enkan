@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 
-from typing import Iterable, List, Optional
+from typing import Iterable, List
 from enkan.tree.tree_io import load_tree_if_current
 from enkan.tree.tree_logic import build_tree
 from enkan.tree.tree_logic import calculate_weights, apply_mode_and_recalculate
@@ -13,7 +13,6 @@ from enkan.utils.Defaults import Defaults, parse_mode_string
 from enkan.utils.Filters import Filters
 from enkan.utils.input.input_models import LoadedSource, SourceKind, classify_input_path
 from enkan.utils.input.TreeMerger import TreeMerger
-from enkan import constants
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +30,10 @@ class MultiSourceBuilder:
 
     def build(self, input_files: Iterable[str]):
         sources: List[LoadedSource] = []
+        builder_warnings: List[str] = []
         target_mode = self.defaults.args_mode
         target_lowest_level = min(target_mode.keys()) if target_mode else None
         if target_mode:
-            self.defaults.set_global_defaults(mode=target_mode)
             logger.debug(
                 "CLI mode detected; target mode set to %s (lowest rung %s).",
                 target_mode,
@@ -45,72 +44,55 @@ class MultiSourceBuilder:
                 "No CLI mode; will derive target mode from the first source that declares one."
             )
 
+        # Process each input file
         for idx, entry in enumerate(input_files):
             additional_search_paths = [os.path.dirname(entry)]
             entry_path_full = find_input_file(entry, additional_search_paths)
             kind = classify_input_path(entry_path_full)
             tree = None
             graft_offset = 0
+                    
+            match kind:
+                case SourceKind.TREE:
+                    tree = load_tree_if_current(entry_path_full)
+                    if not tree:
+                        logger.warning(
+                            "Skipping stale or unreadable tree '%s'.", entry_path_full
+                        )
+                        continue
+                    logger.debug("Loaded tree source '%s'.", entry_path_full)
+                        
+                case SourceKind.LST:
+                    logger.debug("Rebuilding tree from list '%s'.", entry_path_full)
+                    tree = build_tree(
+                        self.defaults,
+                        self.filters,
+                        kind="lst",
+                        list_path=entry_path_full,
+                    )
+                case SourceKind.TXT:
+                    logger.debug(
+                        "Processing txt/source '%s' with graft offset %s.",
+                        entry_path_full,
+                        graft_offset,
+                    )
+                    tree = self._build_tree_from_entry(
+                        entry_path_full, graft_offset=graft_offset
+                    )
 
-            if kind == SourceKind.TXT:
-                detected_mode_dict, detected_lowest = self._detect_txt_global_mode(
-                    entry_path_full
-                )
-                if target_mode is None and detected_mode_dict:
-                    target_mode = detected_mode_dict
-                    target_lowest_level = detected_lowest
+            if tree:
+                inferred_tree_mode = self._extract_tree_mode(tree)
+                if inferred_tree_mode and not target_mode:
+                    target_mode = inferred_tree_mode
+                    target_lowest_level = min(target_mode.keys())
                     self.defaults.set_global_defaults(mode=target_mode)
                     logger.debug(
-                        "Derived target mode %s (lowest rung %s) from txt '%s'.",
+                        "Adopted mode %s (lowest rung %s) from tree '%s'.",
                         target_mode,
                         target_lowest_level,
                         entry_path_full,
                     )
-                if target_lowest_level is not None and detected_lowest is not None:
-                    graft_offset = target_lowest_level - detected_lowest
-                    logger.debug(
-                        "Applying graft offset %s to '%s' (txt lowest %s -> target lowest %s).",
-                        graft_offset,
-                        entry_path_full,
-                        detected_lowest,
-                        target_lowest_level,
-                    )
-                else:
-                    logger.debug(
-                        "No global mode found in '%s'; using current defaults.",
-                        entry_path_full,
-                    )
 
-            if target_mode:
-                self.defaults.set_global_defaults(mode=target_mode)
-
-            if kind == SourceKind.TREE:
-                tree = load_tree_if_current(entry_path_full)
-                if not tree:
-                    logger.warning(
-                        "Skipping stale or unreadable tree '%s'.", entry_path_full
-                    )
-                    continue
-                logger.debug("Loaded tree source '%s'.", entry_path_full)
-            elif kind == SourceKind.LST:
-                logger.debug("Rebuilding tree from list '%s'.", entry_path_full)
-                tree = build_tree(
-                    self.defaults,
-                    self.filters,
-                    kind="lst",
-                    list_path=entry_path_full,
-                )
-            else:
-                logger.debug(
-                    "Processing txt/source '%s' with graft offset %s.",
-                    entry_path_full,
-                    graft_offset,
-                )
-                tree = self._build_tree_from_entry(
-                    entry_path_full, graft_offset=graft_offset
-                )
-
-            if tree:
                 if kind != SourceKind.TXT and target_mode:
                     self._harmonise_tree_mode(
                         tree, target_mode, source_label=entry_path_full
@@ -128,7 +110,8 @@ class MultiSourceBuilder:
         if not sources:
             return None, []
         if len(sources) == 1:
-            return sources[0].tree, sources[0].warnings
+            single_warnings = list(builder_warnings) + list(sources[0].warnings)
+            return sources[0].tree, single_warnings
 
         self._apply_mode_precedence(sources)
 
@@ -148,6 +131,7 @@ class MultiSourceBuilder:
             result.warnings.append(msg)
             logger.warning(msg)
             raise
+        result.warnings.extend(builder_warnings)
         return result.tree, result.warnings
 
     def _build_tree_from_entry(self, entry: str, graft_offset: int = 0):
@@ -186,13 +170,18 @@ class MultiSourceBuilder:
                 nested_file_handler=_nested_handler,
             )
         )
+        detected_mode = getattr(self.processor, "detected_mode", None)
+        # detected_lowest = getattr(self.processor, "detected_lowest", None)
 
         if image_dirs or specific_images:
+            if detected_mode:
+                self.defaults.set_global_defaults(mode=detected_mode)
             base_tree = build_tree(
                 self.defaults,
                 self.filters,
                 image_dirs=image_dirs,
                 specific_images=specific_images,
+                mode=detected_mode,
                 kind="txt",
             )
         else:
@@ -289,38 +278,3 @@ class MultiSourceBuilder:
                 source_label or "source",
                 exc,
             )
-
-    def _detect_txt_global_mode(
-        self, path: str
-    ) -> tuple[Optional[dict[int, object]], Optional[int]]:
-        """
-        Lightweight scan of a txt file for a global mode modifier (e.g. [b6]).
-        Returns the parsed mode dict and its lowest level, or (None, None) if absent/unreadable.
-        """
-        try:
-            with open(path, "r", encoding="utf-8", buffering=65536) as f:
-                for raw in f:
-                    line = raw.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    mods = constants.MODIFIER_PATTERN.findall(line)
-                    for mod in mods:
-                        mod_content = mod.strip("[]").strip()
-                        if constants.MODE_PATTERN.match(mod_content):
-                            mode_dict = parse_mode_string(mod_content)
-                            if mode_dict:
-                                lowest = min(mode_dict.keys())
-                                logger.debug(
-                                    "Detected global mode %s (lowest rung %s) in txt '%s'.",
-                                    mode_dict,
-                                    lowest,
-                                    path,
-                                )
-                                return mode_dict, lowest
-                    # Stop once we hit a real path line; globals are expected up top
-                    if mods:
-                        continue
-                    break
-        except OSError as exc:
-            logger.warning("Unable to read txt '%s' for mode detection: %s", path, exc)
-        return None, None

@@ -12,7 +12,7 @@ from time import perf_counter
 from typing import Dict, Iterable, List, Mapping, Optional
 
 from enkan.tree.Tree import Tree
-from enkan.tree.TreeBuilder import TreeBuilder
+from enkan.tree.TreeBuilderTXT import TreeBuilder
 from enkan.utils.Defaults import Defaults
 from enkan.utils.Filters import Filters
 from enkan.utils.input.InputProcessor import InputProcessor

@@ -15,6 +15,8 @@ class InputProcessor:
     def __init__(self, defaults, filters):
         self.defaults = defaults
         self.filters = filters
+        self.detected_mode = None
+        self.detected_lowest = None
 
     def process_input(
         self,
@@ -34,6 +36,9 @@ class InputProcessor:
         specific_images: Dict = {}
         all_images: List = []
         weights: List = []
+        # reset detected mode for this run
+        self.detected_mode = None
+        self.detected_lowest = None
 
         self._process_entry(
             input_entry,
@@ -290,6 +295,9 @@ class InputProcessor:
                 return None, None
             if state["video"] is not None or state["mute"] is not None:
                 self.defaults.set_global_video(video=state["video"], mute=state["mute"])
+            if state["mode_modifier"]:
+                self.detected_mode = state["mode_modifier"]
+                self.detected_lowest = min(state["mode_modifier"].keys())
             if recdepth == 1 and apply_global_mode:
                 self.defaults.set_global_defaults(
                     mode=state["mode_modifier"] or self.defaults.mode,

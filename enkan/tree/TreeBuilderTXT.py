@@ -1,6 +1,6 @@
 from __future__ import annotations
 import os
-from typing import Dict, List, Mapping, Optional, Literal
+from typing import Dict, List, Mapping, Optional, Literal, Tuple
 
 from tqdm import tqdm
 
@@ -53,6 +53,7 @@ class TreeBuilderTXT:
         self,
         image_dirs: Mapping[str, ImageDirConfig],
         specific_images: Optional[SpecificImagesConfig],
+        mode: Tuple[dict, int] | None = None,
     ) -> None:
         """
         Build the tree from a mapping of root directories (image_dirs) and an optional
@@ -106,6 +107,8 @@ class TreeBuilderTXT:
 
         if specific_images:
             self.process_specific_images(specific_images)
+            
+        self.tree.built_mode = mode
 
     def process_directory(
         self,
