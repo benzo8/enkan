@@ -1,6 +1,6 @@
 from __future__ import annotations
 import os
-from typing import Dict, List, Mapping, Optional, Literal, Tuple
+from typing import Dict, List, Mapping, Optional, Literal
 
 from tqdm import tqdm
 
@@ -9,6 +9,7 @@ from enkan.tree.TreeNode import TreeNode
 from enkan.tree.Tree import Tree
 from enkan.tree.Grafting import Grafting
 from enkan.utils.Filters import Filters
+from enkan.utils.Defaults import serialise_mode, ModeMap
 
 ImageDirConfig = Dict[str, object]
 SpecificImagesConfig = Dict[str, Dict[str, object]]
@@ -30,8 +31,7 @@ class TreeBuilderTXT:
     def _ensure_structural_root_node(self, root: str, data: ImageDirConfig) -> None:
         """
         Create an empty node for the root directory if it does not already exist,
-        so that its metadata (weight_modifier / proportion / mode_modifier) participates
-        in later weight calculations even if the root has no direct images.
+        so that its metadata participates in weight calculations even if the root has no direct images.
         """
         if root in self.tree.path_lookup:
             return
@@ -53,7 +53,7 @@ class TreeBuilderTXT:
         self,
         image_dirs: Mapping[str, ImageDirConfig],
         specific_images: Optional[SpecificImagesConfig],
-        mode: Tuple[dict, int] | None = None,
+        mode: Optional[ModeMap] = None,
     ) -> None:
         """
         Build the tree from a mapping of root directories (image_dirs) and an optional
@@ -107,8 +107,9 @@ class TreeBuilderTXT:
 
         if specific_images:
             self.process_specific_images(specific_images)
-            
-        self.tree.built_mode = mode
+
+        self.tree.built_mode = mode if mode is not None else self.tree.defaults.mode
+        self.tree.built_mode_string = serialise_mode(self.tree.built_mode)
 
     def process_directory(
         self,

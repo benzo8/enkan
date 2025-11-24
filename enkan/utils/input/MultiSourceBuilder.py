@@ -9,7 +9,7 @@ from enkan.tree.tree_logic import build_tree
 from enkan.tree.tree_logic import calculate_weights, apply_mode_and_recalculate
 from enkan.utils.input.InputProcessor import InputProcessor
 from enkan.utils.utils import find_input_file
-from enkan.utils.Defaults import Defaults, parse_mode_string
+from enkan.utils.Defaults import Defaults, Mode
 from enkan.utils.Filters import Filters
 from enkan.utils.input.input_models import LoadedSource, SourceKind, classify_input_path
 from enkan.utils.input.TreeMerger import TreeMerger
@@ -103,7 +103,7 @@ class MultiSourceBuilder:
                         kind=kind,
                         order_index=idx,
                         tree=tree,
-                        mode_string=getattr(tree, "built_mode_string", None),
+                        mode=getattr(tree, "built_mode", None)
                     )
                 )
 
@@ -196,6 +196,7 @@ class MultiSourceBuilder:
                         kind=SourceKind.TXT,
                         order_index=0,
                         tree=base_tree,
+                        mode=getattr(base_tree, "built_mode", None)
                     )
                 )
             for idx, nested in enumerate(nested_trees, start=len(sources)):
@@ -205,6 +206,7 @@ class MultiSourceBuilder:
                         kind=SourceKind.OTHER,
                         order_index=idx,
                         tree=nested,
+                        mode=getattr(nested, "built_mode", None)
                     )
                 )
             merger = TreeMerger()
@@ -238,14 +240,8 @@ class MultiSourceBuilder:
         # Prefer first source with a recorded built_mode
         for src in sources:
             tree = src.tree
-            if tree and getattr(tree, "built_mode", None):
-                defaults.set_global_defaults(mode=tree.built_mode)
-                return
-            if src.mode_string:
-                # Fallback: parsed mode string on source (if ever set)
-                from enkan.utils.Defaults import parse_mode_string
-
-                defaults.set_global_defaults(mode=parse_mode_string(src.mode_string))
+            if tree and src.mode:
+                defaults.set_global_defaults(mode=src.mode)
                 return
 
     def _extract_tree_mode(self, tree) -> dict[int, object] | None:
@@ -255,7 +251,7 @@ class MultiSourceBuilder:
             tree.current_mode_string() if hasattr(tree, "current_mode_string") else None
         )
         if mode_str:
-            return parse_mode_string(mode_str)
+            return Mode.from_string(mode_str).map
         return None
 
     def _harmonise_tree_mode(

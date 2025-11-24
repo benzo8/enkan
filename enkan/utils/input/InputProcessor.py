@@ -6,7 +6,7 @@ from tqdm import tqdm
 from enkan import constants
 from enkan.tree.Tree import Tree
 from enkan.utils import utils
-from enkan.utils.Defaults import parse_mode_string
+from enkan.utils.Defaults import Mode
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -237,7 +237,7 @@ class InputProcessor:
             state["group"] = s[1:]
 
         def handle_mode(s: str):
-            state["mode_modifier"] = parse_mode_string(s)
+            state["mode_modifier"] = Mode.from_string(s).map
 
         def handle_flat(_s: str):
             state["flat"] = True

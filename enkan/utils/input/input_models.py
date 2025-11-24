@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional
 
 from enkan import constants
+from enkan.utils.Defaults import ModeMap
 from enkan.tree.tree_logic import Tree
 
 
@@ -32,7 +33,7 @@ class LoadedSource:
     order_index: int
     tree: Optional["Tree"] = None
     globals: Optional[Dict[str, Any]] = None
-    mode_string: Optional[str] = None
+    mode: ModeMap | None = None
     warnings: List[str] = field(default_factory=list)
     inferred: bool = False  # True for backfilled/reconstructed sources
 

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 # --- Standard library ---
 import os
-from typing import Any, Optional, Literal, Mapping, Sequence
+from typing import Any, Optional, Literal
 
 # --- Local ---
 from .TreeNode import TreeNode
 from enkan.constants import ROOT_NODE_NAME
-from enkan.utils.Defaults import Defaults
+from enkan.utils.Defaults import Defaults, serialise_mode, ModeMap
 from enkan.utils.Filters import Filters
 
 
@@ -23,7 +23,7 @@ class Tree:
         self.defaults: Defaults = defaults
         self.filters: Filters = filters
         self.built_mode_string: Optional[str] = None
-        self.built_mode: Optional[dict[int, Any]] = None
+        self.built_mode: Optional[ModeMap] = None
         self._post_init_indexes()
 
     def _post_init_indexes(self) -> None:
@@ -38,8 +38,8 @@ class Tree:
         for node in getattr(self, "node_lookup", {}).values():
             if not hasattr(node, "user_proportion"):
                 setattr(node, "user_proportion", None)
-        if self.built_mode and not self.built_mode_string:
-            self.built_mode_string = self._serialise_mode(self.built_mode)
+        if self.built_mode is not None and not self.built_mode_string:
+            self.built_mode_string = serialise_mode(self.built_mode)
         # (Add future index repairs here)
 
     def __getstate__(self) -> dict[str, Any]:
@@ -215,41 +215,8 @@ class Tree:
         ]
         return os.path.join(ROOT_NODE_NAME, *components).lower()
 
-    def record_built_mode(self) -> None:
-        mode_snapshot = self.defaults.mode or {}
-        self.built_mode = dict(mode_snapshot)
-        raw_mode = getattr(self.defaults.args, "mode", None) if getattr(self.defaults, "args", None) else None
-        self.built_mode_string = raw_mode or self._serialise_mode(mode_snapshot)
-
     def current_mode_string(self) -> Optional[str]:
-        return self._serialise_mode(self.defaults.mode or {})
-
-    @staticmethod
-    def _serialise_mode(mode_data: Mapping[int, Any]) -> Optional[str]:
-        if not mode_data:
-            return None
-
-        parts: list[str] = []
-        for level in sorted(mode_data.keys()):
-            info = mode_data[level]
-            if isinstance(info, tuple):
-                mode_char, slopes = info
-                slopes_seq: Sequence[int] | int
-                if isinstance(slopes, Sequence) and not isinstance(slopes, (str, bytes)):
-                    slopes_seq = slopes
-                else:
-                    slopes_seq = [slopes]
-                slopes_list = list(slopes_seq)
-                if len(slopes_list) < 2:
-                    slopes_list.extend([0] * (2 - len(slopes_list)))
-                part = f"{mode_char}{level}"
-                if slopes_list:
-                    part += "," + ",".join(str(int(s)) for s in slopes_list[:2])
-                parts.append(part)
-            else:
-                parts.append(f"{info}{level}")
-
-        return " ".join(parts)
+        return serialise_mode(self.defaults.mode or {})
 
     def set_path_to_level(self, path: str, level: int, group: str | None = None) -> str:
         current_level: int = self.calculate_level(path)

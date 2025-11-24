@@ -17,7 +17,7 @@ This document describes the major "agents" (modules/classes/subsystems) in Enkan
   - Root node name constant: `ROOT_NODE_NAME`.
   - Each node has a stable path key (canonicalized).
   - `path_lookup` is the canonical map for locating nodes from filesystem paths; once a path is registered it is treated as definitive for that runtime (only deliberate file deletions may alter membership).
-  - Many-to-one mappings in `path_lookup` are permitted (flattened/grafted/grouped branches); resolving a filesystem path via `path_lookup` must return the node that currently owns that path’s files.
+  - Many-to-one mappings in `path_lookup` are permitted (flattened/grafted/grouped branches); resolving a filesystem path via `path_lookup` must return the node that currently owns that path's files.
 - Responsibilities:
   - Maintain `path_lookup` for O(1) node resolution. (TODO: confirm implemented)
   - Expose method to recalculate weights.
@@ -42,6 +42,7 @@ This document describes the major "agents" (modules/classes/subsystems) in Enkan
 - Purpose: Determines how selection modes (balanced, weighted, random, etc.) apply across depth levels.
 - Inputs: Parsed mode strings (`[b0,0]`, `[w2,-1]` sequences).
 - Outputs: Structured mode modifier applied in weight calculation.
+- Representation: `ModeMap` (`level -> (mode_char, [slope1, slope2])`); `Mode` helper wraps parse/resolve/serialise. Internal code should use parsed modes everywhere; strings only at IO/logging boundaries.
 - [TODO: USER: Document exact grammar for mode tokens]
 
 ---
@@ -71,6 +72,7 @@ This document describes the major "agents" (modules/classes/subsystems) in Enkan
   - They contain global and local information
   - They can contain other text files
   - Multiple -i command-line arguments are the equivalent of a .txt file containing the same lines
+  - Mode handling: builds under the parsed mode from Defaults/global modifiers and records `built_mode`/`built_mode_string` on the tree.
 
 ### 2.3 TreeBuilderLST
 
@@ -85,6 +87,7 @@ This document describes the major "agents" (modules/classes/subsystems) in Enkan
   - Offers no balancing; is effectively mode w1 by necessity unless a mode string is supplied
   - Does not create a tree and so offers no access to node-based navigation
   - Merging behavior: when combined with existing trees, use `path_lookup` to place files; if mode present, align with established global mode precedence.
+  - Mode handling: records `built_mode`/`built_mode_string` when an inferred balanced rung exists (explicit weights); clears them when inference fails.
 
 ### 2.4 InputProcessor
 

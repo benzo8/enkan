@@ -7,7 +7,7 @@ from .Tree import Tree
 from .TreeBuilderTXT import TreeBuilderTXT
 from .TreeBuilderLST import TreeBuilderLST
 from .TreeNode import TreeNode
-from enkan.utils.Defaults import Defaults, resolve_mode
+from enkan.utils.Defaults import Defaults, resolve_mode, ModeMap
 from enkan.utils.tests import report_branch_weight_sums
 from enkan.utils.Filters import Filters
 from enkan.constants import TOTAL_WEIGHT
@@ -20,7 +20,7 @@ def build_tree(
     filters: Filters,
     image_dirs: Mapping[str, dict] | None = None,
     specific_images: Optional[Mapping[str, dict]] = None,
-    mode: Tuple[dict, int] | None = None,
+    mode: Optional[ModeMap] = None,
     *,
     kind: str | None = None,
     list_path: str | None = None,

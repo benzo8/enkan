@@ -7,6 +7,7 @@ from typing import Dict, List, Tuple
 from enkan.constants import ROOT_NODE_NAME
 from enkan.tree.Tree import Tree
 from tqdm import tqdm
+from enkan.utils.Defaults import serialise_mode
 
 """
 Builder for .lst list sources.
@@ -107,6 +108,8 @@ class TreeBuilderLST:
             self.tree.lst_inferred_mode = None
             self.tree.lst_inferred_lowest = None
             self.tree.lst_inferred_warning = "List has no explicit weights; mode not harmonised."
+            self.tree.built_mode = None
+            self.tree.built_mode_string = None
             return
 
         level_weights: Dict[int, List[float]] = {}
@@ -121,6 +124,8 @@ class TreeBuilderLST:
             self.tree.lst_inferred_mode = None
             self.tree.lst_inferred_lowest = None
             self.tree.lst_inferred_warning = "No nodes found while inferring mode."
+            self.tree.built_mode = None
+            self.tree.built_mode_string = None
             return
 
         tolerance = 1e-6
@@ -131,6 +136,7 @@ class TreeBuilderLST:
             if max(weights) - min(weights) <= tolerance:
                 self.tree.lst_inferred_mode = {level: ("b", (0, 0))}
                 self.tree.built_mode = self.tree.lst_inferred_mode
+                self.tree.built_mode_string = serialise_mode(self.tree.built_mode)
                 self.tree.lst_inferred_lowest = level
                 self.tree.lst_inferred_warning = None
                 return
@@ -138,3 +144,5 @@ class TreeBuilderLST:
         self.tree.lst_inferred_mode = None
         self.tree.lst_inferred_lowest = None
         self.tree.lst_inferred_warning = "Could not infer a balanced rung."
+        self.tree.built_mode = None
+        self.tree.built_mode_string = None
