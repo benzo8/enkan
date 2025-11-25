@@ -6,6 +6,7 @@ class TreeNode:
     __slots__ = (
         "name",
         "path",
+        "group",
         "proportion",
         "user_proportion",
         "weight",
@@ -22,6 +23,7 @@ class TreeNode:
         self,
         name: str,
         path: str,
+        group: Optional[str] = None,
         proportion: Optional[float] = None,
         user_proportion: Optional[float] = None,
         weight_modifier: int = 100,
@@ -33,6 +35,7 @@ class TreeNode:
     ) -> None:
         self.name: str = name
         self.path: str = path
+        self.group: Optional[str] = group
         self.proportion: Optional[float] = proportion
         self.user_proportion: Optional[float] = user_proportion
         self.weight: Optional[float] = None
@@ -41,6 +44,7 @@ class TreeNode:
         self.mode_modifier: Any = mode_modifier
         self.flat: bool = flat
         self.images: List[str] = list(images) if images else []
+
         self.children: List["TreeNode"] = []
         self.parent: Optional["TreeNode"] = parent
 

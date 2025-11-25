@@ -77,7 +77,7 @@ class TreeBuilderLST:
             dir_path: sum(weight for _, weight in entries)
             for dir_path, entries in grouped.items()
         }
-        total_weight = sum(dir_weights.values()) or len(dir_weights) or 1.0
+        # total_weight = sum(dir_weights.values()) or len(dir_weights) or 1.0
 
         with tqdm(
             total=len(grouped),
@@ -87,17 +87,19 @@ class TreeBuilderLST:
         ) as pbar:
             for dir_path, entries in grouped.items():
                 images = [path for path, _ in entries]
-                proportion = (dir_weights[dir_path] / total_weight) * 100.0
                 self.tree.create_node(
                     dir_path,
                     {
                         "weight_modifier": 100,
                         "is_percentage": True,
-                        "proportion": proportion,
+                        "proportion": None,
                         "mode_modifier": None,
                         "images": images,
                     },
                 )
+                node = self.tree.path_lookup.get(dir_path)
+                if node:
+                    node.weight = dir_weights[dir_path]
                 pbar.update(1)
         # Record whether the source .lst had explicit weights for downstream inference
         setattr(self.tree, "lst_has_weights", explicit_weights_found)
@@ -128,7 +130,8 @@ class TreeBuilderLST:
             self.tree.built_mode_string = None
             return
 
-        tolerance = 1e-6
+        tolerance: float = 1e-6
+        confidence_threshold: float = 80 / 100  # 80%
         for level in sorted(level_weights.keys()):
             weights = level_weights[level]
             if not weights:
@@ -139,6 +142,26 @@ class TreeBuilderLST:
                 self.tree.built_mode_string = serialise_mode(self.tree.built_mode)
                 self.tree.lst_inferred_lowest = level
                 self.tree.lst_inferred_warning = None
+                return
+            # Cluster check: if a dominant cluster (>=90%) sits within tolerance, assume balanced
+            best_cluster = 0
+            for w in weights:
+                cluster_size = sum(1 for v in weights if abs(v - w) <= tolerance)
+                if cluster_size > best_cluster:
+                    best_cluster = cluster_size
+            confidence = best_cluster / len(weights)
+            if confidence >= confidence_threshold:
+                self.tree.lst_inferred_mode = {level: ("b", (0, 0))}
+                self.tree.built_mode = self.tree.lst_inferred_mode
+                self.tree.built_mode_string = serialise_mode(self.tree.built_mode)
+                self.tree.lst_inferred_lowest = level
+                # Warn when inference is not certain
+                if confidence < 1:
+                    self.tree.lst_inferred_warning = (
+                        f"Assumed balanced at level {level} with confidence {confidence:.0%}."
+                    )
+                else:
+                    self.tree.lst_inferred_warning = None
                 return
 
         self.tree.lst_inferred_mode = None

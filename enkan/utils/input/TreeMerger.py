@@ -26,8 +26,9 @@ class TreeMerger:
     fill unset metadata but must not move nodes.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, target_lowest_rung: int | None = None) -> None:
         self.warnings: list[str] = []
+        self.target_lowest_rung = target_lowest_rung
 
     def merge(self, sources: Iterable[LoadedSource]) -> MergeResult:
         iterator = iter(sources)
@@ -45,13 +46,15 @@ class TreeMerger:
         for src in iterator:
             if not src.tree:
                 continue
-            added, updated = self._merge_trees(base, src.tree)
+            added, updated = self._merge_trees(
+                base, src.tree, getattr(src, "graft_offset", 0) or 0
+            )
             added_total += added
             updated_total += updated
 
         return MergeResult(tree=base, warnings=self.warnings, added_nodes=added_total, updated_nodes=updated_total)
 
-    def _merge_trees(self, base: Tree, incoming: Tree) -> Tuple[int, int]:
+    def _merge_trees(self, base: Tree, incoming: Tree, graft_offset: int) -> Tuple[int, int]:
         added = 0
         updated = 0
         for node in self._traverse(incoming.root):
@@ -62,7 +65,7 @@ class TreeMerger:
                 if self._merge_node(existing, node):
                     updated += 1
             else:
-                self._add_node(base, node)
+                self._add_node(base, node, graft_offset)
                 added += 1
         return added, updated
 
@@ -89,12 +92,13 @@ class TreeMerger:
             changed = True
         return changed
 
-    def _add_node(self, base: Tree, incoming: TreeNode) -> None:
-        parent_name = os.path.dirname(incoming.name)
-        base.ensure_parent_exists(parent_name)
+    def _add_node(self, base: Tree, incoming: TreeNode, graft_offset: int) -> None:
+        target_name, target_parent = self._resolve_target_names(base, incoming, graft_offset)
+        base.ensure_parent_exists(target_parent)
         new_node = TreeNode(
-            name=incoming.name,
+            name=target_name,
             path=incoming.path,
+            group = getattr(incoming, "group", None),
             weight_modifier=incoming.weight_modifier,
             is_percentage=incoming.is_percentage,
             proportion=incoming.proportion,
@@ -104,7 +108,20 @@ class TreeMerger:
         )
         if hasattr(incoming, "video"):
             setattr(new_node, "video", getattr(incoming, "video", None))
-        base.add_node(new_node, parent_name)
+        base.add_node(new_node, target_parent)
+        # If grafting is needed, adjust leaf placement via Grafting
+        if graft_offset and new_node.images:
+            target_level = new_node.level + graft_offset
+            if self.target_lowest_rung is not None and target_level < self.target_lowest_rung:
+                msg = (
+                    f"Grafting offset would place node '{incoming.path}' below lowest rung "
+                    f"{self.target_lowest_rung}."
+                )
+                self.warnings.append(msg)
+                raise ValueError(msg)
+            from enkan.tree.Grafting import Grafting
+            grafter = Grafting(base)
+            grafter.handle_grafting(root=new_node.path, graft_level=target_level, group=new_node.group)
 
     # ---------------------------- Helpers ----------------------------
 
@@ -178,3 +195,13 @@ class TreeMerger:
         norm_src = os.path.normpath(src_path)
         img_dir = os.path.normpath(os.path.dirname(image_path))
         return img_dir == norm_src or img_dir.startswith(norm_src + os.path.sep)
+
+    # ---------------------------- Graft alignment helpers ----------------------------
+
+    def _resolve_target_names(
+        self, base: Tree, incoming: TreeNode, graft_offset: int
+    ) -> Tuple[str, str]:
+        """
+        Resolve target node name and parent; offset applied later via Grafting for leaves.
+        """
+        return incoming.name, os.path.dirname(incoming.name)

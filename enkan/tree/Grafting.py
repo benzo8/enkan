@@ -46,6 +46,8 @@ class Grafting:
             logger.debug("Node '%s' not found for grafting. Skipping.", root)
             return
         current_node_parent: TreeNode | None = current_node.parent
+        if not current_node.group:
+            current_node.group = group
 
         levelled_name: str = t.convert_path_to_tree_format(
             t.set_path_to_level(root, graft_level, group)

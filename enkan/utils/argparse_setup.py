@@ -83,9 +83,6 @@ def get_arg_parser() -> argparse.ArgumentParser:
     )
     parser.set_defaults(mute=None)
     parser.add_argument(
-        "--quiet", "-q", action="store_true", help="Run in quiet mode (no output)"
-    )
-    parser.add_argument(
         "--no-background", "--nbg", action="store_true", help="Force queue/cache loading into foreground"
     )
     parser.set_defaults(no_background=False)
@@ -96,7 +93,11 @@ def get_arg_parser() -> argparse.ArgumentParser:
         "--histo", action="store_true", help="Show distribution histogram"
     )
     parser.add_argument(
-        "--debug", action="store_true"
+        "--debug",
+        type=int,
+        choices=[1, 2, 3, 4],
+        default=2,
+        help="Logging level: 4=debug, 3=warn, 2=info (default), 1=error",
     )
     parser.add_argument(
         "--testdepth", type=int, default=None, help="Depth to display test results"

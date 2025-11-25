@@ -296,6 +296,7 @@ class TreeBuilderTXT:
                 "proportion": data.get("proportion", None),
                 "user_proportion": data.get("user_proportion"),
                 "mode_modifier": data.get("mode_modifier"),
+                "group": data.get("group"),
                 "images": images,
             },
         )
@@ -318,6 +319,7 @@ class TreeBuilderTXT:
                     "proportion": data.get("proportion", None),
                     "user_proportion": data.get("user_proportion"),
                     "mode_modifier": data.get("mode_modifier"),
+                    "group": data.get("group"),
                     "images": images,
                 },
             )
@@ -330,6 +332,7 @@ class TreeBuilderTXT:
                     "proportion": None,
                     "user_proportion": data.get("user_proportion"),
                     "mode_modifier": data.get("mode_modifier"),
+                    "group": data.get("group"),
                     "video": data.get("video", None),
                     "images": images,
                 },

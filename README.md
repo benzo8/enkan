@@ -123,10 +123,10 @@ A group definition stores graft level, proportion, and mode modifiers. Any line 
 | `--ignore-below-bottom` | Ignore files in folders below lowest balance level. |
 | `--video` / `--no-video` | Force-enable or disable video globally. |
 | `--no-mute` | Keep audio tracks unmuted (video default is muted). |
-| `--quiet` | Suppress progress output. |
 | `--no-background` | Run loaders in the foreground (useful when debugging). |
 | `--test N` | Run `N` randomised draws and report the observed distribution. Combine with `--histo` for a matplotlib histogram. |
 | `--printtree` | Emit a text representation of the computed tree. |
+| `--debug N` | Debug information: 2 INFO, 3 WARN, 4 DEBUG |
 | `--testdepth`, `--histo`, `--debug` | Extra diagnostics for tuning your weighting setup. |
 
 ## Hotkeys (active during slideshow)

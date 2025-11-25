@@ -38,6 +38,8 @@ class Tree:
         for node in getattr(self, "node_lookup", {}).values():
             if not hasattr(node, "user_proportion"):
                 setattr(node, "user_proportion", None)
+            if not hasattr(node, "group"):
+                setattr(node, "group", None)
         if self.built_mode is not None and not self.built_mode_string:
             self.built_mode_string = serialise_mode(self.built_mode)
         # (Add future index repairs here)
@@ -74,6 +76,7 @@ class Tree:
         new_node: TreeNode = TreeNode(
             name=node_name,
             path=path,
+            group=node_data.get("group") if node_data else None,
             weight_modifier=node_data["weight_modifier"],
             is_percentage=node_data["is_percentage"],
             proportion=node_data["proportion"],
@@ -106,8 +109,9 @@ class Tree:
         if "mode_modifier" in node_data:
             node.mode_modifier = node_data["mode_modifier"]
         if "images" in node_data:
-            # Replace only if explicitly provided
             node.images = node_data["images"]
+        if "group" in node_data:
+            node.group = node_data["group"]
 
         """
         TODO: If later you want to merge images instead of replace, add a flag

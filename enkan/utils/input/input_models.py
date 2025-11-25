@@ -34,6 +34,10 @@ class LoadedSource:
     tree: Optional["Tree"] = None
     globals: Optional[Dict[str, Any]] = None
     mode: ModeMap | None = None
+    mode_string: str | None = None
+    lowest_rung: int | None = None
+    graft_offset: int | None = None
+    provenance: str | None = None
     warnings: List[str] = field(default_factory=list)
     inferred: bool = False  # True for backfilled/reconstructed sources
 
