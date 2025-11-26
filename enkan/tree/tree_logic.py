@@ -1,11 +1,13 @@
 from __future__ import annotations
 import logging
+from itertools import accumulate
 from typing import Callable, Literal, Mapping, Optional, Sequence, Tuple, List
 
 from .Tree import Tree
-from .TreeBuilder import TreeBuilder
+from .TreeBuilderTXT import TreeBuilderTXT
+from .TreeBuilderLST import TreeBuilderLST
 from .TreeNode import TreeNode
-from enkan.utils.Defaults import Defaults, resolve_mode
+from enkan.utils.Defaults import Defaults, resolve_mode, ModeMap
 from enkan.utils.tests import report_branch_weight_sums
 from enkan.utils.Filters import Filters
 from enkan.constants import TOTAL_WEIGHT
@@ -16,13 +18,34 @@ logger: logging.Logger = logging.getLogger("__name__")
 def build_tree(
     defaults: Defaults,
     filters: Filters,
-    image_dirs: Mapping[str, dict],
-    specific_images: Optional[Mapping[str, dict]],
-    quiet: bool = False,
+    image_dirs: Mapping[str, dict] | None = None,
+    specific_images: Optional[Mapping[str, dict]] = None,
+    mode: Optional[ModeMap] = None,
+    *,
+    kind: str | None = None,
+    list_path: str | None = None,
 ) -> Tree:
+    """
+    Dispatch tree construction by source kind.
+        kind="txt" (default): use directory/image mappings (image_dirs/specific_images)
+        kind="lst": build from a .lst path
+    """
     tree = Tree(defaults, filters)
-    builder = TreeBuilder(tree)
-    builder.build_tree(image_dirs, specific_images, quiet)
+
+    source_kind = (kind or "txt").lower()
+    match source_kind:
+        case "txt":
+            builder = TreeBuilderTXT(tree)
+            builder.build_tree(image_dirs or {}, specific_images, mode)
+        case "lst":
+            if not list_path:
+                raise ValueError("list_path is required when building from a .lst file.")
+            builder = TreeBuilderLST(tree)
+            builder.build(list_path)
+        case _:
+            raise ValueError(f"Unsupported build kind '{kind}'.")
+
+    # tree.record_built_mode()
     _, num_images = tree.count_branches(tree.root)
     if num_images == 0:
         raise ValueError("No images found in the provided input files.")
@@ -30,7 +53,7 @@ def build_tree(
     return tree
 
 
-def calculate_weights(tree: Tree) -> None:
+def calculate_weights(tree: Tree, ignore_user_proportion: bool = False) -> None:
     """
     Calculates and assigns weights to all nodes in the tree based on the current mode and slope settings.
 
@@ -169,7 +192,17 @@ def calculate_weights(tree: Tree) -> None:
                     n.proportion *= factor
         return nodes
 
-    lowest_rung: int = tree.filters.lowest_rung if tree.filters.lowest_rung is not None else min(tree.defaults.mode.keys())
+    def _reset_proportions(node: TreeNode) -> None:
+        if not ignore_user_proportion and node.user_proportion is not None:
+            node.proportion = float(node.user_proportion)
+        else:
+            node.proportion = None
+        for child in node.children:
+            _reset_proportions(child)
+
+    _reset_proportions(tree.root)
+
+    lowest_rung: int = min(tree.defaults.mode.keys())
     starting_nodes: List[TreeNode] = tree.get_nodes_at_level(lowest_rung) or [tree.root]
 
     mode, slope = resolve_mode(tree.defaults.mode, lowest_rung)
@@ -180,24 +213,6 @@ def calculate_weights(tree: Tree) -> None:
         slope,
         count_fn=(lambda n: tree.count_branches(n)[1]) if mode == "w" else None,
     )
-
-    offending: List[TreeNode] = []
-
-    def _collect_with_images_below_lowest_rung(node: TreeNode) -> None:
-        if node.level < lowest_rung and node.images:
-            offending.append(node)
-        for child in node.children:
-            _collect_with_images_below_lowest_rung(child)
-
-    _collect_with_images_below_lowest_rung(tree.root)
-
-    if offending:
-        details = "\n  ".join(sorted(n.path or n.name for n in offending))
-        raise ValueError(
-            "Images detected below the first mode rung "
-            f"(level {lowest_rung}):\n  {details}.\n"
-            "Use grafting to place those images at or above the balancing level or use the --ibb argument."
-        )
 
     for node in starting_nodes:
         if node.proportion is None:
@@ -256,3 +271,20 @@ def extract_image_paths_and_weights_from_tree(
     traverse_node(start_node)
 
     return all_images, weights
+
+
+def apply_mode_and_recalculate(
+    tree: Tree, defaults: Defaults, ignore_user_proportion: bool = False
+) -> tuple[list[str], list[float], list[float]]:
+    """
+    Apply the current defaults.mode to the tree, recalculate weights, and return
+    images/weights/cumulative weights for downstream consumers.
+    """
+    # Ensure the tree sees the latest defaults (mode may have just changed)
+    tree.defaults = defaults
+    calculate_weights(tree, ignore_user_proportion=ignore_user_proportion)
+    images, weights = extract_image_paths_and_weights_from_tree(tree)
+    if not images:
+        raise ValueError("Recalculation produced no images.")
+    cum_weights = list(accumulate(weights))
+    return images, weights, cum_weights

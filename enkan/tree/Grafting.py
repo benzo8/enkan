@@ -46,6 +46,8 @@ class Grafting:
             logger.debug("Node '%s' not found for grafting. Skipping.", root)
             return
         current_node_parent: TreeNode | None = current_node.parent
+        if not current_node.group:
+            current_node.group = group
 
         levelled_name: str = t.convert_path_to_tree_format(
             t.set_path_to_level(root, graft_level, group)
@@ -96,6 +98,7 @@ class Grafting:
             2. lowest mode_modifier level (if any)
             (else skip proportion)
         """
+        t: Tree = self.tree
         proportion = group_config.get("proportion")
         mode_mods: dict[int, Any] | None = group_config.get("mode_modifier")
 
@@ -107,8 +110,13 @@ class Grafting:
             if effective_level is not None:
                 target_node = self._ascend_to_level(anchor, effective_level)
                 if target_node and target_node.level == effective_level:
-                    target_node.proportion = proportion
-
+                    t.update_node(
+                        target_node,
+                        {
+                            "proportion": proportion,
+                            "user_proportion": proportion,
+                        },
+                    )
         # Mode modifiers
         if mode_mods:
             # Keys are absolute levels; assign only within this subtree.

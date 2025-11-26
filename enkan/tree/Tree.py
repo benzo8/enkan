@@ -1,32 +1,47 @@
 from __future__ import annotations
 
-# ——— Standard library ———
+# --- Standard library ---
 import os
 from typing import Any, Optional, Literal
 
-# ——— Local ———
+# --- Local ---
 from .TreeNode import TreeNode
-from enkan.utils.Defaults import Defaults
+from enkan.constants import ROOT_NODE_NAME
+from enkan.utils.Defaults import Defaults, serialise_mode, ModeMap
 from enkan.utils.Filters import Filters
 
 
 class Tree:
-    PICKLE_VERSION = 2
+    PICKLE_VERSION = 3
 
     def __init__(self, defaults: Defaults, filters: Filters) -> None:
         # Use string path, not int
-        self.root: TreeNode = TreeNode(name="root", path="root")
-        self.node_lookup: dict[str, TreeNode] = {"root": self.root}
-        self.path_lookup: dict[str, TreeNode] = {"root": self.root}
-        self.virtual_image_lookup: dict[str, TreeNode] = {"root": self.root}
+        self.root: TreeNode = TreeNode(name=ROOT_NODE_NAME, path=ROOT_NODE_NAME)
+        self.node_lookup: dict[str, TreeNode] = {ROOT_NODE_NAME: self.root}
+        self.path_lookup: dict[str, TreeNode] = {ROOT_NODE_NAME: self.root}
+        self.virtual_image_lookup: dict[str, TreeNode] = {ROOT_NODE_NAME: self.root}
         self.defaults: Defaults = defaults
         self.filters: Filters = filters
+        self.built_mode_string: Optional[str] = None
+        self.built_mode: Optional[ModeMap] = None
         self._post_init_indexes()
 
     def _post_init_indexes(self) -> None:
         # Backward compatibility for older pickles
         if not hasattr(self, "virtual_image_lookup"):
             self.virtual_image_lookup = {}
+        if not hasattr(self, "built_mode_string"):
+            self.built_mode_string = None
+        if not hasattr(self, "built_mode"):
+            self.built_mode = None
+        # Ensure newer TreeNode fields exist after unpickling older trees
+        for node in getattr(self, "node_lookup", {}).values():
+            if not hasattr(node, "user_proportion"):
+                setattr(node, "user_proportion", None)
+            if not hasattr(node, "group"):
+                setattr(node, "group", None)
+        if self.built_mode is not None and not self.built_mode_string:
+            self.built_mode_string = serialise_mode(self.built_mode)
         # (Add future index repairs here)
 
     def __getstate__(self) -> dict[str, Any]:
@@ -61,9 +76,11 @@ class Tree:
         new_node: TreeNode = TreeNode(
             name=node_name,
             path=path,
+            group=node_data.get("group") if node_data else None,
             weight_modifier=node_data["weight_modifier"],
             is_percentage=node_data["is_percentage"],
             proportion=node_data["proportion"],
+            user_proportion=node_data.get("user_proportion"),
             mode_modifier=node_data["mode_modifier"],
             images=node_data["images"],
         )
@@ -74,9 +91,9 @@ class Tree:
         Update only the attributes explicitly present as keys in node_data.
 
         node_data may contain any subset of:
-            weight_modifier, is_percentage, proportion, mode_modifier, images
+            weight_modifier, is_percentage, proportion, user_proportion, mode_modifier, images
 
-        Keys not present are left unchanged. (None values are applied—treat them as explicit.)
+        Keys not present are left unchanged. (None values are applied-treat them as explicit.)
         """
         if node is None or not node_data:
             return
@@ -87,11 +104,14 @@ class Tree:
             node.is_percentage = node_data["is_percentage"]
         if "proportion" in node_data:
             node.proportion = node_data["proportion"]
+        if "user_proportion" in node_data:
+            node.user_proportion = node_data["user_proportion"]
         if "mode_modifier" in node_data:
             node.mode_modifier = node_data["mode_modifier"]
         if "images" in node_data:
-            # Replace only if explicitly provided
             node.images = node_data["images"]
+        if "group" in node_data:
+            node.group = node_data["group"]
 
         """
         TODO: If later you want to merge images instead of replace, add a flag
@@ -130,16 +150,16 @@ class Tree:
         norm: str = os.path.normpath(path)
 
         # Branch: tree-format (starts with 'root' component)
-        if norm.lower() == "root":
+        if norm.lower() == ROOT_NODE_NAME:
             return self.root
-        if norm.lower().startswith("root" + os.path.sep):
+        if norm.lower().startswith(ROOT_NODE_NAME + os.path.sep):
             parts = [p for p in norm.split(os.path.sep) if p]
             # parts[0] is 'root'; build from parts[1:]
             current_node: TreeNode = self.root
             built_path = ""  # store subtree path without 'root' prefix
             for segment in parts[1:]:
                 built_path: str = segment if not built_path else os.path.join(built_path, segment)
-                node_name: str = os.path.join("root", *built_path.split(os.path.sep)).lower()
+                node_name: str = os.path.join(ROOT_NODE_NAME, *built_path.split(os.path.sep)).lower()
                 node: TreeNode | None = self.node_lookup.get(node_name)
                 if node is None:
                     node = TreeNode(name=node_name, path=built_path)
@@ -197,7 +217,10 @@ class Tree:
         components: list[str] = [
             c for c in path_without_drive.strip(os.path.sep).split(os.path.sep) if c
         ]
-        return os.path.join("root", *components).lower()
+        return os.path.join(ROOT_NODE_NAME, *components).lower()
+
+    def current_mode_string(self) -> Optional[str]:
+        return serialise_mode(self.defaults.mode or {})
 
     def set_path_to_level(self, path: str, level: int, group: str | None = None) -> str:
         current_level: int = self.calculate_level(path)

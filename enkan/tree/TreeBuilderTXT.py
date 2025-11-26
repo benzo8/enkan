@@ -1,21 +1,25 @@
 from __future__ import annotations
-
 import os
 from typing import Dict, List, Mapping, Optional, Literal
 
 from tqdm import tqdm
 
-from enkan.tree.TreeNode import TreeNode
-from enkan.utils.Filters import Filters
 import enkan.utils.utils as utils
-from .Tree import Tree
-from .Grafting import Grafting
+from enkan.tree.TreeNode import TreeNode
+from enkan.tree.Tree import Tree
+from enkan.tree.Grafting import Grafting
+from enkan.utils.Filters import Filters
+from enkan.utils.Defaults import serialise_mode, ModeMap
 
 ImageDirConfig = Dict[str, object]
 SpecificImagesConfig = Dict[str, Dict[str, object]]
 
+"""
+Builder for directory/text-sourced trees.
+"""
 
-class TreeBuilder:
+
+class TreeBuilderTXT:
     def __init__(self, tree: Tree) -> None:
         """
         Parameters:
@@ -27,8 +31,7 @@ class TreeBuilder:
     def _ensure_structural_root_node(self, root: str, data: ImageDirConfig) -> None:
         """
         Create an empty node for the root directory if it does not already exist,
-        so that its metadata (weight_modifier / proportion / mode_modifier) participates
-        in later weight calculations even if the root has no direct images.
+        so that its metadata participates in weight calculations even if the root has no direct images.
         """
         if root in self.tree.path_lookup:
             return
@@ -38,6 +41,7 @@ class TreeBuilder:
                 "weight_modifier": data.get("weight_modifier", 100),
                 "is_percentage": data.get("is_percentage", True),
                 "proportion": data.get("proportion", None),
+                "user_proportion": data.get("user_proportion"),
                 "mode_modifier": data.get("mode_modifier"),
                 "flat": data.get("flat", False),
                 "video": data.get("video", None),
@@ -49,7 +53,7 @@ class TreeBuilder:
         self,
         image_dirs: Mapping[str, ImageDirConfig],
         specific_images: Optional[SpecificImagesConfig],
-        quiet: bool = False,
+        mode: Optional[ModeMap] = None,
     ) -> None:
         """
         Build the tree from a mapping of root directories (image_dirs) and an optional
@@ -73,15 +77,15 @@ class TreeBuilder:
             return
 
         with tqdm(
-            total=0,
+            total=len(image_dirs),
             desc="Building tree",
-            unit="file",
-            disable=quiet,
+            leave=True,
+            unit="dir",
             dynamic_ncols=True,
-            leave=False,
         ) as pbar:
             for root, data in image_dirs.items():
                 if not os.path.isdir(root):
+                    pbar.update(1)
                     continue
 
                 # 1. Ensure a structural node exists up-front so metadata (proportion, weight_modifier, etc.)
@@ -100,9 +104,13 @@ class TreeBuilder:
                     data.get("graft_level"),
                     data.get("group"),
                 )
+                pbar.update(1)
 
         if specific_images:
             self.process_specific_images(specific_images)
+
+        self.tree.built_mode = mode if mode is not None else self.tree.defaults.mode
+        self.tree.built_mode_string = serialise_mode(self.tree.built_mode)
 
     def process_directory(
         self,
@@ -149,6 +157,7 @@ class TreeBuilder:
                 if file_count:
                     pbar.total += file_count
                     pbar.desc = f"Processing {current_path}"
+                    pbar.leave = True
                     pbar.update(file_count)
                     pbar.refresh()
                 self.process_path(current_path, files, dirs, data)
@@ -184,10 +193,10 @@ class TreeBuilder:
             return
 
         if dirs:
-            # Directory with both subdirs and images → special 'images' branch
+            # Directory with both subdirs and images – special 'images' branch
             self.add_images_branch(path, images, data)
         else:
-            # Terminal (no subdirs) → regular branch
+            # Terminal (no subdirs) – regular branch
             self.add_regular_branch(path, images, data)
 
     def add_flat_branch(
@@ -260,6 +269,7 @@ class TreeBuilder:
                     "weight_modifier": data.get("weight_modifier", 100),
                     "is_percentage": data.get("is_percentage", True),
                     "proportion": data.get("proportion", None),
+                    "user_proportion": data.get("user_proportion"),
                     "mode_modifier": data.get("mode_modifier"),
                     "images": images,
                 },
@@ -285,7 +295,9 @@ class TreeBuilder:
                 "weight_modifier": 100,
                 "is_percentage": True,
                 "proportion": data.get("proportion", None),
+                "user_proportion": data.get("user_proportion"),
                 "mode_modifier": data.get("mode_modifier"),
+                "group": data.get("group"),
                 "images": images,
             },
         )
@@ -306,7 +318,9 @@ class TreeBuilder:
                 {
                     "weight_modifier": data.get("weight_modifier", 100),
                     "proportion": data.get("proportion", None),
+                    "user_proportion": data.get("user_proportion"),
                     "mode_modifier": data.get("mode_modifier"),
+                    "group": data.get("group"),
                     "images": images,
                 },
             )
@@ -317,7 +331,9 @@ class TreeBuilder:
                     "weight_modifier": data.get("weight_modifier", 100),
                     "is_percentage": data.get("is_percentage", True),
                     "proportion": None,
+                    "user_proportion": data.get("user_proportion"),
                     "mode_modifier": data.get("mode_modifier"),
+                    "group": data.get("group"),
                     "video": data.get("video", None),
                     "images": images,
                 },
@@ -365,6 +381,7 @@ class TreeBuilder:
                     "weight_modifier": weight_modifier,
                     "is_percentage": is_percentage,
                     "proportion": data.get("proportion"),
+                    "user_proportion": data.get("user_proportion"),
                     "mode_modifier": data.get("mode_modifier"),
                     "images": images_list,
                 },

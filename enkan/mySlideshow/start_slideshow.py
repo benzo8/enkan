@@ -13,7 +13,6 @@ def start_slideshow(
     cum_weights: list,
     defaults: Defaults, 
     filters: Filters, 
-    quiet: bool, 
     interval: int | float | None = None,
 ) -> None:
     """
@@ -27,5 +26,5 @@ def start_slideshow(
     """
 
     root = tk.Tk()
-    _ = ImageSlideshow(root, tree, all_image_paths, cum_weights, defaults, filters, quiet, interval)
+    _ = ImageSlideshow(root, tree, all_image_paths, cum_weights, defaults, filters, interval)
     root.mainloop()

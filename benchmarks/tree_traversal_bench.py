@@ -12,10 +12,10 @@ from time import perf_counter
 from typing import Dict, Iterable, List, Mapping, Optional
 
 from enkan.tree.Tree import Tree
-from enkan.tree.TreeBuilder import TreeBuilder
+from enkan.tree.TreeBuilderTXT import TreeBuilder
 from enkan.utils.Defaults import Defaults
 from enkan.utils.Filters import Filters
-from enkan.utils.InputProcessor import InputProcessor
+from enkan.utils.input.InputProcessor import InputProcessor
 
 
 @dataclass
@@ -99,7 +99,7 @@ def prepare_inputs(args: argparse.Namespace) -> tuple[Defaults, Filters, Mapping
     defaults = Defaults(args=defaults_stub)
     filters = Filters()
 
-    processor = InputProcessor(defaults, filters, quiet=True)
+    processor = InputProcessor(defaults, filters)
     tree, image_dirs, specific_images, _, _ = processor.process_inputs(args.input)
 
     if tree is not None:
@@ -163,7 +163,6 @@ def run_builder(
     filters: Filters,
     image_dirs: Mapping[str, Dict[str, object]],
     specific_images: Optional[Mapping[str, Dict[str, object]]],
-    quiet: bool,
 ) -> RunResult:
     tree = Tree(defaults, filters)
     builder = TreeBuilder(tree)
@@ -172,7 +171,6 @@ def run_builder(
         builder.build_tree(
             image_dirs,
             specific_images,
-            quiet=quiet,
             traversal=strategy,
         )
     except TypeError as exc:
@@ -181,7 +179,6 @@ def run_builder(
         builder.build_tree(
             image_dirs,
             specific_images,
-            quiet=quiet,
         )
     duration = perf_counter() - start
     branches, images = tree.count_branches(tree.root)
@@ -195,7 +192,6 @@ def warm_up(
     filters: Filters,
     image_dirs: Mapping[str, Dict[str, object]],
     specific_images: Optional[Mapping[str, Dict[str, object]]],
-    quiet: bool,
     standby_executable: Optional[Path],
 ) -> None:
     if count <= 0:
@@ -204,7 +200,7 @@ def warm_up(
         for _ in range(count):
             if standby_executable is not None:
                 clear_standby_list(standby_executable)
-            run_builder(strategy, 0, defaults, filters, image_dirs, specific_images, quiet)
+            run_builder(strategy, 0, defaults, filters, image_dirs, specific_images)
 
 
 def build_sequence(cycles: int, alternate: bool) -> List[str]:
@@ -270,11 +266,10 @@ def write_csv(path: Path, results: Iterable[RunResult]) -> None:
 def main() -> None:
     args = parse_arguments()
     defaults, filters, image_dirs, specific_images = prepare_inputs(args)
-    quiet = not args.show_progress
 
     standby_executable = resolve_standby_executable(args.clear_standby, args.standby_exe)
 
-    warm_up(args.warmups, defaults, filters, image_dirs, specific_images, quiet, standby_executable)
+    warm_up(args.warmups, defaults, filters, image_dirs, specific_images, standby_executable)
 
     sequence = build_sequence(args.cycles, args.alternate)
     total_runs = len(sequence)
@@ -290,7 +285,6 @@ def main() -> None:
             filters,
             image_dirs,
             specific_images,
-            quiet,
         )
         results.append(result)
 
