@@ -11,6 +11,7 @@ from enkan.utils.Defaults import Defaults, resolve_mode, ModeMap
 from enkan.utils.tests import report_branch_weight_sums
 from enkan.utils.Filters import Filters
 from enkan.constants import TOTAL_WEIGHT
+from enkan.utils.logging import HURT_LEVEL
 
 logger: logging.Logger = logging.getLogger("__name__")
 
@@ -222,7 +223,7 @@ def calculate_weights(tree: Tree, ignore_user_proportion: bool = False) -> None:
         _process_node(node, apportioned_weight)
 
     # DIAGNOSTIC REPORT (optional)
-    if logger.isEnabledFor(logging.DEBUG):
+    if logger.isEnabledFor(HURT_LEVEL):
         report_branch_weight_sums(starting_nodes)
 
 

@@ -95,9 +95,9 @@ def get_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--debug",
         type=int,
-        choices=[1, 2, 3, 4],
+        choices=[1, 2, 3, 4, 5],
         default=2,
-        help="Logging level: 4=debug, 3=warn, 2=info (default), 1=error",
+        help="Logging level: 5=hurt, 4=debug, 3=warn, 2=info (default), 1=error",
     )
     parser.add_argument(
         "--testdepth", type=int, default=None, help="Depth to display test results"

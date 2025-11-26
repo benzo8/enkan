@@ -1,15 +1,19 @@
 import logging
 
+HURT_LEVEL = 5
+logging.addLevelName(HURT_LEVEL, "HURT")
 
 def configure_logging(log_level: int = 2) -> None:
     """
     Set up root logger with numeric verbosity.
+        5 -> HURT (very chatty)
         4 -> DEBUG
         3 -> WARNING
         2 -> INFO (default)
         1 -> ERROR
     """
     level_map = {
+        5: HURT_LEVEL,
         4: logging.DEBUG,
         3: logging.WARNING,
         2: logging.INFO,

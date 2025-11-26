@@ -5,10 +5,16 @@ import os
 from dataclasses import dataclass
 from typing import Iterable, Optional, Tuple
 
+import logging
+from enkan.utils.logging import HURT_LEVEL
+
 from enkan.constants import ROOT_NODE_NAME
 from enkan.tree.Tree import Tree
 from enkan.tree.TreeNode import TreeNode
 from enkan.utils.input.input_models import LoadedSource
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -29,6 +35,7 @@ class TreeMerger:
     def __init__(self, target_lowest_rung: int | None = None) -> None:
         self.warnings: list[str] = []
         self.target_lowest_rung = target_lowest_rung
+        self.change_log: list[Tuple[str, int, int]] = []  # (path, added, removed)
 
     def merge(self, sources: Iterable[LoadedSource]) -> MergeResult:
         iterator = iter(sources)
@@ -54,6 +61,10 @@ class TreeMerger:
             )
             added_total += added
             updated_total += updated
+
+        if logger.isEnabledFor(HURT_LEVEL) and self.change_log:
+            for path, added, removed in self.change_log:
+                logger.debug("Node '%s': images added=%d, removed=%d", path, added, removed)
 
         return MergeResult(tree=base, warnings=self.warnings, added_nodes=added_total, updated_nodes=updated_total)
 
@@ -89,12 +100,22 @@ class TreeMerger:
         - Replace images scoped to the incoming path only; leave other aliases intact (flatten/graft/group).
         """
         changed = False
-        if self._replace_images_for_path(target, incoming):
-            changed = True
+        added = removed = 0
+        if incoming.images:
+            orig_from_path = [
+                img for img in target.images if self._is_from_path(img, incoming.path)
+            ]
+            if self._replace_images_for_path(target, incoming):
+                changed = True
+                removed = max(0, len(orig_from_path) - len(incoming.images))
+                added = max(0, len(incoming.images) - len(orig_from_path))
         if self._merge_metadata(target, incoming):
             changed = True
         if self._merge_virtual_images(target, incoming, base):
             changed = True
+        if (added or removed) and changed:
+            logger.debug("Merged node '%s'", target.path)
+            self.change_log.append((target.path, added, removed))
         return changed
 
     def _add_node(self, base: Tree, incoming: TreeNode, graft_offset: int) -> None:
@@ -118,6 +139,8 @@ class TreeMerger:
         if hasattr(base, "virtual_image_lookup") and hasattr(incoming, "images"):
             for img in incoming.images:
                 base.virtual_image_lookup[img] = new_node
+        if incoming.images:
+            self.change_log.append((incoming.path, len(incoming.images), 0))
         # If grafting is needed, adjust leaf placement via Grafting
         if graft_offset and new_node.images:
             target_level = new_node.level + graft_offset
