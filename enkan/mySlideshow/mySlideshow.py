@@ -6,7 +6,6 @@ import tkinter as tk
 from itertools import accumulate
 import logging
 from typing import Optional
-from typing import Optional
 
 # ——— Third-party ———
 import vlc
@@ -18,19 +17,14 @@ from enkan.tree import Tree
 from enkan.tree.TreeNode import TreeNode
 from enkan.utils import utils
 from enkan.utils.Defaults import Defaults, resolve_mode, parse_mode_string
-from enkan.utils.Defaults import Defaults, resolve_mode, parse_mode_string
 from enkan.utils.Filters import Filters
 from enkan.utils.myStack import Stack
 from enkan.plugables.ImageProviders import ImageProviders
 from enkan.tree.tree_logic import (
     apply_mode_and_recalculate,
-    apply_mode_and_recalculate,
     build_tree,
     extract_image_paths_and_weights_from_tree,
 )
-from enkan.mySlideshow.Gui.Gui import Gui
-from enkan.mySlideshow.ZoomPan import ZoomPan
-from enkan.utils.tests import print_tree
 from enkan.mySlideshow.Gui.Gui import Gui
 from enkan.mySlideshow.ZoomPan import ZoomPan
 from enkan.utils.tests import print_tree
@@ -39,9 +33,6 @@ from enkan.utils.tests import print_tree
 logger: logging.Logger = logging.getLogger("enkan.ui")
 
 ORIENTATION_TO_CW: dict[int, int] = {1: 0, 3: 180, 6: 90, 8: 270}
-CW_TO_ORIENTATION: dict[int, int] = {
-    value: key for key, value in ORIENTATION_TO_CW.items()
-}
 CW_TO_ORIENTATION: dict[int, int] = {
     value: key for key, value in ORIENTATION_TO_CW.items()
 }
@@ -101,8 +92,6 @@ class ImageSlideshow:
         self.mode_label = tk.Label(self.root, bg="black", fg="white", anchor="ne")
         self.mode_dialog: object | None = None
         self._ignore_user_proportion: bool = False
-        self.mode_dialog: object | None = None
-        self._ignore_user_proportion: bool = False
 
         # Zoom/Pan controller (binds mouse events on the label)
         self.zoompan = ZoomPan(
@@ -142,8 +131,6 @@ class ImageSlideshow:
         self.root.bind("<a>", self.toggle_auto_advance)
         self.root.bind("<Control-Shift-M>", self.open_mode_dialog)
         self.root.bind("<Control-Shift-T>", self.print_tree_to_console)
-        self.root.bind("<Control-Shift-M>", self.open_mode_dialog)
-        self.root.bind("<Control-Shift-T>", self.print_tree_to_console)
 
         # Zoom/Pan key bindings (avoid clashing with existing navigation)
         self.root.bind(
@@ -160,10 +147,7 @@ class ImageSlideshow:
 
         # Instantiate Classes
         self.gui = Gui(use_customtkinter=True)
-        # Instantiate Classes
-        self.gui = Gui(use_customtkinter=True)
         self.providers = ImageProviders()
-        
         
         if self.defaults.is_random:
             self.set_provider("random")
@@ -331,7 +315,6 @@ class ImageSlideshow:
             }
             parent_tree: Tree.Tree = build_tree(
                 self.defaults, self.filters, parent_image_dirs, None
-                self.defaults, self.filters, parent_image_dirs, None
             )
             new_image_paths, new_weights = extract_image_paths_and_weights_from_tree(
                 parent_tree
@@ -433,25 +416,6 @@ class ImageSlideshow:
     def _on_dialog_closed(self, _event=None) -> None:
         self.mode_dialog = None
 
-    def open_mode_dialog(self, event=None) -> None:
-        if self.mode_dialog:
-            try:
-                self.mode_dialog.top.lift()
-                return
-            except tk.TclError:
-                self.mode_dialog = None
-
-        current_mode = self.original_tree.current_mode_string() or ""
-        dialog = self.gui.create_mode_adjust_dialog(
-            parent=self.root,
-            current_mode=current_mode,
-            on_apply=self._handle_mode_apply,
-            on_reset=self._handle_mode_reset,
-            ignore_default=self._ignore_user_proportion,
-        )
-        dialog.top.bind("<Destroy>", self._on_dialog_closed)
-        self.mode_dialog = dialog
-
     # --- Auto Advance Methods ---
 
     def _schedule_next_image(self) -> None:
@@ -499,13 +463,7 @@ class ImageSlideshow:
 
     def _show_error(self, title: str, message: str) -> None:
         self.gui.messagebox(title, message, icon="error")
-        return bool(self.gui.messagebox(title=title, message=message, type_="yesno"))
 
-    def _show_error(self, title: str, message: str) -> None:
-        self.gui.messagebox(title, message, icon="error")
-
-    def _show_warning(self, title: str, message: str) -> None:
-        self.gui.messagebox(title, message, icon="warning")
     def _show_warning(self, title: str, message: str) -> None:
         self.gui.messagebox(title, message, icon="warning")
 
@@ -553,14 +511,12 @@ class ImageSlideshow:
                     "EXIF update failed (permission) for %s: %s", image_path, err
                 )
                 self._show_warning(
-                self._show_warning(
                     "Permission Denied",
                     "Could not save the updated rotation because access was denied.",
                 )
                 return None
             except OSError as err:
                 logger.warning("EXIF update failed for %s: %s", image_path, err)
-                self._show_warning(
                 self._show_warning(
                     "Save Failed",
                     "Could not write the updated rotation to this file.",
@@ -594,6 +550,34 @@ class ImageSlideshow:
                     )
                 except Exception as e:
                     self._show_error("Error", f"Could not delete the image: {e}")
+
+    def navigate_image_history(self, event=None) -> None:
+        match event.keysym:
+            case "Left":
+                image_path, image_obj = self.manager.back()
+            case "Right":
+                image_path, image_obj = self.manager.forward()
+        if image_path:
+            if self.rotation_angle != 0:
+                self.rotation_angle = 0
+            self.show_image(image_path, record_history=False)
+            self.reset_auto_advance()
+
+    def navigate_image_sequential(self, event=None) -> None:
+        try:
+            match event.keysym:
+                case "Up":
+                    image_path = self.image_paths[self.current_image_index + 1]
+                case "Down":
+                    image_path = self.image_paths[self.current_image_index - 1]
+            if self.rotation_angle != 0:
+                self.rotation_angle = 0
+            self.show_image(image_path)
+            self.reset_auto_advance()
+        except IndexError:
+            logger.debug(
+                "navigate_image_sequential: Index out of range for image_paths."
+            )
 
     def persist_rotation_to_exif(self, event=None) -> None:
         if not self.current_image_path or not utils.is_imagefile(
@@ -647,7 +631,6 @@ class ImageSlideshow:
             logger.debug("Burst reset requested but provider lacks reset hook.")
 
     def subfolder_mode_on(self) -> None:
-        match self.navigation_mode:
         match self.navigation_mode:
             case "folder":
                 folder: str = os.path.dirname(self.current_image_path)
@@ -712,41 +695,7 @@ class ImageSlideshow:
     def toggle_subfolder_mode(self, event=None) -> None:
         if not self.subfolder_mode:
             self.subfolder_mode_on()
-    def toggle_mute(self, event=None) -> None:
-        if hasattr(self, "video_player") and self.video_player:
-            current_mute: bool = self.video_player.audio_get_mute()
-            new_mute: bool = not current_mute
-            self.video_player.audio_set_mute(new_mute)
-            self.video_muted = new_mute
-
-    def toggle_subfolder_mode(self, event=None) -> None:
-        if not self.subfolder_mode:
-            self.subfolder_mode_on()
         else:
-            self.subfolder_mode_off()
-        self.show_image(self.current_image_path)
-
-    def toggle_navigation_mode(self, event=None) -> None:
-        match self.navigation_mode:
-            case "branch":
-                self.navigation_node = None
-                self.navigation_mode = "folder"
-            case "folder":
-                self.navigation_node: TreeNode = self.find_node_for_image(
-                    self.current_image_path
-                )
-                if self.navigation_node:
-                    self.navigation_mode = "branch"
-                else:
-                    (
-                        logger.warning(
-                            "Cannot change mode - %s not in tree",
-                            self.current_image_path,
-                        ),
-                    )
-                    return
-        self.reset_parent_mode()
-        self.update_filename_display()
             self.subfolder_mode_off()
         self.show_image(self.current_image_path)
 
@@ -773,13 +722,6 @@ class ImageSlideshow:
         self.update_filename_display()
 
     # -- Parent Mode Navigation ---
-
-    def follow_branch_up(self, event=None) -> None:
-        if self.subfolder_mode:
-            self.subfolder_mode = False
-            self.show_image(self.current_image_path)
-            return
-        self.navigate_up()
 
     def follow_branch_up(self, event=None) -> None:
         if self.subfolder_mode:
@@ -832,15 +774,6 @@ class ImageSlideshow:
             self.navigation_node = path[0] if path else self.navigation_node
 
         self.traverse_directory(child_path, self.navigation_node)
-
-    def follow_branch_down(self, event=None) -> None:
-        if self.subfolder_mode:
-            self.toggle_subfolder_mode()
-            return
-        if self.parentFolderStack.is_full():
-            logger.warning("Cannot navigate down - Stack is full.")
-        else:
-            self.navigate_down()
 
     def follow_branch_down(self, event=None) -> None:
         if self.subfolder_mode:

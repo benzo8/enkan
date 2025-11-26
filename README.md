@@ -120,7 +120,6 @@ A group definition stores graft level, proportion, and mode modifiers. Any line 
 | `--random` | Start in fully random mode (same as `[r]` in a file). |
 | `--auto N` | Advance automatically every `N` seconds. |
 | `--no-recurse` | Treat every supplied folder as non-recursive. |
-| `--ignore-below-bottom` | Ignore files in folders below lowest balance level. |
 | `--video` / `--no-video` | Force-enable or disable video globally. |
 | `--no-mute` | Keep audio tracks unmuted (video default is muted). |
 | `--no-background` | Run loaders in the foreground (useful when debugging). |
