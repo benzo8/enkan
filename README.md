@@ -18,7 +18,13 @@ Optional:
 
 ## Installation
 
-### From PyPI (recommended)
+### Using uv (recommended)
+
+```
+uv tool install enkan
+```
+
+### From PyPI
 
 ```bash
 pip install enkan
@@ -27,7 +33,7 @@ pip install enkan
 ### From source
 
 ```bash
-git clone https://github.com/yourusername/enkan.git
+git clone https://github.com/benzo8/enkan.git
 cd enkan
 pip install -e .
 ```
