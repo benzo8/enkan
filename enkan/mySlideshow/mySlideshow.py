@@ -3,9 +3,9 @@ import os
 import sys
 import random
 import tkinter as tk
-from tkinter import messagebox
 from itertools import accumulate
 import logging
+from typing import Optional
 
 # ——— Third-party ———
 import vlc
@@ -16,21 +16,26 @@ from enkan.cache.ImageCacheManager import ImageCacheManager
 from enkan.tree import Tree
 from enkan.tree.TreeNode import TreeNode
 from enkan.utils import utils
-from enkan.utils.Defaults import Defaults, resolve_mode
+from enkan.utils.Defaults import Defaults, resolve_mode, parse_mode_string
 from enkan.utils.Filters import Filters
 from enkan.utils.myStack import Stack
 from enkan.plugables.ImageProviders import ImageProviders
 from enkan.tree.tree_logic import (
+    apply_mode_and_recalculate,
     build_tree,
     extract_image_paths_and_weights_from_tree,
 )
-from .ZoomPan import ZoomPan
+from enkan.mySlideshow.Gui.Gui import Gui
+from enkan.mySlideshow.ZoomPan import ZoomPan
+from enkan.utils.tests import print_tree
 
 # Configure logging
 logger: logging.Logger = logging.getLogger("enkan.ui")
 
 ORIENTATION_TO_CW: dict[int, int] = {1: 0, 3: 180, 6: 90, 8: 270}
-CW_TO_ORIENTATION: dict[int, int] = {value: key for key, value in ORIENTATION_TO_CW.items()}
+CW_TO_ORIENTATION: dict[int, int] = {
+    value: key for key, value in ORIENTATION_TO_CW.items()
+}
 
 
 class ImageSlideshow:
@@ -42,7 +47,6 @@ class ImageSlideshow:
         cum_weights: list,
         defaults: Defaults,
         filters: Filters,
-        quiet: bool,
         interval: int | float | None = None,
     ) -> None:
         self.root: TreeNode = root
@@ -67,7 +71,6 @@ class ImageSlideshow:
         self.defaults: Defaults = defaults
         self.filters: Filters = filters
         self.video_muted: bool = self.defaults.mute
-        self.quiet: bool = quiet
         self.interval: int | float | None = interval
 
         self.rotation_angle: int | float = 0
@@ -87,6 +90,8 @@ class ImageSlideshow:
         )
         self.filename_label.config(state=tk.DISABLED)
         self.mode_label = tk.Label(self.root, bg="black", fg="white", anchor="ne")
+        self.mode_dialog: object | None = None
+        self._ignore_user_proportion: bool = False
 
         # Zoom/Pan controller (binds mouse events on the label)
         self.zoompan = ZoomPan(
@@ -124,6 +129,8 @@ class ImageSlideshow:
         self.root.bind("<s>", self.toggle_subfolder_mode)
         self.root.bind("<Control-b>", self.reset_burst_cycle)
         self.root.bind("<a>", self.toggle_auto_advance)
+        self.root.bind("<Control-Shift-M>", self.open_mode_dialog)
+        self.root.bind("<Control-Shift-T>", self.print_tree_to_console)
 
         # Zoom/Pan key bindings (avoid clashing with existing navigation)
         self.root.bind(
@@ -138,7 +145,10 @@ class ImageSlideshow:
         self.root.bind("<Shift-Up>", lambda e: self.zoompan.pan(0, -80))
         self.root.bind("<Shift-Down>", lambda e: self.zoompan.pan(0, 80))
 
+        # Instantiate Classes
+        self.gui = Gui(use_customtkinter=True)
         self.providers = ImageProviders()
+        
         if self.defaults.is_random:
             self.set_provider("random")
         else:
@@ -287,7 +297,7 @@ class ImageSlideshow:
                 }
             }
             parent_tree: Tree.Tree = build_tree(
-                self.defaults, self.filters, parent_image_dirs, None, self.quiet
+                self.defaults, self.filters, parent_image_dirs, None
             )
             new_image_paths, new_weights = extract_image_paths_and_weights_from_tree(
                 parent_tree
@@ -297,19 +307,61 @@ class ImageSlideshow:
         new_cum_weights: list[float] = list(accumulate(new_weights))
         self.update_slide_show(new_image_paths, new_cum_weights)
 
-    def _check_video_ended(self) -> None:
-        if not self.video_player:
-            return
+    # --- Dynamic Mode Methods ---
 
-        length = self.video_player.get_length()
-        time = self.video_player.get_time()
+    def _handle_mode_apply(self, mode_str: str, ignore_user: bool) -> Optional[str]:
+        mode_dict = parse_mode_string(mode_str)
+        if not mode_dict:
+            raise ValueError("Unable to parse mode string.")
+        self._ignore_user_proportion = ignore_user
+        self.defaults.set_global_defaults(mode=mode_dict)
+        self._recalculate_slideshow(ignore_user=ignore_user)
+        return self.original_tree.current_mode_string() or mode_str
 
-        if length > 0 and time >= length - 200:  # Account for buffering etc.
-            self.video_player.stop()
-            self.video_player.play()
-            return
+    def _handle_mode_reset(self) -> Optional[str]:
+        if not self.original_tree.built_mode:
+            raise ValueError("Tree does not have a recorded original mode.")
+        return (
+            self.original_tree.built_mode_string
+            or self.original_tree.current_mode_string()
+        )
 
-        self.root.after(500, self._check_video_ended)
+    def _recalculate_slideshow(self, ignore_user: bool) -> None:
+        images, _, cum_weights = apply_mode_and_recalculate(
+            self.original_tree, self.defaults, ignore_user_proportion=ignore_user
+        )
+        self.original_image_paths = images[:]
+        self.original_cum_weights = cum_weights[:]
+        self.update_slide_show(images, cum_weights)
+        mode_dict = self.defaults.mode or {}
+        if mode_dict:
+            lowest = min(mode_dict.keys())
+            self.mode, _ = resolve_mode(mode_dict, lowest)
+        else:
+            self.mode = None
+        self.update_filename_display()
+
+    def _on_dialog_closed(self, _event=None) -> None:
+        self.mode_dialog = None
+
+    def open_mode_dialog(self, event=None) -> None:
+        if self.mode_dialog:
+            try:
+                self.mode_dialog.top.lift()
+                return
+            except tk.TclError:
+                self.mode_dialog = None
+
+        current_mode = self.original_tree.current_mode_string() or ""
+        dialog = self.gui.create_mode_adjust_dialog(
+            parent=self.root,
+            current_mode=current_mode,
+            on_apply=self._handle_mode_apply,
+            on_reset=self._handle_mode_reset,
+            ignore_default=self._ignore_user_proportion,
+        )
+        dialog.top.bind("<Destroy>", self._on_dialog_closed)
+        self.mode_dialog = dialog
 
     # --- Auto Advance Methods ---
 
@@ -382,69 +434,13 @@ class ImageSlideshow:
             )
 
     def _confirm_action(self, title: str, message: str) -> bool:
-        return bool(messagebox.askyesno(title, message))
+        return bool(self.gui.messagebox(title=title, message=message, type_="yesno"))
 
-    def delete_image(self, event=None) -> None:
-        if self.current_image_path:
-            confirm: bool = self._confirm_action(
-                "Delete Image",
-                f"Are you sure you want to delete {self.current_image_path}?",
-            )
-            if confirm:
-                # Stop and release video player if a video is playing
-                if hasattr(self, "video_player") and self.video_player:
-                    self.video_player.stop()
-                    self.video_player.release()
-                    self.video_player = None
-                if hasattr(self, "video_frame"):
-                    self.video_frame.place_forget()
-                try:
-                    os.remove(self.current_image_path)
-                    index = self.image_paths.index(self.current_image_path)
-                    self.image_paths.pop(index)
-                    self.cum_weights.pop(index)
-                    self.manager.history_manager.remove(self.current_image_path)
-                    self.update_slide_show(
-                        image_paths=self.image_paths, cum_weights=self.cum_weights
-                    )
-                except Exception as e:
-                    messagebox.showerror("Error", f"Could not delete the image: {e}")
+    def _show_error(self, title: str, message: str) -> None:
+        self.gui.messagebox(title, message, icon="error")
 
-    def rotate_image(self, event=None) -> None:
-        if utils.is_videofile(self.current_image_path):
-            return
-        self.rotation_angle = (self.rotation_angle - 90) % 360
-        self.show_image(self.current_image_path)
-
-    def persist_rotation_to_exif(self, event=None) -> None:
-        if not self.current_image_path or not utils.is_imagefile(self.current_image_path):
-            return
-        if utils.is_videofile(self.current_image_path):
-            return
-        if self.rotation_angle % 360 == 0:
-            return
-
-        confirm: bool = self._confirm_action(
-            "Update Rotation",
-            "Apply the current rotation to this image's EXIF orientation?",
-        )
-        if not confirm:
-            return
-        try:
-            new_orientation: int = self._write_exif_orientation(self.current_image_path)
-            if new_orientation is None:
-                return
-        except Exception as exc:
-            logger.error("Failed to update EXIF orientation for %s", self.current_image_path, exc_info=exc)
-            messagebox.showerror(
-                "Error", f"Could not update the image rotation metadata: {exc}"
-            )
-            return
-
-        self.manager.invalidate(self.current_image_path)
-        self.rotation_angle = 0
-        self.current_exif_orientation = new_orientation
-        self.show_image(self.current_image_path, record_history=False)
+    def _show_warning(self, title: str, message: str) -> None:
+        self.gui.messagebox(title, message, icon="warning")
 
     def _write_exif_orientation(self, image_path: str) -> int | None:
         from PIL import Image
@@ -489,14 +485,14 @@ class ImageSlideshow:
                 logger.warning(
                     "EXIF update failed (permission) for %s: %s", image_path, err
                 )
-                messagebox.showwarning(
+                self._show_warning(
                     "Permission Denied",
                     "Could not save the updated rotation because access was denied.",
                 )
                 return None
             except OSError as err:
                 logger.warning("EXIF update failed for %s: %s", image_path, err)
-                messagebox.showwarning(
+                self._show_warning(
                     "Save Failed",
                     "Could not write the updated rotation to this file.",
                 )
@@ -504,41 +500,85 @@ class ImageSlideshow:
 
         return new_orientation
 
-    def toggle_mute(self, event=None) -> None:
-        if hasattr(self, "video_player") and self.video_player:
-            current_mute: bool = self.video_player.audio_get_mute()
-            new_mute: bool = not current_mute
-            self.video_player.audio_set_mute(new_mute)
-            self.video_muted = new_mute
+    def delete_image(self, event=None) -> None:
+        if self.current_image_path:
+            confirm: bool = self._confirm_action(
+                "Delete Image",
+                f"Are you sure you want to delete {self.current_image_path}?",
+            )
+            if confirm:
+                # Stop and release video player if a video is playing
+                if hasattr(self, "video_player") and self.video_player:
+                    self.video_player.stop()
+                    self.video_player.release()
+                    self.video_player = None
+                if hasattr(self, "video_frame"):
+                    self.video_frame.place_forget()
+                try:
+                    os.remove(self.current_image_path)
+                    index = self.image_paths.index(self.current_image_path)
+                    self.image_paths.pop(index)
+                    self.cum_weights.pop(index)
+                    self.manager.history_manager.remove(self.current_image_path)
+                    self.update_slide_show(
+                        image_paths=self.image_paths, cum_weights=self.cum_weights
+                    )
+                except Exception as e:
+                    self._show_error("Error", f"Could not delete the image: {e}")
 
-    def toggle_subfolder_mode(self, event=None) -> None:
-        if not self.subfolder_mode:
-            self.subfolder_mode_on()
-        else:
-            self.subfolder_mode_off()
-        self.show_image(self.current_image_path)
-
-    def toggle_navigation_mode(self, event=None) -> None:
-        match (self.navigation_mode):
-            case "branch":
-                self.navigation_node = None
-                self.navigation_mode = "folder"
-            case "folder":
-                self.navigation_node: TreeNode = self.find_node_for_image(
+    def persist_rotation_to_exif(self, event=None) -> None:
+        if not self.current_image_path or not utils.is_imagefile(
                     self.current_image_path
-                )
-                if self.navigation_node:
-                    self.navigation_mode = "branch"
-                else:
-                    logger.warning(
-                        "Cannot change mode - %s not in tree", self.current_image_path
-                    ),
+        ):
+            return
+        if utils.is_videofile(self.current_image_path):
+            return
+        if self.rotation_angle % 360 == 0:
+            return
+
+        confirm: bool = self._confirm_action(
+            "Update Rotation",
+            "Apply the current rotation to this image's EXIF orientation?",
+        )
+        if not confirm:
                     return
-        self.reset_parent_mode()
-        self.update_filename_display()
+        try:
+            new_orientation: int = self._write_exif_orientation(self.current_image_path)
+            if new_orientation is None:
+                return
+        except Exception as exc:
+            logger.error(
+                "Failed to update EXIF orientation for %s",
+                self.current_image_path,
+                exc_info=exc,
+            )
+            self._show_error(
+                "Error", f"Could not update the image rotation metadata: {exc}"
+            )
+            return
+
+        self.manager.invalidate(self.current_image_path)
+        self.rotation_angle = 0
+        self.current_exif_orientation = new_orientation
+        self.show_image(self.current_image_path, record_history=False)
+
+    def print_tree_to_console(self, event=None) -> None:
+        print_tree(self.defaults, self.original_tree.root, max_depth=9999)
+
+    def reset_burst_cycle(self, event=None) -> None:
+        """Reset the current burst queue when running the burst provider."""
+        if self.providers.get_current_provider_name() != "burst":
+            return
+        if not getattr(self, "manager", None):
+            return
+        if self.manager.reset_provider():
+            logger.debug("Burst cycle reset on demand.")
+            self.next_image()
+        else:
+            logger.debug("Burst reset requested but provider lacks reset hook.")
 
     def subfolder_mode_on(self) -> None:
-        match (self.navigation_mode):
+        match self.navigation_mode:
             case "folder":
                 folder: str = os.path.dirname(self.current_image_path)
                 self.subFolderStack.push(folder, self.image_paths, self.cum_weights)
@@ -592,19 +632,50 @@ class ImageSlideshow:
                     index=self.current_image_index,
                 )
 
-    def reset_burst_cycle(self, event=None) -> None:
-        """Reset the current burst queue when running the burst provider."""
-        if self.providers.get_current_provider_name() != "burst":
-            return
-        if not getattr(self, "manager", None):
-            return
-        if self.manager.reset_provider():
-            logger.debug("Burst cycle reset on demand.")
-            self.next_image()
+    def toggle_mute(self, event=None) -> None:
+        if hasattr(self, "video_player") and self.video_player:
+            current_mute: bool = self.video_player.audio_get_mute()
+            new_mute: bool = not current_mute
+            self.video_player.audio_set_mute(new_mute)
+            self.video_muted = new_mute
+
+    def toggle_subfolder_mode(self, event=None) -> None:
+        if not self.subfolder_mode:
+            self.subfolder_mode_on()
         else:
-            logger.debug("Burst reset requested but provider lacks reset hook.")
+            self.subfolder_mode_off()
+        self.show_image(self.current_image_path)
+
+    def toggle_navigation_mode(self, event=None) -> None:
+        match self.navigation_mode:
+            case "branch":
+                self.navigation_node = None
+                self.navigation_mode = "folder"
+            case "folder":
+                self.navigation_node: TreeNode = self.find_node_for_image(
+                    self.current_image_path
+                )
+                if self.navigation_node:
+                    self.navigation_mode = "branch"
+                else:
+                    (
+                        logger.warning(
+                            "Cannot change mode - %s not in tree",
+                            self.current_image_path,
+                        ),
+                    )
+                    return
+        self.reset_parent_mode()
+        self.update_filename_display()
 
     # -- Parent Mode Navigation ---
+
+    def follow_branch_up(self, event=None) -> None:
+        if self.subfolder_mode:
+            self.subfolder_mode = False
+            self.show_image(self.current_image_path)
+            return
+        self.navigate_up()
 
     def navigate_up(self) -> None:
         if self.parentFolderStack.is_full() or not self.parent_mode:
@@ -651,6 +722,15 @@ class ImageSlideshow:
 
         self.traverse_directory(child_path, self.navigation_node)
 
+    def follow_branch_down(self, event=None) -> None:
+        if self.subfolder_mode:
+            self.toggle_subfolder_mode()
+            return
+        if self.parentFolderStack.is_full():
+            logger.warning("Cannot navigate down - Stack is full.")
+        else:
+            self.navigate_down()
+
     def navigate_down(self) -> None:
         parent_path = None
 
@@ -694,22 +774,6 @@ class ImageSlideshow:
             return
         _, images, cum_weights = self.parentFolderStack.pop()
         self.update_slide_show(images, cum_weights)
-
-    def follow_branch_down(self, event=None) -> None:
-        if self.subfolder_mode:
-            self.toggle_subfolder_mode()
-            return
-        if self.parentFolderStack.is_full():
-            logger.warning("Cannot navigate down - Stack is full.")
-        else:
-            self.navigate_down()
-
-    def follow_branch_up(self, event=None) -> None:
-        if self.subfolder_mode:
-            self.subfolder_mode = False
-            self.show_image(self.current_image_path)
-            return
-        self.navigate_up()
 
     def reset_parent_mode(self, event=None) -> None:
         self.parent_mode = False
@@ -781,17 +845,13 @@ class ImageSlideshow:
                 self.filename_label.insert(tk.END, label_path, "normal")
                 fixed_colour = "white"
 
-            is_video: bool = utils.is_videofile(self.current_image_path)
+            rotation_text: str = self._format_rotation_display()
             zoom_percent: int = (
                 self.zoompan.get_zoom_percent()
                 if hasattr(self, "zoompan") and self.zoompan
                 else 100
             )
-            meta_parts = []
-            if not is_video:
-                meta_parts.append(self._format_rotation_display())
-            meta_parts.append(f"{zoom_percent}%")
-            meta_text: str = f" ({', '.join(meta_parts)})"
+            meta_text: str = f" ({rotation_text}, {zoom_percent}%)"
             self.filename_label.insert(tk.END, meta_text, "meta")
 
             self.filename_label.tag_configure("fixed", foreground=fixed_colour)
@@ -840,6 +900,12 @@ class ImageSlideshow:
             self.filename_label.place_forget()
             self.mode_label.place_forget()
         self.root.update_idletasks()
+
+    # --- Image Manipulation Methods ---
+
+    def rotate_image(self, event=None) -> None:
+        self.rotation_angle = (self.rotation_angle - 90) % 360
+        self.show_image(self.current_image_path)
 
     # --- Exit Method ---
 
