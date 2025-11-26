@@ -45,7 +45,10 @@ class MultiSourceBuilder:
             )
 
         # Stage 1: Process each input file
-        for entry in input_files:
+        pending: List[str] = list(input_files)
+        idx = 0
+        while idx < len(pending):
+            entry = pending[idx]
             additional_search_paths = [os.path.dirname(entry)]
             entry_path_full = find_input_file(entry, additional_search_paths)
             if not entry_path_full:
@@ -53,7 +56,9 @@ class MultiSourceBuilder:
             kind = classify_input_path(entry_path_full)
             tree = None
             graft_offset = 0
-            nested_entries: List[Tuple[str, SourceKind, object]] = []
+            nested_entries: List[str] = []
+
+            detected_mode = None
 
             match kind:
                 case SourceKind.TREE:
@@ -76,15 +81,19 @@ class MultiSourceBuilder:
                 case SourceKind.TXT | SourceKind.FOLDER:
                     logger.info(
                         "Processing txt/source '%s'.", entry_path_full)
-                    tree, nested_entries, nested_warnings = self._build_tree_from_entry(
+                    tree, nested_entries, _, detected_mode = self._build_tree_from_entry(
                         entry_path_full, graft_offset=graft_offset, collector=builder_warnings
                     )
+                    if nested_entries:
+                        for offset, nested_path in enumerate(nested_entries, start=1):
+                            pending.insert(idx + offset, nested_path)
 
             if tree:
                 base_source, mode_info = self._build_loaded_source(
                     entry_path_full, kind, len(sources), tree, graft_offset
                 )
                 inferred_tree_mode, inferred_lowest = mode_info
+
                 if inferred_tree_mode and not target_mode:
                     target_mode = inferred_tree_mode
                     target_lowest_level = inferred_lowest
@@ -97,50 +106,17 @@ class MultiSourceBuilder:
 
                 sources.append(base_source)
                 builder_warnings.extend(base_source.warnings)
+            elif detected_mode and not target_mode:
+                target_mode = detected_mode
+                target_lowest_level = min(target_mode.keys())
+                logger.info(
+                    "Adopted mode %s (lowest rung %s) from txt '%s'.",
+                    target_mode,
+                    target_lowest_level,
+                    entry_path_full,
+                )
 
-                for nested_path, nested_kind, nested_tree in nested_entries:
-                    nested_source, nested_mode_info = self._build_loaded_source(
-                        nested_path or "nested",
-                        nested_kind,
-                        len(sources),
-                        nested_tree,
-                        graft_offset,
-                        provenance="nested",
-                    )
-                    nested_mode, nested_lowest = nested_mode_info
-                    if nested_mode and not target_mode:
-                        target_mode = nested_mode
-                        target_lowest_level = nested_lowest
-                        logger.info(
-                            "Adopted mode %s (lowest rung %s) from nested '%s'.",
-                            target_mode,
-                            target_lowest_level,
-                            nested_path,
-                        )
-                    sources.append(nested_source)
-                    builder_warnings.extend(nested_source.warnings)
-            elif nested_entries:
-                for nested_path, nested_kind, nested_tree in nested_entries:
-                    nested_source, nested_mode_info = self._build_loaded_source(
-                        nested_path or "nested",
-                        nested_kind,
-                        len(sources),
-                        nested_tree,
-                        graft_offset,
-                        provenance="nested",
-                    )
-                    nested_mode, nested_lowest = nested_mode_info
-                    if nested_mode and not target_mode:
-                        target_mode = nested_mode
-                        target_lowest_level = nested_lowest
-                        logger.info(
-                            "Adopted mode %s (lowest rung %s) from nested '%s'.",
-                            target_mode,
-                            target_lowest_level,
-                            nested_path,
-                        )
-                    sources.append(nested_source)
-                    builder_warnings.extend(nested_source.warnings)
+            idx += 1
 
         if not sources:
             return None, []
@@ -150,10 +126,15 @@ class MultiSourceBuilder:
             return sources[0].tree, single_warnings
 
         # Stage 2: decide target mode and lowest rung
-        self._apply_mode_precedence(sources)
-        target_mode = self.defaults.mode
-        target_lowest_level = min(target_mode.keys()) if target_mode else None
-
+        if target_mode:
+            self.defaults.set_global_defaults(mode=target_mode)
+            target_lowest_level = min(target_mode.keys()) if target_mode else None
+            logger.info(
+                "Final target mode set to %s (lowest rung %s).",
+                target_mode,
+                target_lowest_level,
+            )
+            
         # Compute graft offsets for each source relative to target lowest rung
         if target_lowest_level is not None:
             for src in sources:
@@ -165,6 +146,7 @@ class MultiSourceBuilder:
             for src in sources:
                 src.graft_offset = 0
 
+        # Stage 3: Merge all sources
         merger = TreeMerger(target_lowest_level)
         result = merger.merge(sources)
         if result.added_nodes or result.updated_nodes:
@@ -192,51 +174,25 @@ class MultiSourceBuilder:
 
     def _build_tree_from_entry(
         self, entry: str, graft_offset: int = 0, collector: Optional[List[str]] = None
-    ) -> Tuple[object | None, List[Tuple[str, SourceKind, object]], List[str]]:
+    ) -> Tuple[object | None, List[str], List[str], dict[int, object] | None]:
         """
         Use the existing InputProcessor to parse a single entry and
         materialise a Tree.
         """
-        nested_entries: List[Tuple[str, SourceKind, object]] = []
+        nested_paths: List[str] = []
         warnings_out: List[str] = collector if collector is not None else []
 
-        def _nested_handler(path: str, _graft_offset: int, _apply_global_mode: bool):
-            ext = os.path.splitext(path)[1].lower()
-            try:
-                if ext == ".lst":
-                    tree = build_tree(
-                        self.defaults,
-                        self.filters,
-                        kind="lst",
-                        list_path=path,
-                    )
-                    nested_entries.append((path, SourceKind.LST, tree))
-                    return {}, {}, [], []
-                if ext == ".tree":
-                    tree = load_tree_if_current(path)
-                    if tree:
-                        nested_entries.append((path, SourceKind.TREE, tree))
-                    return {}, {}, [], []
-            except Exception as exc:
-                msg = f"Failed to process nested input '{path}': {exc}"
-                logger.warning(msg)
-                warnings_out.append(msg)
-            return {}, {}, [], []
-
-        image_dirs, specific_images, all_images, _weights = (
+        image_dirs, specific_images = (
             self.processor.process_input(
                 entry,
                 graft_offset=graft_offset,
                 apply_global_mode=False,
-                nested_file_handler=_nested_handler,
+                nested_paths=nested_paths,
             )
         )
         detected_mode = getattr(self.processor, "detected_mode", None)
-        # detected_lowest = getattr(self.processor, "detected_lowest", None)
 
         if image_dirs or specific_images:
-            if detected_mode:
-                self.defaults.set_global_defaults(mode=detected_mode)
             base_tree = build_tree(
                 self.defaults,
                 self.filters,
@@ -248,14 +204,9 @@ class MultiSourceBuilder:
         else:
             base_tree = None
         if base_tree:
-            return base_tree, nested_entries, warnings_out
-
-        # If only a flat list of images/weights was provided, surface a warning and skip
-        if all_images:
-            logger.warning(
-                "Entry '%s' produced a flat list; tree navigation not available.", entry
-            )
-        return None, nested_entries, warnings_out
+            return base_tree, nested_paths, warnings_out, detected_mode
+        
+        return None, nested_paths, warnings_out, detected_mode
 
     def _build_loaded_source(
         self,
@@ -300,22 +251,6 @@ class MultiSourceBuilder:
             warnings.extend(build_warnings)
         return warnings
 
-    def _apply_mode_precedence(self, sources: List[LoadedSource]) -> None:
-        """
-        Apply mode precedence:
-            CLI args (already in defaults) > first tree built_mode > existing defaults/global.
-        """
-        defaults = self.defaults
-        if defaults.args_mode is not None:
-            return
-
-        # Prefer first source with a recorded built_mode
-        for src in sources:
-            tree = src.tree
-            if tree and src.mode:
-                defaults.set_global_defaults(mode=src.mode)
-                return
-
     def _extract_tree_mode(self, tree) -> dict[int, object] | None:
         if getattr(tree, "built_mode", None):
             return tree.built_mode
@@ -325,24 +260,3 @@ class MultiSourceBuilder:
         if mode_str:
             return Mode.from_string(mode_str).map
         return None
-
-    def _harmonise_tree_mode(
-        self, tree, target_mode: dict[int, object], source_label: str | None = None
-    ) -> None:
-        current_mode = self._extract_tree_mode(tree)
-        if current_mode == target_mode:
-            return
-        # Align tree defaults and recalc under the target mode
-        self.defaults.set_global_defaults(mode=target_mode)
-        try:
-            apply_mode_and_recalculate(
-                tree, self.defaults, ignore_user_proportion=False
-            )
-            if source_label:
-                logger.info("Recalculated '%s' with harmonised mode.", source_label)
-        except Exception as exc:
-            logger.warning(
-                "Failed to harmonise mode for '%s': %s",
-                source_label or "source",
-                exc,
-            )

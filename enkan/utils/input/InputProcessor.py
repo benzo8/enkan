@@ -1,5 +1,5 @@
 import os
-from typing import Dict, List, Any, Callable, Optional, Tuple
+from typing import Dict, List, Any, Optional
 import logging
 from tqdm import tqdm
 
@@ -24,34 +24,28 @@ class InputProcessor:
         recdepth: int = 1,
         graft_offset: int = 0,
         apply_global_mode: bool = True,
-        nested_file_handler: Optional[
-            Callable[[str, int, bool], Tuple[Dict, Dict, List, List]]
-        ] = None,
+        nested_paths: Optional[List[str]] = None,
     ):
         """
         Parse a .txt entry into image_dirs/specific_images structures.
-        Returns (image_dirs, specific_images, all_images, weights) for compatibility.
+        Returns (image_dirs, specific_images).
         """
         image_dirs: Dict = {}
         specific_images: Dict = {}
-        all_images: List = []
-        weights: List = []
         # reset detected mode for this run
         self.detected_mode = None
         self.detected_lowest = None
 
         self._process_entry(
-            input_entry,
-            recdepth,
-            image_dirs,
-            specific_images,
-            all_images,
-            weights,
-            graft_offset,
-            apply_global_mode,
-            nested_file_handler,
+            entry=input_entry,
+            recdepth=recdepth,
+            image_dirs=image_dirs,
+            specific_images=specific_images,
+            graft_offset=graft_offset,
+            apply_global_mode=apply_global_mode,
+            nested_paths=nested_paths,
         )
-        return image_dirs, specific_images, all_images, weights
+        return image_dirs, specific_images
 
     def _process_entry(
         self,
@@ -59,13 +53,9 @@ class InputProcessor:
         recdepth,
         image_dirs,
         specific_images,
-        all_images,
-        weights,
         graft_offset: int = 0,
         apply_global_mode: bool = True,
-        nested_file_handler: Optional[
-            Callable[[str, int, bool], Tuple[Dict, Dict, List, List]]
-        ] = None,
+        nested_paths: Optional[List[str]] = None,
     ) -> Tree | None:
         """
         Process a single input entry (file, directory, or image).
@@ -80,23 +70,14 @@ class InputProcessor:
         if input_filename_full:
             ext = os.path.splitext(input_filename_full)[1].lower()
             if ext != ".txt":
-                if nested_file_handler and ext in {".lst", ".tree"}:
-                    nested_result = nested_file_handler(
-                        input_filename_full, graft_offset, apply_global_mode
+                # Surface nested references upward for MSB to handle
+                if nested_paths is not None and ext in {".lst", ".tree", ".txt"}:
+                    nested_paths.append(input_filename_full)
+                else:
+                    logger.warning(
+                        "Skipping non-txt input '%s' in InputProcessor.",
+                        input_filename_full,
                     )
-                    if nested_result:
-                        n_image_dirs, n_specific_images, n_all_images, n_weights = (
-                            nested_result
-                        )
-                        image_dirs.update(n_image_dirs or {})
-                        specific_images.update(n_specific_images or {})
-                        all_images.extend(n_all_images or [])
-                        weights.extend(n_weights or [])
-                    return None
-                logger.warning(
-                    "Skipping non-txt input '%s' in InputProcessor.",
-                    input_filename_full,
-                )
                 return None
             with open(input_filename_full, "r", buffering=65536, encoding="utf-8") as f:
                 total_lines = sum(1 for _ in f)
@@ -112,36 +93,10 @@ class InputProcessor:
                     if not line or line.startswith("#"):  # Skip comments/empty lines
                         continue
                     line = line.replace('"', "").strip()  # Remove enclosing quotes
-
                     line_ext = os.path.splitext(line)[1].lower()
-                    if utils.is_textfile(line):
-                        # Recursively process nested text files
-                        sub_image_dirs, sub_specific_images, _, _ = self.process_input(
-                            line,
-                            recdepth + 1,
-                            graft_offset=graft_offset,
-                            apply_global_mode=apply_global_mode,
-                            nested_file_handler=nested_file_handler,
-                        )
-                        image_dirs.update(sub_image_dirs)
-                        specific_images.update(sub_specific_images)
-                    elif line_ext in {".lst", ".tree"} and nested_file_handler:
-                        nested_result = nested_file_handler(
-                            line, graft_offset, apply_global_mode
-                        )
-                        if nested_result:
-                            n_image_dirs, n_specific_images, n_all_images, n_weights = (
-                                nested_result
-                            )
-                            image_dirs.update(n_image_dirs or {})
-                            specific_images.update(n_specific_images or {})
-                            all_images.extend(n_all_images or [])
-                            weights.extend(n_weights or [])
-                    elif line_ext in {".lst", ".tree"}:
-                        logger.warning(
-                            "Nested input '%s' requires external handler; skipping.",
-                            line,
-                        )
+                    if line_ext in {".txt", ".lst", ".tree"}:
+                        if nested_paths is not None:
+                            nested_paths.append(line)
                     else:
                         path, modifier_list = self.parse_input_line(
                             line,

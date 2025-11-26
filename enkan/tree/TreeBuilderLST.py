@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import logging
 from collections import defaultdict
 from typing import Dict, List, Tuple
 
@@ -9,9 +10,12 @@ from enkan.tree.Tree import Tree
 from tqdm import tqdm
 from enkan.utils.Defaults import serialise_mode
 
+logger = logging.getLogger(__name__)
+
 """
 Builder for .lst list sources.
 """
+
 
 
 class TreeBuilderLST:
@@ -157,13 +161,10 @@ class TreeBuilderLST:
                 self.tree.lst_inferred_lowest = level
                 # Warn when inference is not certain
                 if confidence < 1:
-                    self.tree.lst_inferred_warning = (
-                        f"Assumed balanced at level {level} with confidence {confidence:.0%}."
-                    )
-                else:
-                    self.tree.lst_inferred_warning = None
+                    logger.info(f"Assumed balanced at level {level} with confidence {confidence:.0%}.")
+                self.tree.lst_inferred_warning = None
                 return
-
+            
         self.tree.lst_inferred_mode = None
         self.tree.lst_inferred_lowest = None
         self.tree.lst_inferred_warning = "Could not infer a balanced rung."

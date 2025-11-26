@@ -41,6 +41,9 @@ class TreeMerger:
             raise ValueError("First source has no tree to merge")
 
         base = first.tree
+        base_offset = getattr(first, "graft_offset", 0) or 0
+        if base_offset != 0 and self.target_lowest_rung is not None:
+            base = self._shift_tree(base, base_offset)
         added_total = 0
         updated_total = 0
         for src in iterator:
@@ -62,7 +65,7 @@ class TreeMerger:
                 continue
             existing = self._find_matching_node(base, node)
             if existing:
-                if self._merge_node(existing, node):
+                if self._merge_node(existing, node, base):
                     updated += 1
             else:
                 self._add_node(base, node, graft_offset)
@@ -78,7 +81,7 @@ class TreeMerger:
             yield current
             stack.extend(current.children)
 
-    def _merge_node(self, target: TreeNode, incoming: TreeNode) -> bool:
+    def _merge_node(self, target: TreeNode, incoming: TreeNode, base: Tree) -> bool:
         """
         Apply merge semantics:
         - Preserve target placement/name.
@@ -89,6 +92,8 @@ class TreeMerger:
         if self._replace_images_for_path(target, incoming):
             changed = True
         if self._merge_metadata(target, incoming):
+            changed = True
+        if self._merge_virtual_images(target, incoming, base):
             changed = True
         return changed
 
@@ -109,6 +114,10 @@ class TreeMerger:
         if hasattr(incoming, "video"):
             setattr(new_node, "video", getattr(incoming, "video", None))
         base.add_node(new_node, target_parent)
+        # carry over virtual_image_lookup mappings for new node
+        if hasattr(base, "virtual_image_lookup") and hasattr(incoming, "images"):
+            for img in incoming.images:
+                base.virtual_image_lookup[img] = new_node
         # If grafting is needed, adjust leaf placement via Grafting
         if graft_offset and new_node.images:
             target_level = new_node.level + graft_offset
@@ -186,6 +195,66 @@ class TreeMerger:
                 changed = True
 
         return changed
+
+    def _merge_virtual_images(self, target: TreeNode, incoming: TreeNode, base: Tree) -> bool:
+        """
+        Ensure virtual_image_lookup entries from the incoming node exist on the base tree.
+        """
+        changed = False
+        if hasattr(base, "virtual_image_lookup") and incoming.images:
+            for img in incoming.images:
+                if img not in base.virtual_image_lookup:
+                    base.virtual_image_lookup[img] = target
+                    changed = True
+        return changed
+
+    def _shift_tree(self, tree: Tree, offset: int) -> Tree:
+        """
+        Create a new tree with all nodes shifted up/down by offset levels.
+        """
+        shifted = Tree(tree.defaults, tree.filters)
+        shifted.built_mode = getattr(tree, "built_mode", None)
+        shifted.built_mode_string = getattr(tree, "built_mode_string", None)
+        shifted.lst_inferred_mode = getattr(tree, "lst_inferred_mode", None)
+        shifted.lst_inferred_lowest = getattr(tree, "lst_inferred_lowest", None)
+        shifted.lst_inferred_warning = getattr(tree, "lst_inferred_warning", None)
+
+        for node in self._traverse(tree.root):
+            if node.path == ROOT_NODE_NAME:
+                continue
+            new_level = node.level + offset
+            if self.target_lowest_rung is not None and new_level < self.target_lowest_rung:
+                if node.images:
+                    msg = (
+                        f"Grafting offset would place images for node '{node.path}' below lowest rung "
+                        f"{self.target_lowest_rung}."
+                    )
+                    self.warnings.append(msg)
+                    raise ValueError(msg)
+                # allow structural nodes below rung if they carry no images
+            new_path = tree.set_path_to_level(node.path, new_level)
+            new_name = shifted.convert_path_to_tree_format(new_path)
+            parent_name = os.path.dirname(new_name)
+            shifted.ensure_parent_exists(parent_name)
+            cloned = TreeNode(
+                name=new_name,
+                path=node.path,
+                weight_modifier=node.weight_modifier,
+                is_percentage=node.is_percentage,
+                proportion=node.proportion,
+                user_proportion=getattr(node, "user_proportion", None),
+                mode_modifier=node.mode_modifier,
+                flat=getattr(node, "flat", False),
+                images=list(node.images),
+            )
+            if hasattr(node, "video"):
+                setattr(cloned, "video", getattr(node, "video", None))
+            cloned.group = getattr(node, "group", None)
+            shifted.add_node(cloned, parent_name)
+            if hasattr(shifted, "virtual_image_lookup") and cloned.images:
+                for img in cloned.images:
+                    shifted.virtual_image_lookup[img] = cloned
+        return shifted
 
     @staticmethod
     def _is_from_path(image_path: str, src_path: str) -> bool:
