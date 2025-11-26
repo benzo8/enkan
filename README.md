@@ -1,4 +1,4 @@
-# enkan
+# enkan dev
 
 A not-so-simple slideshow application for building rich, weighted photo and video playlists that you can drive with a lean Tkinter UI. enkan reads structured text input, builds a tree of sources, and serves images (and optional video) according to the weighting rules you specify.
 
@@ -21,7 +21,7 @@ Optional:
 ### From source
 
 ```bash
-git clone https://github.com/yourusername/enkan.git
+git clone -b dev https://github.com/benzo8/enkan.git
 cd enkan
 pip install -e .
 ```
