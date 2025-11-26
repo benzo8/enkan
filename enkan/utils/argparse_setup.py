@@ -34,10 +34,10 @@ def get_arg_parser() -> argparse.ArgumentParser:
         help="Input file(s) and/or folder(s) to build or .lst file to load",
     )
     parser.add_argument(
-        "--outputlist", "--ol", action="store_true", help="Output lst slideshow file and exit"
+        "--outputlist", "--ol", nargs="?", const=True, metavar="FILE", help="Output lst slideshow file (optionally specify FILE) and exit"
     )
     parser.add_argument(
-        "--outputtree", "--ot", action="store_true", help="Output tree binary file and exit"
+        "--outputtree", "--ot", nargs="?", const=True, metavar="FILE", help="Output tree binary file (optionally specify FILE) and exit"
     )
     parser.add_argument(
         "--run", dest="run", action="store_true", help="Run the slideshow"

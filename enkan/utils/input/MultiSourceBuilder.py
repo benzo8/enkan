@@ -59,9 +59,9 @@ class MultiSourceBuilder:
                 case SourceKind.TREE:
                     tree = load_tree_if_current(entry_path_full)
                     if not tree:
-                        logger.warning(
-                            "Skipping stale or unreadable tree '%s'.", entry_path_full
-                        )
+                        msg = f"Skipping stale or unreadable tree '{entry_path_full}'."
+                        logger.warning(msg)
+                        builder_warnings.append(msg)
                         continue
                     logger.info("Loaded tree source '%s'.", entry_path_full)
 
@@ -76,8 +76,8 @@ class MultiSourceBuilder:
                 case SourceKind.TXT | SourceKind.FOLDER:
                     logger.info(
                         "Processing txt/source '%s'.", entry_path_full)
-                    tree, nested_entries = self._build_tree_from_entry(
-                        entry_path_full, graft_offset=graft_offset
+                    tree, nested_entries, nested_warnings = self._build_tree_from_entry(
+                        entry_path_full, graft_offset=graft_offset, collector=builder_warnings
                     )
 
             if tree:
@@ -186,16 +186,19 @@ class MultiSourceBuilder:
                 logger.warning(msg)
                 raise
 
-        return result.tree, result.warnings
+        # Deduplicate warnings while preserving order
+        deduped = list(dict.fromkeys(result.warnings))
+        return result.tree, deduped
 
     def _build_tree_from_entry(
-        self, entry: str, graft_offset: int = 0
-    ) -> Tuple[object | None, List[Tuple[str, SourceKind, object]]]:
+        self, entry: str, graft_offset: int = 0, collector: Optional[List[str]] = None
+    ) -> Tuple[object | None, List[Tuple[str, SourceKind, object]], List[str]]:
         """
         Use the existing InputProcessor to parse a single entry and
         materialise a Tree.
         """
         nested_entries: List[Tuple[str, SourceKind, object]] = []
+        warnings_out: List[str] = collector if collector is not None else []
 
         def _nested_handler(path: str, _graft_offset: int, _apply_global_mode: bool):
             ext = os.path.splitext(path)[1].lower()
@@ -215,7 +218,9 @@ class MultiSourceBuilder:
                         nested_entries.append((path, SourceKind.TREE, tree))
                     return {}, {}, [], []
             except Exception as exc:
-                logger.warning("Failed to process nested input '%s': %s", path, exc)
+                msg = f"Failed to process nested input '{path}': {exc}"
+                logger.warning(msg)
+                warnings_out.append(msg)
             return {}, {}, [], []
 
         image_dirs, specific_images, all_images, _weights = (
@@ -243,14 +248,14 @@ class MultiSourceBuilder:
         else:
             base_tree = None
         if base_tree:
-            return base_tree, nested_entries
+            return base_tree, nested_entries, warnings_out
 
         # If only a flat list of images/weights was provided, surface a warning and skip
         if all_images:
             logger.warning(
                 "Entry '%s' produced a flat list; tree navigation not available.", entry
             )
-        return None, nested_entries
+        return None, nested_entries, warnings_out
 
     def _build_loaded_source(
         self,

@@ -101,22 +101,21 @@ This document describes the major "agents" (modules/classes/subsystems) in Enkan
   - Updates `filters`.
 - [TODO: USER: List all recognized modifier patterns and their precedence]
 
-### 2.4 TreeMerger
+### 2.5 TreeMerger
 
 - Purpose: Combine two trees:
-  - Handle graft level conflicts.
-  - Merge metadata (mode modifiers, proportions).
-  - Field precedence:
-    - Left-most (earlier) input is authoritative for `node.name` and base location (pre-graft/group).
-    - Right-most (later) input is authoritative for `user_proportion`, `weight_modifier`, `is_percentage`, `images`, and additional location metadata (graft/group attachments).
-  - Merge data: later input wins file-content truth for that path; add new files and remove missing files scoped to the current `path_name` even when the node is shared (flattened/grafted/grouped).
-  - Preserve branch integrity.
-  - Use `path_lookup` to resolve destination nodes; if a later input's path resolves to an existing node, the later input's files from that path replace earlier files from that same path while leaving other aliases in the node intact.
-  - Emit structured warnings for conflicts (graft level, mode collisions, missing paths) with source attribution for MultiSourceBuilder to bubble up.
+  - Operates after Stage 1 ingestion decides target mode/lowest rung and computes per-source `graft_offset`.
+  - Merge is left-to-right: earliest source owns placement/name; later sources may add content or metadata.
+  - Matching by filesystem path via `path_lookup`: if the incoming path already exists in the base tree, merge content in place (placement unchanged), replacing images belonging to that path only and applying right-most wins for `user_proportion`, `weight_modifier`, `is_percentage`, `mode_modifier`, `group` (if target is empty), and `video`.
+  - Unmatched nodes: added to the base, then if `graft_offset` is non-zero and the node is a leaf (has images), apply leaf-level grafting with `Grafting.handle_grafting`, passing through `group` and target graft level = `leaf.level + graft_offset`; warn/abort if this would drop below the target lowest rung.
+  - Group-aware grafting: `TreeNode.group` is propagated from builders (TXT); merger preserves it so nested groups graft correctly.
+  - Emits warnings for graft failures or below-lowest-rung scenarios for MultiSourceBuilder/CLI to surface.
 - Optimization Targets:
   - Replace linear child scans with `path_lookup`.
   - Reduce deep recursion duplication.
-- [TODO: USER: Define conflict resolution policy for duplicate file nodes]
+- Conflict resolution for duplicate file nodes:
+  - if an incoming path matches an existing node, the existing placement is kept and only files from that path are replaced (other aliases on the node stay);
+  - right-most wins for user_proportion/weight_modifier/is_percentage/mode_modifier/group/video, while name/location remain left-most.
 
 ---
 
@@ -311,6 +310,7 @@ This document describes the major "agents" (modules/classes/subsystems) in Enkan
 | Modifier Parsing | Weight %, graft, group, mode, video/mute flags |
 | Merge Conflicts | Same path different graft level, mode merge |
 | Weight Stability | Recalc after mode change yields deterministic ordering |
+| Multi-input Merge | txt+txt/tree, tree+tree, txt/tree+lst (weighted/unweighted), nested sources, graft_offset below-lowest-rung warnings |
 | GUI Dialogs | Centering, messagebox fallback behavior |
 | EXIF Write | Correct orientation applied only at multiples of 90 |
 
@@ -332,7 +332,7 @@ This document describes the major "agents" (modules/classes/subsystems) in Enkan
 
 | Priority | Task |
 |----------|------|
-| High | Add unit tests for tree merging |
+| High | Add automated tests for tree building/merging (all input combinations, graft/group, mode alignment) |
 | High | Optimize node lookup with `path_lookup` |
 | Medium | Formalize ListTreeBuilder class usage |
 | Medium | Centralize warning aggregation |

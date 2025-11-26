@@ -10,11 +10,15 @@ def load_tree_if_current(filename: str) -> Tree | None:
     """
     Attempt to load a pickled Tree; return None if version missing/outdated.
     """
-    try:
-        tree = load_tree_from_file(filename)
-    except Exception as e:
-        logger.warning("[tree] Failed to load '%s': %s.", filename, e)
-        return None
+    from tqdm import tqdm
+    with tqdm(total=1, desc=f"Loading {os.path.basename(filename)}", leave=True) as pbar:
+        try:
+            tree = load_tree_from_file(filename)
+            pbar.update(1)
+        except Exception as e:
+            pbar.close()
+            logger.warning("[tree] Failed to load '%s': %s.", filename, e)
+            return None
     version_in_pickle = getattr(tree, "_pickle_version", None)
     if version_in_pickle is None or version_in_pickle < Tree.PICKLE_VERSION:
         tree_filename = os.path.basename(filename)

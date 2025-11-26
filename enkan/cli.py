@@ -44,9 +44,12 @@ def main_with_args(args) -> None:
     # Output tree to file if requested
     if args.outputtree:
         from enkan.tree.tree_io import write_tree_to_file
-        base_names = [os.path.splitext(os.path.basename(f))[0] for f in args.input_file]
-        output_name = "_".join(base_names) + ".tree"
-        output_path = os.path.join(os.getcwd(), output_name)
+        if isinstance(args.outputtree, str):
+            output_path = os.path.abspath(args.outputtree)
+        else:
+            base_names = [os.path.splitext(os.path.basename(f))[0] for f in args.input_file]
+            output_name = "_".join(base_names) + ".tree"
+            output_path = os.path.join(os.getcwd(), output_name)
         write_tree_to_file(tree, output_path)
         logger.info("Tree written to %s", output_path)
         return
@@ -59,9 +62,12 @@ def main_with_args(args) -> None:
     if args.outputlist:
         from enkan.tree.tree_io import write_image_list
         # Build output filename
-        base_names = [os.path.splitext(os.path.basename(f))[0] for f in args.input_file]
-        output_name = "_".join(base_names) + ".lst"
-        output_path = os.path.join(os.getcwd(), output_name)
+        if isinstance(args.outputlist, str):
+            output_path = os.path.abspath(args.outputlist)
+        else:
+            base_names = [os.path.splitext(os.path.basename(f))[0] for f in args.input_file]
+            output_name = "_".join(base_names) + ".lst"
+            output_path = os.path.join(os.getcwd(), output_name)
         write_image_list(images, weights, args.input_file, args.mode, output_path)
         logger.info("Output written to %s", output_path)
         return

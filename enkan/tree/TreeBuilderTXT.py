@@ -77,15 +77,15 @@ class TreeBuilderTXT:
             return
 
         with tqdm(
-            total=0,
+            total=len(image_dirs),
             desc="Building tree",
-            leave=False,
-            unit="file",
+            leave=True,
+            unit="dir",
             dynamic_ncols=True,
-
         ) as pbar:
             for root, data in image_dirs.items():
                 if not os.path.isdir(root):
+                    pbar.update(1)
                     continue
 
                 # 1. Ensure a structural node exists up-front so metadata (proportion, weight_modifier, etc.)
@@ -104,6 +104,7 @@ class TreeBuilderTXT:
                     data.get("graft_level"),
                     data.get("group"),
                 )
+                pbar.update(1)
 
         if specific_images:
             self.process_specific_images(specific_images)
