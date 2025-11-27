@@ -314,7 +314,12 @@ class ImageSlideshow:
                 }
             }
             parent_tree: Tree.Tree = build_tree(
-                self.defaults, self.filters, parent_image_dirs, None
+                self.defaults,
+                self.filters,
+                parent_image_dirs,
+                None,
+                tk_root=self.root,
+                tk_enabled=True,
             )
             new_image_paths, new_weights = extract_image_paths_and_weights_from_tree(
                 parent_tree

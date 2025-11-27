@@ -28,7 +28,7 @@ class MultiSourceBuilder:
         self.filters = filters
         self.processor = InputProcessor(defaults, filters)
 
-    def build(self, input_files: Iterable[str]):
+    def build(self, input_files: Iterable[str], *, tk_root=None, tk_enabled: bool = True):
         sources: List[LoadedSource] = []
         builder_warnings: List[str] = []
         target_mode = self.defaults.args_mode
@@ -77,12 +77,18 @@ class MultiSourceBuilder:
                         self.filters,
                         kind="lst",
                         list_path=entry_path_full,
+                        tk_root=tk_root,
+                        tk_enabled=tk_enabled,
                     )
                 case SourceKind.TXT | SourceKind.FOLDER:
                     logger.info(
                         "Processing txt/source '%s'.", entry_path_full)
                     tree, nested_entries, _, detected_mode = self._build_tree_from_entry(
-                        entry_path_full, graft_offset=graft_offset, collector=builder_warnings
+                        entry_path_full,
+                        graft_offset=graft_offset,
+                        collector=builder_warnings,
+                        tk_root=tk_root,
+                        tk_enabled=tk_enabled,
                     )
                     if nested_entries:
                         for offset, nested_path in enumerate(nested_entries, start=1):
@@ -173,7 +179,13 @@ class MultiSourceBuilder:
         return result.tree, deduped
 
     def _build_tree_from_entry(
-        self, entry: str, graft_offset: int = 0, collector: Optional[List[str]] = None
+        self,
+        entry: str,
+        graft_offset: int = 0,
+        collector: Optional[List[str]] = None,
+        *,
+        tk_root=None,
+        tk_enabled: bool = True,
     ) -> Tuple[object | None, List[str], List[str], dict[int, object] | None]:
         """
         Use the existing InputProcessor to parse a single entry and
@@ -200,6 +212,8 @@ class MultiSourceBuilder:
                 specific_images=specific_images,
                 mode=detected_mode,
                 kind="txt",
+                tk_root=tk_root,
+                tk_enabled=tk_enabled,
             )
         else:
             base_tree = None

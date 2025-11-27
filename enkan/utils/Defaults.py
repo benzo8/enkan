@@ -1,23 +1,44 @@
+from __future__ import annotations
 import re
-
-
 from typing import Dict, List, Tuple, Optional, Any
 
-# Mode type used throughout: level -> (mode_char, [slope1, slope2])
+# Mode type: level -> (mode_char, [slope1, slope2])
 ModeMap = Dict[int, Tuple[str, List[int]]]
 
+_current_defaults: Defaults | None = None
+
+
+def set_current_defaults(defaults: "Defaults") -> None:
+    global _current_defaults
+    _current_defaults = defaults
+
+
+def get_current_defaults() -> "Defaults":
+    return _current_defaults if _current_defaults is not None else Defaults()
+
+
 class Defaults:
+    """
+    Holds global / CLI overrides and mutable runtime defaults.
+    Resolution order for each property:
+    CLI args override > global_* override > initial value passed at construction.
+    """
+
     def __init__(
         self,
-        weight_modifier=100,
-        mode=None,
-        is_random=False,
-        dont_recurse=False,
-        args=None,
-        video=True,
-        mute=True,
+        weight_modifier: int = 100,
+        mode: Any | None = None,
+        is_random: bool = False,
+        dont_recurse: bool = False,
+        args: Any | None = None,
+        video: bool = True,
+        mute: bool = True,
+        no_background: bool | None = None,
+        quiet: bool | None = None,
     ):
         self.args = args
+
+        # Base values
         self._weight_modifier = weight_modifier
         self._mode: ModeMap = _ensure_mode_map(mode)
         self._is_random: bool = is_random
@@ -25,26 +46,44 @@ class Defaults:
         self._video: bool = video
         self._mute: bool = mute
 
-        self.global_mode = None
-        self.global_is_random = None
-        self.global_dont_recurse = None
-        self.global_video = None
-        self.global_mute = None
-
+        # CLI-sourced overrides (stored separately so properties can resolve precedence)
         self.args_mode: ModeMap | None = (
-            _ensure_mode_map(args.mode) if args and args.mode is not None else None
+            _ensure_mode_map(args.mode)
+            if args and getattr(args, "mode", None) is not None
+            else None
         )
-        self.args_is_random = args.random if args and args.random is not None else None
-        self.args_dont_recurse = (
-            args.dont_recurse if args and args.dont_recurse is not None else None
+        self.args_is_random = getattr(args, "random", None) if args else None
+        self.args_dont_recurse = getattr(args, "dont_recurse", None) if args else None
+        self.args_video = getattr(args, "video", None) if args else None
+        self.args_mute = getattr(args, "mute", None) if args else None
+        self.args_quiet = getattr(args, "quiet", None) if args else None
+        self.args_no_background = getattr(args, "no_background", None) if args else None
+
+        # Global (runtime) overrides (set later via setters)
+        self.global_mode: ModeMap | None = None
+        self.global_is_random: bool | None = None
+        self.global_dont_recurse: bool | None = None
+        self.global_video: bool | None = None
+        self.global_mute: bool | None = None
+
+        # Derived flags
+        self.background: bool = not (
+            no_background
+            if no_background is not None
+            else (
+                bool(self.args_no_background)
+                if self.args_no_background is not None
+                else False
+            )
         )
-        self.args_video = args.video if args and args.video is not None else None
-        self.args_mute = args.mute if args and args.mute is not None else None
+        self.quiet: bool = (
+            quiet
+            if quiet is not None
+            else bool(self.args_quiet) if self.args_quiet is not None else False
+        )
 
-        self.debug = args.debug
-        self.background: bool = not args.no_background
-
-        self.groups = {}
+        # Group metadata container
+        self.groups: dict[str, Any] = {}
 
     @property
     def weight_modifier(self) -> int:
@@ -54,56 +93,58 @@ class Defaults:
     def mode(self) -> ModeMap:
         if self.args_mode is not None:
             return self.args_mode
-        elif self.global_mode is not None:
+        if self.global_mode is not None:
             return self.global_mode
-        else:
-            return self._mode
+        return self._mode
 
     @property
-    def is_random(self):
+    def is_random(self) -> bool:
         if self.args_is_random is not None:
             return self.args_is_random
-        elif self.global_is_random is not None:
+        if self.global_is_random is not None:
             return self.global_is_random
-        else:
-            return self._is_random
+        return self._is_random
 
     @property
-    def dont_recurse(self):
+    def dont_recurse(self) -> bool:
         if self.args_dont_recurse is not None:
             return self.args_dont_recurse
-        elif self.global_dont_recurse is not None:
+        if self.global_dont_recurse is not None:
             return self.global_dont_recurse
-        else:
-            return self._dont_recurse
+        return self._dont_recurse
 
     @property
-    def video(self):
-        if self.args_video is not None:  # CLI overrides all
+    def video(self) -> bool:
+        if self.args_video is not None:
             return self.args_video
-        elif self.global_video is not None:  # folder-specific config
+        if self.global_video is not None:
             return self.global_video
-        else:
-            return self._video  # built-in fallback
+        return self._video
 
     @property
-    def mute(self):
+    def mute(self) -> bool:
         if self.args_mute is not None:
             return self.args_mute
-        elif self.global_mute is not None:
+        if self.global_mute is not None:
             return self.global_mute
-        else:
-            return self._mute
+        return self._mute
 
-    def set_global_defaults(self, mode=None, is_random=None, dont_recurse=None) -> None:
+    def set_global_defaults(
+        self,
+        mode: Any | None = None,
+        is_random: bool | None = None,
+        dont_recurse: bool | None = None,
+    ) -> None:
         if mode is not None:
-            self.global_mode: ModeMap = _ensure_mode_map(mode)
+            self.global_mode = _ensure_mode_map(mode)
         if is_random is not None:
             self.global_is_random = is_random
         if dont_recurse is not None:
             self.global_dont_recurse = dont_recurse
 
-    def set_global_video(self, video=None, mute=None) -> None:
+    def set_global_video(
+        self, video: bool | None = None, mute: bool | None = None
+    ) -> None:
         if video is not None:
             self.global_video = video
         if mute is not None:
@@ -111,9 +152,7 @@ class Defaults:
 
 
 class Mode:
-    """
-    Lightweight wrapper around ModeMap to keep mode parsing/serialising/resolution in one place.
-    """
+    """Wrapper around a ModeMap providing parsing and resolution."""
 
     def __init__(self, mode_map: Optional[ModeMap] = None) -> None:
         self.map: ModeMap = mode_map or {}
@@ -136,93 +175,60 @@ class Mode:
 
 
 def _ensure_mode_map(mode: Any) -> ModeMap:
-    """
-    Normalise various mode representations to ModeMap.
-    Supports legacy dicts with string values.
-    """
     if mode is None:
         return {1: ("w", [0, 0])}
     if isinstance(mode, dict):
-        normalised: ModeMap = {}
+        out: ModeMap = {}
         for level, val in mode.items():
             if isinstance(val, tuple):
-                mode_char, slopes = val
-                slopes_list: List[int] = list(slopes or [])
+                ch, slopes = val
+                slopes_list = list(slopes or [])
                 if len(slopes_list) < 2:
                     slopes_list.extend([0] * (2 - len(slopes_list)))
-                normalised[int(level)] = (str(mode_char), slopes_list[:2])
+                out[int(level)] = (str(ch), slopes_list[:2])
             else:
-                normalised[int(level)] = (str(val), [0, 0])
-        return normalised
-    # Fallback: parse from string if mode is a string, else raise TypeError
+                out[int(level)] = (str(val), [0, 0])
+        return out
     if isinstance(mode, str):
         return parse_mode_string(mode)
-    raise TypeError(
-        f"_ensure_mode_map: Unsupported type for mode: {type(mode).__name__}. "
-        "Expected None, dict, or str."
-    )
+    raise TypeError(f"Unsupported mode type: {type(mode).__name__}")
+
+
 def parse_mode_string(mode_str: str) -> ModeMap:
-    # Updated regex: ([bw])(\d+)(?:,(-?\d+))?(?:,(-?\d+))?
     pattern = re.compile(r"([bw])(\d+)(?:,(-?\d+))?(?:,(-?\d+))?", re.IGNORECASE)
     matches = pattern.findall(mode_str)
-    # Each match is a tuple: (mode, level, slope1, slope2)
-    # Convert level to int, slopes to int if present, else None
     result: ModeMap = {}
     for char, num, slope1, slope2 in matches:
         level = int(num)
-        slopes: List[int] = []
-        if slope1:
-            slopes.append(int(slope1))
-        else:
-            slopes.append(0)
-        if slope2:
-            slopes.append(int(slope2))
-        else:
-            slopes.append(0)
-        result[level] = (char.lower(), slopes)
+        s1 = int(slope1) if slope1 else 0
+        s2 = int(slope2) if slope2 else 0
+        result[level] = (char.lower(), [s1, s2])
     return result
 
 
 def serialise_mode(mode_data: Optional[ModeMap]) -> Optional[str]:
-    """
-    Convert ModeMap to a string for display/export.
-    """
     if not mode_data:
         return None
-
     parts: List[str] = []
     for level in sorted(mode_data.keys()):
-        info = mode_data[level]
-        if isinstance(info, tuple):
-            mode_char, slopes = info
-            slopes_list: List[int] = list(slopes or [])
-            if len(slopes_list) < 2:
-                slopes_list.extend([0] * (2 - len(slopes_list)))
-            part = f"{mode_char}{level}"
-            part += "," + ",".join(str(int(s)) for s in slopes_list[:2])
-            parts.append(part)
-        else:
-            parts.append(f"{info}{level}")
+        ch, slopes = mode_data[level]
+        s = list(slopes or [])
+        if len(s) < 2:
+            s.extend([0] * (2 - len(s)))
+        parts.append(f"{ch}{level},{s[0]},{s[1]}")
     return " ".join(parts)
 
 
 def resolve_mode(mode_dict: ModeMap, number: int) -> Tuple[str, List[int]]:
-    """
-    Resolve the mode and slopes that apply at a given level.
-    Falls back to weighted with zero slope when undefined.
-    """
     if not mode_dict:
         return ("w", [0, 0])
-
     first_key = min(mode_dict.keys())
-
     if number < first_key:
-        return ("l", [0, 0])
+        return ("l", [0, 0])  # legacy low marker?
     if number in mode_dict:
-        mode_char, slopes = mode_dict[number]
-        slopes_list: List[int] = list(slopes or [])
-        if len(slopes_list) < 2:
-            slopes_list.extend([0] * (2 - len(slopes_list)))
-        return mode_char, slopes_list[:2]
-
+        ch, slopes = mode_dict[number]
+        s = list(slopes or [])
+        if len(s) < 2:
+            s.extend([0] * (2 - len(s)))
+        return ch, s[:2]
     return ("w", [0, 0])

@@ -1,8 +1,7 @@
 from __future__ import annotations
 import os
-from typing import Dict, List, Mapping, Optional, Literal
+from typing import Any, Dict, List, Mapping, Optional, Literal
 
-from tqdm import tqdm
 
 import enkan.utils.utils as utils
 from enkan.tree.TreeNode import TreeNode
@@ -10,6 +9,7 @@ from enkan.tree.Tree import Tree
 from enkan.tree.Grafting import Grafting
 from enkan.utils.Filters import Filters
 from enkan.utils.Defaults import serialise_mode, ModeMap
+from enkan.utils.progress import Progress, progress
 
 ImageDirConfig = Dict[str, object]
 SpecificImagesConfig = Dict[str, Dict[str, object]]
@@ -54,6 +54,9 @@ class TreeBuilderTXT:
         image_dirs: Mapping[str, ImageDirConfig],
         specific_images: Optional[SpecificImagesConfig],
         mode: Optional[ModeMap] = None,
+        *,
+        tk_root: Any = None,
+        tk_enabled: bool = True,
     ) -> None:
         """
         Build the tree from a mapping of root directories (image_dirs) and an optional
@@ -76,12 +79,14 @@ class TreeBuilderTXT:
         if not image_dirs and not specific_images:
             return
 
-        with tqdm(
+        with progress(
             total=len(image_dirs),
             desc="Building tree",
             leave=True,
             unit="dir",
             dynamic_ncols=True,
+            tk_root=tk_root,
+            tk_enabled=tk_enabled,
         ) as pbar:
             for root, data in image_dirs.items():
                 if not os.path.isdir(root):
@@ -116,7 +121,7 @@ class TreeBuilderTXT:
         self,
         root: str,
         data: ImageDirConfig,
-        pbar: tqdm,
+        pbar: Progress,
     ) -> None:
         """
         Walk a root directory using recursive os.scandir calls.
@@ -203,7 +208,7 @@ class TreeBuilderTXT:
         self,
         path: str,
         data: ImageDirConfig,
-        pbar: tqdm,
+        pbar: Progress,
     ) -> None:
         """
         Flatten a directory tree into one node accumulating all images using os.scandir.

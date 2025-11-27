@@ -7,7 +7,7 @@ from itertools import accumulate
 # ——— Local ———
 from enkan.tree.Tree import Tree
 from enkan.tree.tree_logic import extract_image_paths_and_weights_from_tree
-from enkan.utils.Defaults import Defaults
+from enkan.utils.Defaults import Defaults, set_current_defaults
 from enkan.utils.Filters import Filters
 from enkan.utils.input.MultiSourceBuilder import MultiSourceBuilder
 
@@ -16,6 +16,7 @@ logger = logging.getLogger("enkan.main")
 def main_with_args(args) -> None:
     
     defaults: Defaults = Defaults(args=args)
+    set_current_defaults(defaults)
     filters: Filters = Filters()
     filters.preprocess_ignored_files()
     tree: Tree = None

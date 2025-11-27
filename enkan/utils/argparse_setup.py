@@ -93,6 +93,10 @@ def get_arg_parser() -> argparse.ArgumentParser:
         "--histo", action="store_true", help="Show distribution histogram"
     )
     parser.add_argument(
+        "--quiet", "-q", action="store_true", help="Suppress non-error console output"
+    )
+    parser.set_defaults(quiet=False)
+    parser.add_argument(
         "--debug",
         type=int,
         choices=[1, 2, 3, 4, 5],

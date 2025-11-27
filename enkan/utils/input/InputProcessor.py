@@ -1,12 +1,13 @@
 import os
 from typing import Dict, List, Any, Optional
 import logging
-from tqdm import tqdm
+
 
 from enkan import constants
 from enkan.tree.Tree import Tree
 from enkan.utils import utils
 from enkan.utils.Defaults import Mode
+from enkan.utils.progress import progress
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ class InputProcessor:
             with open(input_filename_full, "r", buffering=65536, encoding="utf-8") as f:
                 total_lines = sum(1 for _ in f)
                 f.seek(0)
-                for line in tqdm(
+                for line in progress(
                     f,
                     desc=f"Parsing {input_filename_full}",
                     leave=True,

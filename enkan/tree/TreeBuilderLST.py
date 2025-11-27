@@ -7,15 +7,14 @@ from typing import Dict, List, Tuple
 
 from enkan.constants import ROOT_NODE_NAME
 from enkan.tree.Tree import Tree
-from tqdm import tqdm
 from enkan.utils.Defaults import serialise_mode
+from enkan.utils.progress import progress
 
 logger = logging.getLogger(__name__)
 
 """
 Builder for .lst list sources.
 """
-
 
 
 class TreeBuilderLST:
@@ -56,7 +55,7 @@ class TreeBuilderLST:
             with open(list_path, "r", encoding="utf-8", buffering=65536) as f:
                 total_lines = sum(1 for _ in f)
                 f.seek(0)
-                for raw in tqdm(
+                for raw in progress(
                     f,
                     desc=f"Parsing {list_path}",
                     leave=True,
@@ -83,7 +82,7 @@ class TreeBuilderLST:
         }
         # total_weight = sum(dir_weights.values()) or len(dir_weights) or 1.0
 
-        with tqdm(
+        with progress(
             total=len(grouped),
             desc=f"Building nodes from {os.path.basename(list_path)}",
             leave=True,
@@ -113,7 +112,9 @@ class TreeBuilderLST:
         if not getattr(self.tree, "lst_has_weights", False):
             self.tree.lst_inferred_mode = None
             self.tree.lst_inferred_lowest = None
-            self.tree.lst_inferred_warning = "List has no explicit weights; mode not harmonised."
+            self.tree.lst_inferred_warning = (
+                "List has no explicit weights; mode not harmonised."
+            )
             self.tree.built_mode = None
             self.tree.built_mode_string = None
             return
@@ -161,10 +162,12 @@ class TreeBuilderLST:
                 self.tree.lst_inferred_lowest = level
                 # Warn when inference is not certain
                 if confidence < 1:
-                    logger.info(f"Assumed balanced at level {level} with confidence {confidence:.0%}.")
+                    logger.info(
+                        f"Assumed balanced at level {level} with confidence {confidence:.0%}."
+                    )
                 self.tree.lst_inferred_warning = None
                 return
-            
+
         self.tree.lst_inferred_mode = None
         self.tree.lst_inferred_lowest = None
         self.tree.lst_inferred_warning = "Could not infer a balanced rung."

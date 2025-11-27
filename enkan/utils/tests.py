@@ -4,12 +4,13 @@ import time
 import logging
 from functools import wraps
 from collections import defaultdict
-from tqdm import tqdm
 
 from enkan.constants import TOTAL_WEIGHT
 from enkan.utils.Defaults import resolve_mode
+from enkan.utils.progress import progress
 from enkan.utils.utils import weighted_choice
 from enkan.tree.TreeNode import TreeNode
+
 
 logger: logging.Logger = logging.getLogger("enkan.tests")
 
@@ -64,11 +65,9 @@ def print_tree(
         print_tree(defaults, child, indent + " + ", current_depth + 1, max_depth)
 
 
-def test_distribution(
-    image_nodes, cum_weights, iterations, testdepth, histo, defaults
-):
+def test_distribution(image_nodes, cum_weights, iterations, testdepth, histo, defaults):
     hit_counts = defaultdict(int)
-    for _ in tqdm(range(iterations), desc="Iterating tests"):
+    for _ in progress(range(iterations), desc="Iterating tests"):
         if defaults.is_random:
             image_path = random.choice(image_nodes)
         else:

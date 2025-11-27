@@ -4,14 +4,19 @@ from datetime import datetime
 from typing import Sequence
 from enkan.tree.Tree import Tree
 
+
 logger = logging.getLogger(__name__)
+
 
 def load_tree_if_current(filename: str) -> Tree | None:
     """
     Attempt to load a pickled Tree; return None if version missing/outdated.
     """
-    from tqdm import tqdm
-    with tqdm(total=1, desc=f"Loading {os.path.basename(filename)}", leave=True) as pbar:
+    from enkan.utils.progress import progress
+
+    with progress(
+        total=1, desc=f"Loading {os.path.basename(filename)}", leave=True
+    ) as pbar:
         try:
             tree = load_tree_from_file(filename)
             pbar.update(1)
@@ -33,7 +38,7 @@ def load_tree_if_current(filename: str) -> Tree | None:
         )
         return None
     return tree
-    
+
 
 def write_tree_to_file(tree, output_path: str | os.PathLike[str]) -> None:
     """
@@ -44,6 +49,7 @@ def write_tree_to_file(tree, output_path: str | os.PathLike[str]) -> None:
         output_path: Destination file path.
     """
     import pickle
+
     with open(output_path, "wb") as f:
         pickle.dump(tree, f, protocol=pickle.HIGHEST_PROTOCOL)
 
@@ -59,9 +65,10 @@ def load_tree_from_file(input_path: str | os.PathLike[str]):
         Unpickled object (expected Tree).
     """
     import pickle
+
     with open(input_path, "rb") as f:
         return pickle.load(f)
-    
+
 
 def write_image_list(
     all_images: Sequence[str],

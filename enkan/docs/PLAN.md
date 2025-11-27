@@ -22,7 +22,6 @@
 
 ### Open questions
 
-- Finalise .lst semantics: unweighted lists rely on global mode; weighted lists lose proportions on global recalc—confirm acceptability.
 - Warnings: nested/stale inputs now bubble up and are deduped; still need structured metadata and optional escalation (deferred).
 - Consider quiet/leave behaviour for tqdm (TXT/LST) once CLI quiet flag returns.
 

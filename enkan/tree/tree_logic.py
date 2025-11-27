@@ -1,7 +1,7 @@
 from __future__ import annotations
 import logging
 from itertools import accumulate
-from typing import Callable, Literal, Mapping, Optional, Sequence, Tuple, List
+from typing import Any, Callable, Literal, Mapping, Optional, Sequence, Tuple, List
 
 from .Tree import Tree
 from .TreeBuilderTXT import TreeBuilderTXT
@@ -25,6 +25,8 @@ def build_tree(
     *,
     kind: str | None = None,
     list_path: str | None = None,
+    tk_root: Any = None,
+    tk_enabled: bool = True,
 ) -> Tree:
     """
     Dispatch tree construction by source kind.
@@ -37,7 +39,13 @@ def build_tree(
     match source_kind:
         case "txt":
             builder = TreeBuilderTXT(tree)
-            builder.build_tree(image_dirs or {}, specific_images, mode)
+            builder.build_tree(
+                image_dirs or {},
+                specific_images,
+                mode,
+                tk_root=tk_root,
+                tk_enabled=tk_enabled,
+            )
         case "lst":
             if not list_path:
                 raise ValueError("list_path is required when building from a .lst file.")
