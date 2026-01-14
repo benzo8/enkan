@@ -35,6 +35,11 @@ def main_with_args(args) -> None:
     if merge_warnings:
         for msg in merge_warnings:
             logger.warning(msg)
+    if tree is None:
+        logger.error(
+            "No tree could be built from the provided inputs; check that sources exist."
+        )
+        return
 
     # Print tree if requested
     if args.printtree:

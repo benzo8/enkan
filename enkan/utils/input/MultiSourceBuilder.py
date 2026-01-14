@@ -63,12 +63,24 @@ class MultiSourceBuilder:
             match kind:
                 case SourceKind.TREE:
                     tree = load_tree_if_current(entry_path_full)
-                    if not tree:
+                    if tree:
+                        logger.info("Loaded tree source '%s'.", entry_path_full)
+                    else:
                         msg = f"Skipping stale or unreadable tree '{entry_path_full}'."
                         logger.warning(msg)
                         builder_warnings.append(msg)
-                        continue
-                    logger.info("Loaded tree source '%s'.", entry_path_full)
+                        fallback_txt = os.path.splitext(entry_path_full)[0] + ".txt"
+                        if os.path.isfile(fallback_txt):
+                            pending.insert(idx + 1, fallback_txt)
+                            logger.info(
+                                "Queued txt fallback '%s' for outdated tree '%s'.",
+                                fallback_txt,
+                                entry_path_full,
+                            )
+                        else:
+                            msg = f"No txt fallback found for '{entry_path_full}'."
+                            logger.warning(msg)
+                            builder_warnings.append(msg)                    
 
                 case SourceKind.LST:
                     logger.info("Rebuilding tree from list '%s'.", entry_path_full)

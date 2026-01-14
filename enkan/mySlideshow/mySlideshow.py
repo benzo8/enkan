@@ -826,7 +826,7 @@ class ImageSlideshow:
         self.parent_mode = True
         self.traverse_directory(parent_path, self.navigation_node)
 
-    def step_backwards(self) -> None:
+    def step_backwards(self, event=None) -> None:
         if self.parentFolderStack.is_empty():
             logger.warning("Cannot step back - Stack is empty.")
             return
