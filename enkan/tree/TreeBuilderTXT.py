@@ -396,6 +396,8 @@ class TreeBuilderTXT:
             self.tree.virtual_image_lookup[img_path] = self.tree.path_lookup[node_name]
 
             # Grafting after node is in place
-            graft_level = data.get("graft_level") or level
+            graft_level = data.get("graft_level")
+            if graft_level is None:
+                graft_level = level
             group = data.get("group")
             self.grafting.handle_grafting(node_name, graft_level, group)

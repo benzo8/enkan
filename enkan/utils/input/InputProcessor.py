@@ -263,8 +263,17 @@ class InputProcessor:
 
         # Calculate an effective graft level when harmonising modes across inputs
         def _effective_graft_level(path_str: str) -> int | None:
-            base_level = state["graft_level"]
-            if base_level is None:
+            group_config = (
+                self.defaults.groups.get(state["group"]) if state["group"] else None
+            )
+            group_graft_level = (
+                group_config.get("graft_level") if group_config else None
+            )
+            if state["graft_level"] is not None:
+                base_level = state["graft_level"]
+            elif group_graft_level is not None:
+                base_level = group_graft_level
+            else:
                 parts = [p for p in os.path.normpath(path_str).split(os.path.sep) if p]
                 base_level = len(parts)
             return base_level + graft_offset if graft_offset else base_level
