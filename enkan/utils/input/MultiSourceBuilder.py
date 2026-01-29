@@ -66,6 +66,7 @@ class MultiSourceBuilder:
                     if tree:
                         logger.info("Loaded tree source '%s'.", entry_path_full)
                     else:
+                        # Try to fall back to txt if tree is stale/unreadable
                         msg = f"Skipping stale or unreadable tree '{entry_path_full}'."
                         logger.warning(msg)
                         builder_warnings.append(msg)
@@ -106,6 +107,7 @@ class MultiSourceBuilder:
                         for offset, nested_path in enumerate(nested_entries, start=1):
                             pending.insert(idx + offset, nested_path)
 
+            # Try to infer mode from loaded tree if not from txt
             if tree:
                 base_source, mode_info = self._build_loaded_source(
                     entry_path_full, kind, len(sources), tree, graft_offset

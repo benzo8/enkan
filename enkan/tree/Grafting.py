@@ -37,7 +37,7 @@ class Grafting:
         # Resolve group graft level override
         group_config = t.defaults.groups.get(group) if group else None
         group_graft_level = group_config.get("graft_level") if group_config else None
-        graft_level = graft_level or group_graft_level
+        graft_level = group_graft_level if group_graft_level is not None else graft_level
         if not graft_level:
             return
 
