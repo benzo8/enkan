@@ -141,6 +141,20 @@ class MultiSourceBuilder:
         if len(sources) == 1:
             # builder_warnings already includes per-source warnings
             single_warnings = list(dict.fromkeys(builder_warnings))
+            # Apply target mode for single-source builds so weights/mode labels align.
+            if target_mode:
+                self.defaults.set_global_defaults(mode=target_mode)
+                try:
+                    apply_mode_and_recalculate(
+                        sources[0].tree,
+                        self.defaults,
+                        ignore_user_proportion=False,
+                    )
+                except ValueError as exc:
+                    msg = str(exc)
+                    single_warnings.append(msg)
+                    logger.warning(msg)
+                    raise
             return sources[0].tree, single_warnings
 
         # Stage 2: decide target mode and lowest rung

@@ -62,6 +62,14 @@ def build_tree(
     return tree
 
 
+def clear_weights(tree: Tree) -> None:
+    """
+    Clear all cached node weights so subsequent recalculation doesn't show stale values.
+    """
+    for node in tree.node_lookup.values():
+        node.weight = None
+
+
 def calculate_weights(tree: Tree, ignore_user_proportion: bool = False) -> None:
     """
     Calculates and assigns weights to all nodes in the tree based on the current mode and slope settings.
@@ -291,6 +299,7 @@ def apply_mode_and_recalculate(
     """
     # Ensure the tree sees the latest defaults (mode may have just changed)
     tree.defaults = defaults
+    clear_weights(tree)
     calculate_weights(tree, ignore_user_proportion=ignore_user_proportion)
     images, weights = extract_image_paths_and_weights_from_tree(tree)
     if not images:

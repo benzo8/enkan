@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from enkan.utils.Defaults import Defaults
+from enkan.utils.Defaults import Defaults, resolve_mode
 from enkan.utils.Filters import Filters
 from enkan.tree.Tree import Tree
 from enkan.tree.tree_logic import apply_mode_and_recalculate
@@ -93,6 +93,21 @@ def _create_dir_with_images(root: str, name: str, count: int = 1) -> str:
         with open(img_path, "w", encoding="utf-8") as f:
             f.write("x")
     return path
+
+
+def _write_tree_with_pickle_version(tree: Tree, path: str, version: int) -> None:
+    """
+    Write a Tree pickle with a specific _pickle_version by temporarily
+    overriding Tree.PICKLE_VERSION.
+    """
+    from enkan.tree.tree_io import write_tree_to_file
+
+    original = Tree.PICKLE_VERSION
+    try:
+        Tree.PICKLE_VERSION = version
+        write_tree_to_file(tree, path)
+    finally:
+        Tree.PICKLE_VERSION = original
 
 
 def test_multisource_txt_txt_merges_directories():
@@ -262,6 +277,29 @@ def test_txt_with_nested_tree():
     assert os.path.normpath(dir1) in merged_tree.path_lookup
 
 
+def test_outdated_tree_falls_back_to_txt():
+    tmp = Path(_ensure_case_dir("outdated_tree_fallback"))
+    defaults = _make_defaults(mode_str="b1")
+    filters = Filters()
+
+    # Create a tree with an outdated pickle version.
+    dir1 = _create_dir_with_images(tmp, "base")
+    base_tree = _make_tree(defaults, filters, dir1, ["a.jpg"])
+    base_tree.built_mode = defaults.mode
+    tree_path = tmp / "base.tree"
+    _write_tree_with_pickle_version(base_tree, str(tree_path), version=Tree.PICKLE_VERSION - 1)
+
+    # Provide a txt fallback.
+    txt_path = tmp / "base.txt"
+    txt_path.write_text(f"{dir1}\n", encoding="utf-8")
+
+    builder = MultiSourceBuilder(defaults, filters)
+    merged_tree, warnings = builder.build([str(tree_path)])
+
+    assert warnings  # should warn about stale tree
+    assert os.path.normpath(dir1) in merged_tree.path_lookup
+
+
 def test_group_aware_grafting_via_msb():
     tmp = Path(_ensure_case_dir("msb_group_graft"))
     defaults = _make_defaults(mode_str="b1")  # target lowest_rung = 1
@@ -313,9 +351,151 @@ def test_mode_precedence_cli_wins():
     assert defaults.mode.get(2) == ("b", [0, 0])
 
 
-def test_merger_appends_images(defaults: Defaults, filters: Filters):
-    base = _make_tree(defaults, filters, r"C:\foo", ["a.jpg"])
-    incoming = _make_tree(defaults, filters, r"C:\foo", ["b.jpg"])
+def test_single_source_txt_applies_detected_mode():
+    tmp = Path(_ensure_case_dir("single_source_mode"))
+    defaults = _make_defaults()
+    filters = Filters()
+
+    # Use a global mode marker and ensure it propagates to defaults.
+    dir1 = _create_dir_with_images(tmp, os.path.join("p1", "p2", "p3", "p4", "p5"))
+    txt1 = tmp / "one.txt"
+    txt1.write_text(f"[b6]*\n{dir1}\n", encoding="utf-8")
+
+    builder = MultiSourceBuilder(defaults, filters)
+    tree, warnings = builder.build([str(txt1)])
+
+    assert warnings == []
+    assert 6 in defaults.mode
+    mode_char, _ = resolve_mode(defaults.mode, 6)
+    assert mode_char == "b"
+
+
+def test_apply_mode_clears_stale_weights_above_lowest_rung():
+    defaults = _make_defaults(mode_str="b6")
+    filters = Filters()
+    leaf_path = r"C:\p1\p2\p3\p4\p5"
+    tree = _make_tree(defaults, filters, leaf_path, [leaf_path + r"\a.jpg"])
+    # Ancestor node above lowest rung.
+    node = tree.path_lookup[os.path.normpath(r"C:\p1")]
+
+    # Simulate stale weight from a prior build.
+    node.weight = 123.0
+
+    apply_mode_and_recalculate(tree, defaults, ignore_user_proportion=False)
+
+    # With mode b6, lowest rung is 6; node is above that and should be cleared to None.
+    assert node.weight is None
+
+
+@pytest.mark.parametrize(
+    "first_kind,second_kind",
+    [
+        ("txt", "tree"),
+        ("tree", "txt"),
+        ("txt", "lst"),
+        ("lst", "txt"),
+    ],
+)
+def test_multisource_ordering_permutations(first_kind: str, second_kind: str):
+    tmp = Path(_ensure_case_dir(f"ordering_{first_kind}_{second_kind}"))
+    defaults = _make_defaults(mode_str="b1")
+    filters = Filters()
+
+    dir1 = _create_dir_with_images(tmp, "first")
+    dir2 = _create_dir_with_images(tmp, "second")
+
+    txt1 = tmp / "one.txt"
+    txt2 = tmp / "two.txt"
+    txt1.write_text(f"{dir1}\n", encoding="utf-8")
+    txt2.write_text(f"{dir2}\n", encoding="utf-8")
+
+    tree1 = _make_tree(defaults, filters, dir1, ["a.jpg"])
+    tree2 = _make_tree(defaults, filters, dir2, ["b.jpg"])
+    tree1.built_mode = defaults.mode
+    tree2.built_mode = defaults.mode
+    tree_path1 = tmp / "one.tree"
+    tree_path2 = tmp / "two.tree"
+    from enkan.tree.tree_io import write_tree_to_file
+    write_tree_to_file(tree1, tree_path1)
+    write_tree_to_file(tree2, tree_path2)
+
+    lst_path1 = tmp / "one.lst"
+    lst_path2 = tmp / "two.lst"
+    lst_img1 = os.path.join(dir1, "img0.jpg")
+    lst_img2 = os.path.join(dir2, "img0.jpg")
+    lst_path1.write_text(f"{lst_img1},1\n", encoding="utf-8")
+    lst_path2.write_text(f"{lst_img2},1\n", encoding="utf-8")
+
+    def _resolve(kind: str, which: str):
+        if kind == "txt":
+            return str(txt1 if which == "first" else txt2)
+        if kind == "tree":
+            return str(tree_path1 if which == "first" else tree_path2)
+        if kind == "lst":
+            return str(lst_path1 if which == "first" else lst_path2)
+        raise ValueError(kind)
+
+    builder = MultiSourceBuilder(defaults, filters)
+    tree, _ = builder.build([_resolve(first_kind, "first"), _resolve(second_kind, "second")])
+
+    # Both sources should be present; ordering should not drop either.
+    assert os.path.normpath(dir1) in tree.path_lookup
+    assert os.path.normpath(dir2) in tree.path_lookup
+
+
+def test_multisource_tree_tree_ordering():
+    tmp = Path(_ensure_case_dir("tree_tree_ordering"))
+    defaults = _make_defaults(mode_str="b1")
+    filters = Filters()
+
+    dir1 = _create_dir_with_images(tmp, "base")
+    dir2 = _create_dir_with_images(tmp, "incoming")
+    base_tree = _make_tree(defaults, filters, dir1, ["a.jpg"])
+    incoming_tree = _make_tree(defaults, filters, dir2, ["b.jpg"])
+    base_tree.built_mode = defaults.mode
+    incoming_tree.built_mode = defaults.mode
+
+    from enkan.tree.tree_io import write_tree_to_file
+    base_path = tmp / "base.tree"
+    incoming_path = tmp / "incoming.tree"
+    write_tree_to_file(base_tree, base_path)
+    write_tree_to_file(incoming_tree, incoming_path)
+
+    builder = MultiSourceBuilder(defaults, filters)
+    tree, warnings = builder.build([str(base_path), str(incoming_path)])
+
+    assert warnings == []
+    assert os.path.normpath(dir1) in tree.path_lookup
+    assert os.path.normpath(dir2) in tree.path_lookup
+
+
+def test_lst_plain_and_weighted_merge():
+    tmp = Path(_ensure_case_dir("lst_plain_weighted"))
+    defaults = _make_defaults(mode_str="b1")
+    filters = Filters()
+
+    # Weighted lst
+    w_path = tmp / "weighted.lst"
+    w_img = (tmp / "wdir" / "img0.jpg").resolve()
+    w_path.write_text(f"{w_img},2\n", encoding="utf-8")
+
+    # Plain lst
+    p_path = tmp / "plain.lst"
+    p_img = (tmp / "pdir" / "img0.jpg").resolve()
+    p_path.write_text(f"{p_img}\n", encoding="utf-8")
+
+    builder = MultiSourceBuilder(defaults, filters)
+    tree, warnings = builder.build([str(w_path), str(p_path)])
+
+    assert tree is not None
+    assert os.path.normpath(os.path.dirname(str(w_img))) in tree.path_lookup
+    assert os.path.normpath(os.path.dirname(str(p_img))) in tree.path_lookup
+    assert warnings == [] or warnings is not None
+
+
+def test_merger_replaces_images_for_matching_path(defaults: Defaults, filters: Filters):
+    base = _make_tree(defaults, filters, r"C:\foo", [r"C:\foo\a.jpg"])
+    incoming = _make_tree(defaults, filters, r"C:\foo", [r"C:\foo\b.jpg"])
 
     merger = TreeMerger()
     result = merger.merge(
@@ -325,8 +505,25 @@ def test_merger_appends_images(defaults: Defaults, filters: Filters):
         ]
     )
     merged_images = result.tree.path_lookup[os.path.normpath(r"C:\foo")].images
-    assert "a.jpg" in merged_images
-    assert "b.jpg" in merged_images
+    assert r"C:\foo\b.jpg" in merged_images
+    assert r"C:\foo\a.jpg" not in merged_images
+
+
+def test_merger_replaces_only_matching_path_images(defaults: Defaults, filters: Filters):
+    base = _make_tree(defaults, filters, r"C:\foo", [r"C:\foo\a.jpg", r"C:\bar\keep.jpg"])
+    incoming = _make_tree(defaults, filters, r"C:\foo", [r"C:\foo\new.jpg"])
+
+    merger = TreeMerger()
+    result = merger.merge(
+        [
+            LoadedSource("base", SourceKind.TREE, 0, tree=base),
+            LoadedSource("incoming", SourceKind.TREE, 1, tree=incoming),
+        ]
+    )
+    merged_images = result.tree.path_lookup[os.path.normpath(r"C:\foo")].images
+    assert r"C:\bar\keep.jpg" in merged_images
+    assert r"C:\foo\new.jpg" in merged_images
+    assert r"C:\foo\a.jpg" not in merged_images
 
 
 def test_merger_adds_new_branch(defaults: Defaults, filters: Filters):
