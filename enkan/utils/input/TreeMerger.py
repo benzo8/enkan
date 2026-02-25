@@ -76,7 +76,7 @@ class TreeMerger:
                 continue
             existing = self._find_matching_node(base, node)
             if existing:
-                if self._merge_node(existing, node, base):
+                if self._merge_node(existing, node, base, graft_offset):
                     updated += 1
             else:
                 self._add_node(base, node, graft_offset)
@@ -92,7 +92,9 @@ class TreeMerger:
             yield current
             stack.extend(current.children)
 
-    def _merge_node(self, target: TreeNode, incoming: TreeNode, base: Tree) -> bool:
+    def _merge_node(
+        self, target: TreeNode, incoming: TreeNode, base: Tree, graft_offset: int
+    ) -> bool:
         """
         Apply merge semantics:
         - Preserve target placement/name.
@@ -101,6 +103,7 @@ class TreeMerger:
         """
         changed = False
         added = removed = 0
+        had_any_images_before = bool(target.images)
         if incoming.images:
             orig_from_path = [
                 img for img in target.images if self._is_from_path(img, incoming.path)
@@ -112,6 +115,23 @@ class TreeMerger:
         if self._merge_metadata(target, incoming):
             changed = True
         if self._merge_virtual_images(target, incoming, base):
+            changed = True
+        # Edge case: existing structural node gains first images from incoming source.
+        # Apply source harmonisation offset just like _add_node would do for a new node.
+        if graft_offset and incoming.images and not had_any_images_before and target.images:
+            target_level = target.level + graft_offset
+            self._raise_if_images_below_lowest_rung(
+                node_path=target.path,
+                target_level=target_level,
+                has_images=bool(target.images),
+                include_images_phrase=False,
+            )
+            from enkan.tree.Grafting import Grafting
+
+            grafter = Grafting(base)
+            grafter.handle_grafting(
+                root=target.path, graft_level=target_level, group=target.group
+            )
             changed = True
         if (added or removed) and changed:
             logger.debug("Merged node '%s'", target.path)
@@ -144,18 +164,48 @@ class TreeMerger:
         # If grafting is needed, adjust leaf placement via Grafting
         if graft_offset and new_node.images:
             target_level = new_node.level + graft_offset
-            if self.target_lowest_rung is not None and target_level < self.target_lowest_rung:
-                msg = (
-                    f"Grafting offset would place node '{incoming.path}' below lowest rung "
-                    f"{self.target_lowest_rung}."
-                )
-                self.warnings.append(msg)
-                raise ValueError(msg)
+            self._raise_if_images_below_lowest_rung(
+                node_path=incoming.path,
+                target_level=target_level,
+                has_images=bool(new_node.images),
+                include_images_phrase=False,
+            )
             from enkan.tree.Grafting import Grafting
             grafter = Grafting(base)
             grafter.handle_grafting(root=new_node.path, graft_level=target_level, group=new_node.group)
 
     # ---------------------------- Helpers ----------------------------
+
+    def _raise_if_images_below_lowest_rung(
+        self,
+        *,
+        node_path: str,
+        target_level: int,
+        has_images: bool,
+        include_images_phrase: bool = True,
+    ) -> None:
+        """
+        Reject harmonisation/grafting moves that would place image-carrying nodes
+        below the configured lowest rung. Structural-only nodes are allowed.
+        """
+        if self.target_lowest_rung is None:
+            return
+        if target_level >= self.target_lowest_rung:
+            return
+        if not has_images:
+            return
+        if include_images_phrase:
+            msg = (
+                f"Grafting offset would place images for node '{node_path}' below lowest rung "
+                f"{self.target_lowest_rung}."
+            )
+        else:
+            msg = (
+                f"Grafting offset would place node '{node_path}' below lowest rung "
+                f"{self.target_lowest_rung}."
+            )
+        self.warnings.append(msg)
+        raise ValueError(msg)
 
     def _find_matching_node(self, base: Tree, incoming: TreeNode) -> Optional[TreeNode]:
         """
@@ -246,15 +296,9 @@ class TreeMerger:
             if node.path == ROOT_NODE_NAME:
                 continue
             new_level = node.level + offset
-            if self.target_lowest_rung is not None and new_level < self.target_lowest_rung:
-                if node.images:
-                    msg = (
-                        f"Grafting offset would place images for node '{node.path}' below lowest rung "
-                        f"{self.target_lowest_rung}."
-                    )
-                    self.warnings.append(msg)
-                    raise ValueError(msg)
-                # allow structural nodes below rung if they carry no images
+            self._raise_if_images_below_lowest_rung(
+                node_path=node.path, target_level=new_level, has_images=bool(node.images)
+            )
             new_path = tree.set_path_to_level(node.path, new_level)
             new_name = shifted.convert_path_to_tree_format(new_path)
             parent_name = os.path.dirname(new_name)

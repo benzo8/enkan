@@ -10,6 +10,8 @@ from enkan.utils.Defaults import Defaults, resolve_mode
 from enkan.utils.Filters import Filters
 from enkan.tree.Tree import Tree
 from enkan.tree.tree_logic import apply_mode_and_recalculate
+from enkan.tree.tree_logic import calculate_weights
+from enkan.tree.tree_logic import extract_image_paths_and_weights_from_tree
 from enkan.utils.input.input_models import SourceKind, LoadedSource
 from enkan.utils.input.TreeMerger import TreeMerger
 from enkan.utils.input.MultiSourceBuilder import MultiSourceBuilder
@@ -387,6 +389,37 @@ def test_apply_mode_clears_stale_weights_above_lowest_rung():
     assert node.weight is None
 
 
+def test_extract_raises_for_unweighted_image_node_above_lowest_rung():
+    defaults = _make_defaults(mode_str="b6")
+    filters = Filters()
+    tree = Tree(defaults, filters)
+
+    shallow = r"C:\p1"
+    deep = r"C:\a\b\c\d\e"
+    for path, image in ((shallow, "s.jpg"), (deep, "d.jpg")):
+        try:
+            tree.ensure_parent_exists(os.path.dirname(path))
+        except ValueError:
+            pass
+        tree.create_node(
+            path,
+            {
+                "weight_modifier": 100,
+                "is_percentage": True,
+                "proportion": 100,
+                "mode_modifier": None,
+                "images": [os.path.join(path, image)],
+            },
+        )
+
+    # Mode b6 gives a starting node at level 6 (deep), leaving the shallow image node unweighted.
+    # Extraction should fail with a targeted diagnostic instead of crashing on None division.
+    calculate_weights(tree, ignore_user_proportion=False)
+
+    with pytest.raises(ValueError, match="without calculated weight"):
+        extract_image_paths_and_weights_from_tree(tree)
+
+
 @pytest.mark.parametrize(
     "first_kind,second_kind",
     [
@@ -595,6 +628,32 @@ def test_merger_graft_offset_below_lowest_rung_raises(defaults: Defaults, filter
                 LoadedSource("incoming", SourceKind.TREE, 1, tree=incoming, graft_offset=-2),
             ]
         )
+
+
+def test_merger_existing_structural_node_with_incoming_images_applies_graft_offset(
+    defaults: Defaults, filters: Filters
+):
+    # Base tree creates C:\foo\bar as structural-only via deeper child.
+    base = _make_tree(defaults, filters, r"C:\foo\bar\leaf", ["base.jpg"])
+    base_structural = base.path_lookup[os.path.normpath(r"C:\foo\bar")]
+    assert base_structural.images == []
+    base_level = base_structural.level
+
+    # Incoming tree adds images directly to that existing structural path.
+    incoming = _make_tree(defaults, filters, r"C:\foo\bar", ["incoming.jpg"])
+
+    merger = TreeMerger(target_lowest_rung=base_level + 1)
+    result = merger.merge(
+        [
+            LoadedSource("base", SourceKind.TREE, 0, tree=base),
+            LoadedSource("incoming", SourceKind.TREE, 1, tree=incoming, graft_offset=1),
+        ]
+    )
+
+    merged_node = result.tree.path_lookup[os.path.normpath(r"C:\foo\bar")]
+    assert merged_node is not None
+    assert merged_node.images
+    assert merged_node.level == base_level + 1
 
 
 def test_apply_mode_and_recalculate_respects_user_proportion(defaults: Defaults, filters: Filters):

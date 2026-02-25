@@ -266,6 +266,7 @@ def extract_image_paths_and_weights_from_tree(
     """
     all_images: List[str] = []
     weights: List[float] = []
+    unweighted_image_nodes: List[TreeNode] = []
 
     # Helper function to recursively gather data
     def traverse_node(node: Optional[TreeNode]) -> None:
@@ -273,6 +274,11 @@ def extract_image_paths_and_weights_from_tree(
             return
         num_images = len(node.images)
         if num_images:
+            if node.weight is None:
+                unweighted_image_nodes.append(node)
+                for child in node.children:
+                    traverse_node(child)
+                return
             normalised_weight = node.weight / (
                 num_images if node.is_percentage else node.weight_modifier
             )
@@ -286,6 +292,19 @@ def extract_image_paths_and_weights_from_tree(
     if start_node is None:
         start_node = tree.root
     traverse_node(start_node)
+
+    if unweighted_image_nodes:
+        lowest_rung = min(tree.defaults.mode.keys()) if tree.defaults.mode else None
+        sample = ", ".join(
+            f"{n.path} (level {n.level}, images {len(n.images)})"
+            for n in unweighted_image_nodes[:3]
+        )
+        raise ValueError(
+            "Found image-bearing node(s) without calculated weight "
+            f"(lowest rung {lowest_rung}). "
+            "This usually means images exist above the lowest rung after merge/harmonisation. "
+            f"Examples: {sample}"
+        )
 
     return all_images, weights
 
