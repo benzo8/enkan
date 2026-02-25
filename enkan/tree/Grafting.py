@@ -38,20 +38,24 @@ class Grafting:
         group_config = t.defaults.groups.get(group) if group else None
         group_graft_level = group_config.get("graft_level") if group_config else None
         graft_level = graft_level if graft_level is not None else group_graft_level
-        if not graft_level:
+        if graft_level is None:
             return
 
         current_node: TreeNode | None = t.find_node(root, lookup_dict=t.path_lookup)
         if not current_node:
             logger.debug("Node '%s' not found for grafting. Skipping.", root)
             return
-        current_node_parent: TreeNode | None = current_node.parent
-        if not current_node.group:
-            current_node.group = group
 
         levelled_name: str = t.convert_path_to_tree_format(
             t.set_path_to_level(root, graft_level, group)
         )
+        # Non-group nodes already at the target location do not need re-parenting.
+        if not group and current_node.name == levelled_name:
+            return
+
+        current_node_parent: TreeNode | None = current_node.parent
+        if not current_node.group:
+            current_node.group = group
         parent_name: str = os.path.dirname(levelled_name)
         parent_node: TreeNode = t.ensure_parent_exists(parent_name)
 
