@@ -85,6 +85,16 @@ def calculate_weights(tree: Tree, ignore_user_proportion: bool = False) -> None:
         None. The function updates the 'weight' attribute of each node in-place.
     """
 
+    class _ImageBucket:
+        """
+        Synthetic recipient used to apportion a parent node's own images
+        alongside its real child nodes without double-counting total weight.
+        """
+
+        def __init__(self, image_count: int) -> None:
+            self.image_count = image_count
+            self.proportion: float | None = None
+
     def _process_node(
         node: TreeNode,
         apportioned_weight: float,
@@ -104,14 +114,15 @@ def calculate_weights(tree: Tree, ignore_user_proportion: bool = False) -> None:
         Returns:
             None. The function updates the 'weight' attribute of each node in-place and recurses through the tree.
         """
-        # Apply node's weight_modifier
-        node.weight = (
+        # Effective total weight available at this node after modifier.
+        total_node_weight = (
             apportioned_weight * (node.weight_modifier / 100)
             if node.is_percentage
             else apportioned_weight
         )
 
         if not node.children:
+            node.weight = total_node_weight
             return
 
         mode_modifier = node.mode_modifier or mode_modifier
@@ -120,18 +131,40 @@ def calculate_weights(tree: Tree, ignore_user_proportion: bool = False) -> None:
             tree.defaults.mode | (node.children[0].mode_modifier or {}), child_level
         )
 
-        children: List[TreeNode] = _fill_missing_proportions(
-            node.children,
+        image_bucket: _ImageBucket | None = (
+            _ImageBucket(len(node.images)) if node.images else None
+        )
+        recipients: List[TreeNode | _ImageBucket] = list(node.children)
+        if image_bucket is not None:
+            recipients.append(image_bucket)
+
+        recipients = _fill_missing_proportions(
+            recipients,
             child_mode,
             slope,
             count_fn=(
-                (lambda n: tree.count_branches(n)[1]) if child_mode == "w" else None
+                (
+                    lambda n: (
+                        n.image_count
+                        if isinstance(n, _ImageBucket)
+                        else tree.count_branches(n)[1]
+                    )
+                )
+                if child_mode == "w"
+                else None
             ),
         )
 
-        for child in children:
+        if image_bucket is not None:
+            own_proportion = image_bucket.proportion if image_bucket.proportion is not None else 0
+            node.weight = total_node_weight * (own_proportion / 100)
+        else:
+            # Internal nodes without direct images should not contribute leaf weight directly.
+            node.weight = 0.0
+
+        for child in node.children:
             proportion = child.proportion if child.proportion is not None else 0
-            child_weight = node.weight * (proportion / 100)
+            child_weight = total_node_weight * (proportion / 100)
             _process_node(child, child_weight, mode_modifier)
 
     def _fill_missing_proportions(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import math
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,6 +16,7 @@ from enkan.tree.tree_logic import extract_image_paths_and_weights_from_tree
 from enkan.utils.input.input_models import SourceKind, LoadedSource
 from enkan.utils.input.TreeMerger import TreeMerger
 from enkan.utils.input.MultiSourceBuilder import MultiSourceBuilder
+from enkan.constants import TOTAL_WEIGHT
 
 
 @pytest.fixture
@@ -372,6 +374,30 @@ def test_single_source_txt_applies_detected_mode():
     assert mode_char == "b"
 
 
+def test_txt_entry_proportion_does_not_propagate_to_descendants():
+    tmp = Path(_ensure_case_dir("txt_entry_proportion_scope"))
+    defaults = _make_defaults()
+    filters = Filters()
+
+    root = tmp / "root_a"
+    child = root / "child"
+    child.mkdir(parents=True, exist_ok=True)
+    _ = _create_dir_with_images(str(child), "leaf", count=2)
+
+    txt_path = tmp / "one.txt"
+    txt_path.write_text(f"[b2]*\n{root} [%50]\n", encoding="utf-8")
+
+    builder = MultiSourceBuilder(defaults, filters)
+    tree, warnings = builder.build([str(txt_path)])
+
+    assert warnings == []
+    root_node = tree.path_lookup[os.path.normpath(str(root))]
+    child_node = tree.path_lookup[os.path.normpath(str(child))]
+
+    assert root_node.user_proportion == 50
+    assert child_node.user_proportion is None
+
+
 def test_apply_mode_clears_stale_weights_above_lowest_rung():
     defaults = _make_defaults(mode_str="b6")
     filters = Filters()
@@ -418,6 +444,53 @@ def test_extract_raises_for_unweighted_image_node_above_lowest_rung():
 
     with pytest.raises(ValueError, match="without calculated weight"):
         extract_image_paths_and_weights_from_tree(tree)
+
+
+def test_internal_nodes_with_images_do_not_double_count_total_weight():
+    defaults = _make_defaults(mode_str="b2")
+    filters = Filters()
+    tree = Tree(defaults, filters)
+
+    # Start node at lowest rung.
+    tree.create_node(
+        r"C:\p1",
+        {
+            "weight_modifier": 100,
+            "is_percentage": True,
+            "proportion": 100,
+            "user_proportion": 100,
+            "mode_modifier": None,
+            "images": [],
+        },
+    )
+    # Internal node with own images and a child with images.
+    tree.create_node(
+        r"C:\p1\mixed",
+        {
+            "weight_modifier": 100,
+            "is_percentage": True,
+            "proportion": None,
+            "user_proportion": None,
+            "mode_modifier": None,
+            "images": [r"C:\p1\mixed\a.jpg", r"C:\p1\mixed\b.jpg"],
+        },
+    )
+    tree.create_node(
+        r"C:\p1\mixed\leaf",
+        {
+            "weight_modifier": 100,
+            "is_percentage": True,
+            "proportion": None,
+            "user_proportion": None,
+            "mode_modifier": None,
+            "images": [r"C:\p1\mixed\leaf\c.jpg", r"C:\p1\mixed\leaf\d.jpg"],
+        },
+    )
+
+    calculate_weights(tree, ignore_user_proportion=False)
+    _, weights = extract_image_paths_and_weights_from_tree(tree)
+
+    assert math.isclose(sum(weights), TOTAL_WEIGHT, rel_tol=0, abs_tol=1e-9)
 
 
 @pytest.mark.parametrize(

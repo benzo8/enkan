@@ -165,7 +165,13 @@ class TreeBuilderTXT:
                     pbar.leave = True
                     pbar.update(file_count)
                     pbar.refresh()
-                self.process_path(current_path, files, dirs, data)
+                self.process_path(
+                    current_path,
+                    files,
+                    dirs,
+                    data,
+                    apply_entry_modifiers=(current_path == root),
+                )
 
             if should_descend:
                 for dir_name in dirs:
@@ -180,6 +186,8 @@ class TreeBuilderTXT:
         files: List[str],
         dirs: List[str],
         data: ImageDirConfig,
+        *,
+        apply_entry_modifiers: bool = False,
     ) -> None:
         """
         For a given filesystem path, decide how to add it to the tree depending
@@ -199,10 +207,20 @@ class TreeBuilderTXT:
 
         if dirs:
             # Directory with both subdirs and images – special 'images' branch
-            self.add_images_branch(path, images, data)
+            self.add_images_branch(
+                path,
+                images,
+                data,
+                apply_entry_modifiers=apply_entry_modifiers,
+            )
         else:
             # Terminal (no subdirs) – regular branch
-            self.add_regular_branch(path, images, data)
+            self.add_regular_branch(
+                path,
+                images,
+                data,
+                apply_entry_modifiers=apply_entry_modifiers,
+            )
 
     def add_flat_branch(
         self,
@@ -289,6 +307,8 @@ class TreeBuilderTXT:
         path: str,
         images: List[str],
         data: ImageDirConfig,
+        *,
+        apply_entry_modifiers: bool = False,
     ) -> None:
         """
         Create a synthetic 'images' child node under a directory that also has subdirectories.
@@ -299,10 +319,10 @@ class TreeBuilderTXT:
             {
                 "weight_modifier": 100,
                 "is_percentage": True,
-                "proportion": data.get("proportion", None),
-                "user_proportion": data.get("user_proportion"),
-                "mode_modifier": data.get("mode_modifier"),
-                "group": data.get("group"),
+                "proportion": data.get("proportion", None) if apply_entry_modifiers else None,
+                "user_proportion": data.get("user_proportion") if apply_entry_modifiers else None,
+                "mode_modifier": data.get("mode_modifier") if apply_entry_modifiers else None,
+                "group": data.get("group") if apply_entry_modifiers else None,
                 "images": images,
             },
         )
@@ -312,6 +332,8 @@ class TreeBuilderTXT:
         path: str,
         images: List[str],
         data: ImageDirConfig,
+        *,
+        apply_entry_modifiers: bool = False,
     ) -> None:
         """
         Create/overwrite a normal node that directly holds images.
@@ -322,10 +344,10 @@ class TreeBuilderTXT:
                 node,
                 {
                     "weight_modifier": data.get("weight_modifier", 100),
-                    "proportion": data.get("proportion", None),
-                    "user_proportion": data.get("user_proportion"),
-                    "mode_modifier": data.get("mode_modifier"),
-                    "group": data.get("group"),
+                    "proportion": data.get("proportion", None) if apply_entry_modifiers else None,
+                    "user_proportion": data.get("user_proportion") if apply_entry_modifiers else None,
+                    "mode_modifier": data.get("mode_modifier") if apply_entry_modifiers else None,
+                    "group": data.get("group") if apply_entry_modifiers else None,
                     "images": images,
                 },
             )
@@ -335,10 +357,10 @@ class TreeBuilderTXT:
                 {
                     "weight_modifier": data.get("weight_modifier", 100),
                     "is_percentage": data.get("is_percentage", True),
-                    "proportion": None,
-                    "user_proportion": data.get("user_proportion"),
-                    "mode_modifier": data.get("mode_modifier"),
-                    "group": data.get("group"),
+                    "proportion": data.get("proportion", None) if apply_entry_modifiers else None,
+                    "user_proportion": data.get("user_proportion") if apply_entry_modifiers else None,
+                    "mode_modifier": data.get("mode_modifier") if apply_entry_modifiers else None,
+                    "group": data.get("group") if apply_entry_modifiers else None,
                     "video": data.get("video", None),
                     "images": images,
                 },
