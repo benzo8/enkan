@@ -3,7 +3,6 @@ import os
 import sys
 import random
 import tkinter as tk
-from itertools import accumulate
 import logging
 from typing import Optional
 
@@ -18,6 +17,7 @@ from enkan.tree.TreeNode import TreeNode
 from enkan.utils import utils
 from enkan.utils.Defaults import Defaults, resolve_mode, parse_mode_string
 from enkan.utils.Filters import Filters
+from enkan.utils.SelectionWeights import SelectionWeights
 from enkan.utils.myStack import Stack
 from enkan.plugables.ImageProviders import ImageProviders
 from enkan.tree.tree_logic import (
@@ -44,7 +44,7 @@ class ImageSlideshow:
         root: TreeNode,
         tree: Tree,
         image_paths: list,
-        cum_weights: list,
+        selection_weights: SelectionWeights,
         defaults: Defaults,
         filters: Filters,
         interval: int | float | None = None,
@@ -52,8 +52,8 @@ class ImageSlideshow:
         self.root: TreeNode = root
         self.original_tree: Tree = tree
         self.image_paths: list = image_paths
-        self.cum_weights: list = cum_weights
-        self.original_cum_weights: list = cum_weights
+        self.selection_weights: SelectionWeights = selection_weights.copy()
+        self.original_selection_weights: SelectionWeights = selection_weights.copy()
         self.original_image_paths: list = image_paths
         self.number_of_images: int = len(image_paths)
         self.current_image_index = 0
@@ -109,7 +109,7 @@ class ImageSlideshow:
             self.root.bind(key, self.navigate_image_history)
         for key in ["<Up>", "<Down>"]:
             self.root.bind(key, self.navigate_image_sequential)
-        for key in ["<c>", "<w>", "<l>", "<b>"]:
+        for key in ["<c>", "<w>", "<l>", "<b>", "<d>"]:
             self.root.bind(key, self.select_mode)
 
         self.root.bind("<Control-c>", lambda e: e.widget.event_generate("<<Copy>>"))
@@ -152,7 +152,7 @@ class ImageSlideshow:
         if self.defaults.is_random:
             self.set_provider("random")
         else:
-            self.set_provider("weighted", cum_weights=self.cum_weights)
+            self.set_provider("weighted")
         self.mode, _ = resolve_mode(self.defaults.mode, min(self.defaults.mode.keys()))
 
         self.show_image()
@@ -236,17 +236,35 @@ class ImageSlideshow:
         self.show_image()
         self.reset_auto_advance()
 
-    def update_slide_show(self, image_paths: list, cum_weights: list) -> None:
+    def _provider_kwargs(self) -> dict[str, object]:
+        return self.selection_weights.provider_kwargs()
+
+    def _provider_display_name(self) -> str:
+        provider_name = self.providers.get_current_provider_name()
+        labels = {
+            "random": "RND",
+            "weighted": "WGT",
+            "controlled_random_weighted": "CRW",
+            "sequential": "SEQ",
+            "burst": "BUR",
+        }
+        return labels.get(provider_name, provider_name[0:3].upper())
+
+    def update_slide_show(
+        self,
+        image_paths: list,
+        selection_weights: SelectionWeights,
+    ) -> None:
         """Updates the slideshow with the new set of images and weights."""
         self.image_paths = image_paths
-        self.cum_weights = cum_weights
+        self.selection_weights = selection_weights.copy()
         self.number_of_images = len(image_paths)
         self.current_image_index: int = self.safe_current_image_index(image_paths)
         self.manager: ImageCacheManager = self.providers.reset_manager(
             image_paths=image_paths,
             provider_name=self.providers.get_current_provider_name(),
-            cum_weights=self.cum_weights,
             index=self.current_image_index,
+            **self._provider_kwargs(),
         )
         self.show_image(self.image_paths[self.current_image_index])
 
@@ -271,6 +289,10 @@ class ImageSlideshow:
     def set_provider(self, provider_name: str, **provider_kwargs) -> None:
         # Easily switch to any provider by name/key
         self.current_provider: str = provider_name
+        provider_kwargs = {
+            **self._provider_kwargs(),
+            **provider_kwargs,
+        }
         provider_kwargs.setdefault("index", self.current_image_index)
         self.manager: ImageCacheManager = self.providers.select_manager(
             image_paths=self.image_paths,
@@ -326,8 +348,10 @@ class ImageSlideshow:
             )
         else:
             logger.debug("No valid directory found.")
-        new_cum_weights: list[float] = list(accumulate(new_weights))
-        self.update_slide_show(new_image_paths, new_cum_weights)
+        self.update_slide_show(
+            new_image_paths,
+            SelectionWeights.from_weights(new_weights),
+        )
 
     # --- Dynamic Mode Methods ---
 
@@ -349,12 +373,18 @@ class ImageSlideshow:
         )
 
     def _recalculate_slideshow(self, ignore_user: bool) -> None:
-        images, _, cum_weights = apply_mode_and_recalculate(
+        images, weights, cum_weights = apply_mode_and_recalculate(
             self.original_tree, self.defaults, ignore_user_proportion=ignore_user
         )
         self.original_image_paths = images[:]
-        self.original_cum_weights = cum_weights[:]
-        self.update_slide_show(images, cum_weights)
+        self.original_selection_weights = SelectionWeights.from_parts(
+            weights,
+            cum_weights,
+        )
+        self.update_slide_show(
+            images,
+            SelectionWeights.from_parts(weights, cum_weights),
+        )
         mode_dict = self.defaults.mode or {}
         if mode_dict:
             lowest = min(mode_dict.keys())
@@ -404,12 +434,18 @@ class ImageSlideshow:
         )
 
     def _recalculate_slideshow(self, ignore_user: bool) -> None:
-        images, _, cum_weights = apply_mode_and_recalculate(
+        images, weights, cum_weights = apply_mode_and_recalculate(
             self.original_tree, self.defaults, ignore_user_proportion=ignore_user
         )
         self.original_image_paths = images[:]
-        self.original_cum_weights = cum_weights[:]
-        self.update_slide_show(images, cum_weights)
+        self.original_selection_weights = SelectionWeights.from_parts(
+            weights,
+            cum_weights,
+        )
+        self.update_slide_show(
+            images,
+            SelectionWeights.from_parts(weights, cum_weights),
+        )
         mode_dict = self.defaults.mode or {}
         if mode_dict:
             lowest = min(mode_dict.keys())
@@ -548,10 +584,11 @@ class ImageSlideshow:
                     os.remove(self.current_image_path)
                     index = self.image_paths.index(self.current_image_path)
                     self.image_paths.pop(index)
-                    self.cum_weights.pop(index)
+                    self.selection_weights.remove_at(index)
                     self.manager.history_manager.remove(self.current_image_path)
                     self.update_slide_show(
-                        image_paths=self.image_paths, cum_weights=self.cum_weights
+                        image_paths=self.image_paths,
+                        selection_weights=self.selection_weights,
                     )
                 except Exception as e:
                     self._show_error("Error", f"Could not delete the image: {e}")
@@ -639,7 +676,11 @@ class ImageSlideshow:
         match self.navigation_mode:
             case "folder":
                 folder: str = os.path.dirname(self.current_image_path)
-                self.subFolderStack.push(folder, self.image_paths, self.cum_weights)
+                self.subFolderStack.push(
+                    folder,
+                    self.image_paths[:],
+                    self.selection_weights.copy(),
+                )
                 temp_image_paths: list[str] = utils.images_from_path(
                     os.path.dirname(self.current_image_path),
                     tree=self.original_tree,
@@ -653,7 +694,11 @@ class ImageSlideshow:
                         "subfolder_mode_on: No valid node found for current image."
                     )
                     return
-                self.subFolderStack.push(node.name, self.image_paths, self.cum_weights)
+                self.subFolderStack.push(
+                    node.name,
+                    self.image_paths[:],
+                    self.selection_weights.copy(),
+                )
                 temp_image_paths, temp_weights = (
                     extract_image_paths_and_weights_from_tree(
                         tree=self.original_tree, start_node=node
@@ -661,17 +706,18 @@ class ImageSlideshow:
                 )
                 self.subfolder_mode = True
 
-        temp_cum_weights: list[int] = list(accumulate(temp_weights))
         self.update_slide_show(
-            image_paths=temp_image_paths, cum_weights=temp_cum_weights
+            image_paths=temp_image_paths,
+            selection_weights=SelectionWeights.from_weights(temp_weights),
         )
 
     def subfolder_mode_off(self) -> None:
-        _, self.image_paths, self.cum_weights = self.subFolderStack.pop()
+        _, self.image_paths, self.selection_weights = self.subFolderStack.pop()
         self.number_of_images = len(self.image_paths)
         self.subfolder_mode = False
         self.update_slide_show(
-            image_paths=self.image_paths, cum_weights=self.cum_weights
+            image_paths=self.image_paths,
+            selection_weights=self.selection_weights,
         )
 
     def select_mode(self, event=None) -> None:
@@ -681,11 +727,17 @@ class ImageSlideshow:
             case "L":
                 self.set_provider("sequential", index=self.current_image_index + 1)
             case "W":
-                self.set_provider("weighted", cum_weights=self.cum_weights)
+                self.set_provider("weighted")
+            case "D":
+                self.set_provider(
+                    "controlled_random_weighted",
+                    gap_min=3,
+                    gap_max=80,
+                    alpha=0.01,
+                )
             case "B":
                 self.set_provider(
                     "burst",
-                    cum_weights=self.cum_weights,
                     burst_size=5,
                     index=self.current_image_index,
                 )
@@ -757,7 +809,9 @@ class ImageSlideshow:
                     self.toggle_subfolder_mode()
                 else:
                     self.parentFolderStack.push(
-                        child_path, self.image_paths, self.cum_weights
+                        child_path,
+                        self.image_paths[:],
+                        self.selection_weights.copy(),
                     )
             else:
                 logger.warning("No valid child directory found.")
@@ -804,7 +858,9 @@ class ImageSlideshow:
                     ) > 1 or utils.contains_files(parent_path):
                         break
                 self.parentFolderStack.push(
-                    parent_path, self.image_paths, self.cum_weights
+                    parent_path,
+                    self.image_paths[:],
+                    self.selection_weights.copy(),
                 )
             case ("folder", True):
                 previous_path = self.parentFolderStack.read_top()
@@ -814,7 +870,9 @@ class ImageSlideshow:
                     self.step_backwards()
                     return
                 self.parentFolderStack.push(
-                    parent_path, self.image_paths, self.cum_weights
+                    parent_path,
+                    self.image_paths[:],
+                    self.selection_weights.copy(),
                 )
             case ("branch", False):
                 self.navigation_node = self.find_node_for_image(
@@ -830,8 +888,8 @@ class ImageSlideshow:
         if self.parentFolderStack.is_empty():
             logger.warning("Cannot step back - Stack is empty.")
             return
-        _, images, cum_weights = self.parentFolderStack.pop()
-        self.update_slide_show(images, cum_weights)
+        _, images, selection_weights = self.parentFolderStack.pop()
+        self.update_slide_show(images, selection_weights)
 
     def reset_parent_mode(self, event=None) -> None:
         self.parent_mode = False
@@ -839,8 +897,8 @@ class ImageSlideshow:
         self.parentFolderStack.clear()
         self.subFolderStack.clear()
         self.image_paths = self.original_image_paths[:]
-        self.cum_weights = self.original_cum_weights[:]
-        self.update_slide_show(self.image_paths, self.cum_weights)
+        self.selection_weights = self.original_selection_weights.copy()
+        self.update_slide_show(self.image_paths, self.selection_weights)
         self.show_image(self.image_paths[self.current_image_index])
         logger.debug("Parent mode reset and modes updated.")
 
@@ -923,7 +981,7 @@ class ImageSlideshow:
             self.filename_label.config(state=tk.DISABLED)
 
             mode_text: str = (
-                self.providers.get_current_provider_name()[0:3].upper()
+                self._provider_display_name()
                 if self.mode
                 else "-"
             )

@@ -90,6 +90,16 @@ def get_arg_parser() -> argparse.ArgumentParser:
         "--test", metavar="N", type=int, help="Run the test with N iterations"
     )
     parser.add_argument(
+        "--test_model",
+        "--tm",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated image provider model suffixes to test, "
+            "for example: weighted,controlled_random_weighted"
+        ),
+    )
+    parser.add_argument(
         "--histo", action="store_true", help="Show distribution histogram"
     )
     parser.add_argument(

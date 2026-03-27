@@ -1,6 +1,9 @@
+import bisect
+import os
 import random
 import logging
 from collections import deque
+from itertools import accumulate
 
 from enkan.cache.ImageCacheManager import ImageCacheManager
 from enkan.utils.utils import weighted_choice, images_from_path
@@ -15,7 +18,8 @@ class ImageProviders:
             "sequential": self.image_provider_sequential,
             "random": self.image_provider_random,
             "weighted": self.image_provider_weighted,
-            "burst": self.image_provider_folder_burst
+            "controlled_random_weighted": self.image_provider_controlled_random_weighted,
+            "burst": self.image_provider_folder_burst,
         }
         self.current_provider_name = None
 
@@ -75,9 +79,76 @@ class ImageProviders:
         except GeneratorExit:
             logger.debug("Weighted image provider closed unexpectedly.")
             return
-        
 
+    def image_provider_controlled_random_weighted(
+        self,
+        image_paths,
+        weights,
+        cum_weights,
+        gap_min=3,
+        gap_max=80,
+        alpha=0.01,
+        repeat_penalty=0.1,
+        **kwargs,
+    ):
+        if not image_paths:
+            return iter(())
 
+        folder_by_index = [os.path.dirname(path) for path in image_paths]
+        unique_folders = set(folder_by_index)
+        last_seen_by_folder = {folder: -1000 for folder in unique_folders}
+        step = 0
+        gap_min = max(0, int(gap_min))
+        gap_max = max(gap_min, int(gap_max))
+        repeat_penalty = max(0.0, min(float(repeat_penalty), 1.0))
+
+        def _fallback_pick():
+            x = random.random() * cum_weights[-1]
+            idx = bisect.bisect_left(cum_weights, x)
+            if idx >= len(image_paths):
+                idx = len(image_paths) - 1
+            return image_paths[idx], idx
+
+        try:
+            while True:
+                step += 1
+                w_eff = []
+                one_folder_only = len(unique_folders) <= 1
+                for i, folder in enumerate(folder_by_index):
+                    distance = step - last_seen_by_folder[folder]
+                    clamped_distance = min(distance, gap_max)
+
+                    if one_folder_only:
+                        folder_factor = 1.0
+                    elif gap_min > 0 and distance < gap_min:
+                        folder_factor = repeat_penalty + (
+                            (1.0 - repeat_penalty) * (distance / gap_min)
+                        )
+                    else:
+                        folder_factor = 1.0
+
+                    extra = max(0.0, clamped_distance - 10)
+                    boost = 1.0 + alpha * extra * extra
+                    w_eff.append(weights[i] * folder_factor * boost)
+
+                if not any(w_eff):
+                    path, idx = _fallback_pick()
+                else:
+                    cum_eff = list(accumulate(w_eff))
+                    if cum_eff[-1] <= 0.0:
+                        path, idx = _fallback_pick()
+                    else:
+                        x = random.random() * cum_eff[-1]
+                        idx = bisect.bisect_left(cum_eff, x)
+                        if idx >= len(image_paths):
+                            idx = len(image_paths) - 1
+                        path = image_paths[idx]
+
+                last_seen_by_folder[folder_by_index[idx]] = step
+                yield path
+        except GeneratorExit:
+            logger.debug("Controlled-random weighted image provider closed unexpectedly.")
+            return
 
     def image_provider_folder_burst(self, image_paths, cum_weights, burst_size=5, index=0, **kwargs):
         import os

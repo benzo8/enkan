@@ -9,6 +9,7 @@ from enkan.tree.Tree import Tree
 from enkan.tree.tree_logic import extract_image_paths_and_weights_from_tree
 from enkan.utils.Defaults import Defaults, set_current_defaults
 from enkan.utils.Filters import Filters
+from enkan.utils.SelectionWeights import SelectionWeights
 from enkan.utils.input.MultiSourceBuilder import MultiSourceBuilder
 
 logger = logging.getLogger("enkan.main")  
@@ -84,8 +85,24 @@ def main_with_args(args) -> None:
     # Test or start the slideshow
     if args.test:
         from enkan.utils.tests import test_distribution
-        test_distribution(images, cum_weights, args.test, args.testdepth, args.histo, defaults)
+        test_distribution(
+            images,
+            weights,
+            cum_weights,
+            args.test,
+            args.testdepth,
+            args.histo,
+            defaults,
+            test_models=args.test_model,
+        )
         return
     
     from enkan.mySlideshow.start_slideshow import start_slideshow
-    start_slideshow(tree, images, cum_weights, defaults, filters, args.interval)
+    start_slideshow(
+        tree,
+        images,
+        SelectionWeights.from_parts(weights, cum_weights),
+        defaults,
+        filters,
+        args.interval,
+    )
