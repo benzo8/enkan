@@ -189,6 +189,15 @@ class ImageCacheManager:
         logger.debug("Provider state reset; preload queue cleared.")
         return True
 
+    def refresh_provider(self) -> None:
+        """Discard queued provider output and refill using the current provider state."""
+        self.preload_queue.clear()
+        if self.background_preload:
+            self._background_refill()
+        else:
+            self._preload_refill()
+        logger.debug("Provider queue refreshed.")
+
     def invalidate(self, image_path: str) -> None:
         """Remove a specific path from caches and preload queue."""
         self.lru_cache.pop(image_path)

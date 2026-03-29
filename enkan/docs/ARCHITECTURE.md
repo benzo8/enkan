@@ -179,7 +179,15 @@ This document describes the major "agents" (modules/classes/subsystems) in Enkan
 - Core Methods (examples):
   - `_show_error`, `_confirm_action`, rotation handlers.
   - `_write_exif_orientation`: updates orientation tag when rotation persists.
-- [TODO: USER: Clarify lifecycle (init → load list → start loop)]
+- Current runtime state:
+  - owns `SelectionWeights`
+  - owns per-scope `FolderSelectionMemory`
+  - records what the viewer actually sees for provider memory, rather than letting providers mutate hidden state
+- Scope behavior:
+  - main scope, subfolder scope, and parent scope each carry their own memory snapshot
+  - provider switching does not reset CRW memory
+  - history replay and sequential mode do not update CRW memory
+  - burst/subfolder/parent count one folder-selection event, not one event per image shown
 
 ### 4.5 Cache / ImageCacheManager
 
@@ -187,7 +195,11 @@ This document describes the major "agents" (modules/classes/subsystems) in Enkan
 - Considerations:
   - Memory bounds / LRU strategy (if not present, plan).
   - Threading? (Background decode)
-- [TODO: USER: Document eviction strategy]
+- Current runtime notes:
+  - uses `LRUCache` plus `PreloadQueue`
+  - background refill is optional and provider access is protected by a provider lock
+  - preload queue length is controlled by `PRELOAD_QUEUE_LENGTH`
+  - current implementation preloads paths yielded by providers and stores `{path: image_obj}` pairs
 
 ### 4.6 ZoomPan
 
@@ -272,10 +284,71 @@ This document describes the major "agents" (modules/classes/subsystems) in Enkan
 - Performance Hotspots:
   - Tree merge deep traversal (optimize via `path_lookup`).
   - Weight recalculation (memoize unchanged branches).
+  - Runtime provider cost:
+    - plain `weighted` selection is effectively a bisect on precomputed cumulative weights
+    - `controlled_random_weighted` is intentionally more expensive because it scores folders against shared memory
+    - recent optimization moved CRW from per-image rescoring to per-folder rescoring, so it now scales mainly with folder count rather than total image count
+  - Runtime overlay/debug cost:
+    - CRW metrics should only be computed when the CRW overlay is enabled
 - Configuration Persistence: [TODO: USER: Decide format (JSON, YAML, INI) for user preferences]
 - Extensibility:
   - Pluggable weight strategies.
   - Custom filters (user-defined predicates).
+
+---
+
+## 9.1 Runtime Provider Architecture
+
+### SelectionWeights
+
+- Purpose: keep runtime `weights` and `cum_weights` coupled as a single value object.
+- Current usage:
+  - passed through CLI/startup/slideshow
+  - supplied to providers through `provider_kwargs()`
+
+### FolderSelectionMemory
+
+- Purpose: shared slideshow/session memory for folder-recency-aware providers.
+- Current fields:
+  - `step`
+  - `last_seen_by_folder`
+  - `current_streak_folder`
+  - `current_streak_length`
+- Current consumers:
+  - `controlled_random_weighted`
+  - slideshow memory-accounting helpers
+
+### ImageProviders
+
+- Current registered providers:
+  - `sequential`
+  - `random`
+  - `weighted`
+  - `controlled_random_weighted`
+  - `burst`
+
+### controlled_random_weighted
+
+- Intent:
+  - be less random than pure weighted random, so it feels more random to a human viewer
+- Current behavior:
+  - folder-level recency penalty
+  - long-unseen boost
+  - streak penalty
+  - still respects existing base image weights/modifiers
+- Important implementation note:
+  - current picks are folder-first:
+    - choose folder from adjusted folder totals
+    - choose image within folder from cached per-folder cumulative weights
+
+### burst
+
+- Purpose:
+  - pick a weighted seed image, then emit a folder-local burst
+- Runtime metadata exposed:
+  - `current_burst_folder`
+  - `current_burst_token`
+- This metadata is used by slideshow memory accounting so a burst counts as one folder-selection event.
 
 ---
 

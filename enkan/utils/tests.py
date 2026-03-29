@@ -8,6 +8,7 @@ from itertools import zip_longest
 from enkan.constants import TOTAL_WEIGHT
 from enkan.plugables.ImageProviders import ImageProviders
 from enkan.utils.Defaults import resolve_mode
+from enkan.utils.FolderSelectionMemory import FolderSelectionMemory
 from enkan.utils.progress import progress
 from enkan.tree.TreeNode import TreeNode
 
@@ -96,15 +97,19 @@ def _truncate_test_path(image_path, testdepth):
 def _directory_counts_for_model(provider_name, image_nodes, weights, cum_weights, iterations, testdepth):
     providers = ImageProviders()
     resolved_name = _resolve_test_provider(providers.providers, provider_name)
+    folder_memory = FolderSelectionMemory()
     provider = providers.providers[resolved_name](
         image_nodes,
         weights=weights,
         cum_weights=cum_weights,
+        folder_memory=folder_memory,
     )
 
     hit_counts = defaultdict(int)
     for _ in progress(range(iterations), desc=f"Testing {resolved_name}"):
         image_path = next(provider)
+        if resolved_name == "controlled_random_weighted":
+            folder_memory.record_folder(os.path.dirname(image_path))
         hit_counts[_truncate_test_path(image_path, testdepth)] += 1
 
     directory_counts = defaultdict(int)

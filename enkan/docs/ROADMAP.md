@@ -3,6 +3,19 @@
 **Status:** planning/in-progress on `dev`  
 **Audience:** public (high-level direction; not a personal TODO)
 
+## Current v2 Reality
+
+Before the `v3` items below, the current `v2.2b` codebase already includes several runtime changes that were once only discussed as future work:
+
+- multiple runtime image providers are now first-class
+- slideshow runtime uses `SelectionWeights` instead of loose weight arrays
+- `controlled_random_weighted` (`CRW`) exists as a real folder-aware provider
+- CRW memory persists across provider switches and slideshow scopes
+- provider comparison is available through `--test` plus `--test_model` / `--tm`
+- runtime provider performance has been improved so CRW scales primarily with folder count rather than total image count
+
+The roadmap below should therefore be read as “what remains for v3”, not as a description of the current runtime.
+
 ## Vision
 
 v3 focuses on making Enkan more flexible (multiple input sources → one coherent tree), more interactive (live parameter tuning), smoother to use (first-class VLC controls and unified progress reporting), and more predictable via a clear configuration hierarchy.
