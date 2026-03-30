@@ -495,8 +495,12 @@ class ImageSlideshow:
         self,
         image_paths: list,
         selection_weights: SelectionWeights,
+        record_initial_history: bool = False,
     ) -> None:
         """Updates the slideshow with the new set of images and weights."""
+        history_snapshot = (
+            self.manager.history_snapshot() if getattr(self, "manager", None) else None
+        )
         self.image_paths = image_paths
         self.selection_weights = selection_weights.copy()
         self._rebuild_folder_weight_cache()
@@ -509,8 +513,12 @@ class ImageSlideshow:
             index=self.current_image_index,
             **self._provider_kwargs(),
         )
+        self.manager.restore_history(history_snapshot)
         self._last_burst_memory_token = None
-        self.show_image(self.image_paths[self.current_image_index], record_history=False)
+        self.show_image(
+            self.image_paths[self.current_image_index],
+            record_history=record_initial_history,
+        )
 
     # --- Utility Methods ---
 
@@ -533,6 +541,9 @@ class ImageSlideshow:
     def set_provider(self, provider_name: str, **provider_kwargs) -> None:
         # Easily switch to any provider by name/key
         self.current_provider: str = provider_name
+        history_snapshot = (
+            self.manager.history_snapshot() if getattr(self, "manager", None) else None
+        )
         if provider_name == "controlled_random_weighted":
             self._recalculate_controlled_random_settings()
             for key in self.controlled_random_settings:
@@ -549,6 +560,7 @@ class ImageSlideshow:
             background_preload=self.defaults.background,
             **provider_kwargs,
         )
+        self.manager.restore_history(history_snapshot)
         self._last_burst_memory_token = None
         self.update_filename_display()
 
@@ -581,7 +593,12 @@ class ImageSlideshow:
 
         return current_image_index
 
-    def traverse_directory(self, new_path=None, navigation_node=None) -> None:
+    def traverse_directory(
+        self,
+        new_path=None,
+        navigation_node=None,
+        record_initial_history: bool = False,
+    ) -> None:
         """Set up for a new directory and create an updated slideshow."""
         if navigation_node:
             new_image_paths, new_weights = extract_image_paths_and_weights_from_tree(
@@ -611,6 +628,7 @@ class ImageSlideshow:
         self.update_slide_show(
             new_image_paths,
             SelectionWeights.from_weights(new_weights),
+            record_initial_history=record_initial_history,
         )
 
     # --- Dynamic Mode Methods ---
@@ -990,6 +1008,7 @@ class ImageSlideshow:
         self.update_slide_show(
             image_paths=temp_image_paths,
             selection_weights=SelectionWeights.from_weights(temp_weights),
+            record_initial_history=True,
         )
 
     def subfolder_mode_off(self) -> None:
@@ -1000,6 +1019,7 @@ class ImageSlideshow:
         self.update_slide_show(
             image_paths=self.image_paths,
             selection_weights=self.selection_weights,
+            record_initial_history=True,
         )
 
     def select_mode(self, event=None) -> None:
@@ -1117,7 +1137,11 @@ class ImageSlideshow:
 
         self.folder_memory = self._new_scope_memory()
         self.scope_seen_folders = set()
-        self.traverse_directory(child_path, self.navigation_node)
+        self.traverse_directory(
+            child_path,
+            self.navigation_node,
+            record_initial_history=True,
+        )
 
     def follow_branch_down(self, event=None) -> None:
         if self.subfolder_mode:
@@ -1175,7 +1199,11 @@ class ImageSlideshow:
         self.parent_mode = True
         self.folder_memory = self._new_scope_memory()
         self.scope_seen_folders = set()
-        self.traverse_directory(parent_path, self.navigation_node)
+        self.traverse_directory(
+            parent_path,
+            self.navigation_node,
+            record_initial_history=True,
+        )
 
     def step_backwards(self, event=None) -> None:
         if self.parentFolderStack.is_empty():

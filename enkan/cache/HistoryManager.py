@@ -66,6 +66,26 @@ class HistoryManager:
         self.history.clear()
         self.current_index = -1
 
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "history": list(self.history),
+            "current_index": self.current_index,
+        }
+
+    def restore(self, snapshot: dict[str, object] | None) -> None:
+        self.clear()
+        if not snapshot:
+            return
+
+        history = list(snapshot.get("history", []))
+        self.history = deque(history, maxlen=self.max_length)
+        if not self.history:
+            self.current_index = -1
+            return
+
+        current_index = int(snapshot.get("current_index", len(self.history) - 1))
+        self.current_index = max(0, min(current_index, len(self.history) - 1))
+
     def __repr__(self):
         line = list(self.history)
         return f"HistoryManager(line={line}, current_index={self.current_index})"

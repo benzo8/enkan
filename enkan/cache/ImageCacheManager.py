@@ -203,6 +203,12 @@ class ImageCacheManager:
         self.lru_cache.pop(image_path)
         self.preload_queue.discard(image_path)
 
+    def history_snapshot(self) -> dict[str, object]:
+        return self.history_manager.snapshot()
+
+    def restore_history(self, snapshot: dict[str, object] | None) -> None:
+        self.history_manager.restore(snapshot)
+
     def __repr__(self):
         return (
             f"ImageCacheManager("
