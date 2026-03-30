@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import logging
 import os
 
@@ -26,7 +27,6 @@ class MultiSourceBuilder:
     def __init__(self, defaults: Defaults, filters: Filters) -> None:
         self.defaults = defaults
         self.filters = filters
-        self.processor = InputProcessor(defaults, filters)
 
     def build(self, input_files: Iterable[str], *, tk_root=None, tk_enabled: bool = True):
         sources: List[LoadedSource] = []
@@ -221,21 +221,24 @@ class MultiSourceBuilder:
         """
         nested_paths: List[str] = []
         warnings_out: List[str] = collector if collector is not None else []
+        source_defaults = copy.deepcopy(self.defaults)
+        source_filters = copy.deepcopy(self.filters)
+        processor = InputProcessor(source_defaults, source_filters)
 
         image_dirs, specific_images = (
-            self.processor.process_input(
+            processor.process_input(
                 entry,
                 graft_offset=graft_offset,
                 apply_global_mode=False,
                 nested_paths=nested_paths,
             )
         )
-        detected_mode = getattr(self.processor, "detected_mode", None)
+        detected_mode = getattr(processor, "detected_mode", None)
 
         if image_dirs or specific_images:
             base_tree = build_tree(
-                self.defaults,
-                self.filters,
+                source_defaults,
+                source_filters,
                 image_dirs=image_dirs,
                 specific_images=specific_images,
                 mode=detected_mode,

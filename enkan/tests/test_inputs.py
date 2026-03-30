@@ -258,6 +258,28 @@ def test_txt_with_nested_lst():
     assert os.path.normpath(os.path.dirname(img_path)) in tree.path_lookup
 
 
+def test_txt_with_relative_nested_lst():
+    tmp = Path(_ensure_case_dir("txt_relative_nested_lst"))
+    img_path = (tmp / "nested" / "img0.jpg").resolve()
+    img_path.parent.mkdir(parents=True, exist_ok=True)
+    img_path.write_text("x", encoding="utf-8")
+
+    lst_file = tmp / "inner.lst"
+    lst_file.write_text(f"{img_path},1\n", encoding="utf-8")
+
+    txt_file = tmp / "outer.txt"
+    txt_file.write_text("inner.lst\n", encoding="utf-8")
+
+    defaults = _make_defaults(mode_str="b1")
+    filters = Filters()
+    builder = MultiSourceBuilder(defaults, filters)
+    tree, warnings = builder.build([str(txt_file)])
+
+    assert warnings == []
+    assert tree is not None
+    assert os.path.normpath(os.path.dirname(img_path)) in tree.path_lookup
+
+
 def test_txt_with_nested_tree():
     tmp = Path(_ensure_case_dir("txt_nested_tree"))
     defaults = _make_defaults(mode_str="b1")
@@ -353,6 +375,37 @@ def test_mode_precedence_cli_wins():
     assert warnings == [] or warnings is not None
     # CLI mode b2 should be in defaults and applied after merge
     assert defaults.mode.get(2) == ("b", [0, 0])
+
+
+def test_file_level_globals_do_not_leak_between_inputs():
+    tmp = Path(_ensure_case_dir("file_local_globals"))
+    first_dir = tmp / "first"
+    second_dir = tmp / "second"
+    first_dir.mkdir(parents=True, exist_ok=True)
+    second_dir.mkdir(parents=True, exist_ok=True)
+    first_image = (first_dir / "still.jpg").resolve()
+    first_video = (first_dir / "clip.mp4").resolve()
+    second_video = (second_dir / "clip.mp4").resolve()
+    first_image.write_text("x", encoding="utf-8")
+    first_video.write_text("x", encoding="utf-8")
+    second_video.write_text("x", encoding="utf-8")
+
+    txt1 = tmp / "one.txt"
+    txt1.write_text(f"*[nv]\n{first_dir.resolve()}\n", encoding="utf-8")
+    txt2 = tmp / "two.txt"
+    txt2.write_text(f"{second_dir.resolve()}\n", encoding="utf-8")
+
+    defaults = _make_defaults(mode_str="b1")
+    filters = Filters()
+    builder = MultiSourceBuilder(defaults, filters)
+    tree, warnings = builder.build([str(txt1), str(txt2)])
+
+    assert warnings == []
+    paths, _ = extract_image_paths_and_weights_from_tree(tree)
+    assert str(first_image) in paths
+    assert str(first_video) not in paths
+    assert str(second_video) in paths
+    assert defaults.global_video is None
 
 
 def test_single_source_txt_applies_detected_mode():
@@ -727,6 +780,27 @@ def test_merger_existing_structural_node_with_incoming_images_applies_graft_offs
     assert merged_node is not None
     assert merged_node.images
     assert merged_node.level == base_level + 1
+
+
+def test_merger_replaces_specific_image_virtual_node_payload(
+    defaults: Defaults, filters: Filters
+):
+    image_path = os.path.normpath(r"C:\foo\picked.jpg")
+    virtual_node_path = os.path.splitext(image_path)[0]
+
+    base = _make_tree(defaults, filters, virtual_node_path, [image_path, image_path, image_path])
+    incoming = _make_tree(defaults, filters, virtual_node_path, [image_path])
+
+    merger = TreeMerger()
+    result = merger.merge(
+        [
+            LoadedSource("base", SourceKind.TREE, 0, tree=base),
+            LoadedSource("incoming", SourceKind.TREE, 1, tree=incoming),
+        ]
+    )
+
+    merged_images = result.tree.path_lookup[virtual_node_path].images
+    assert merged_images == [image_path]
 
 
 def test_apply_mode_and_recalculate_respects_user_proportion(defaults: Defaults, filters: Filters):

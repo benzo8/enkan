@@ -227,8 +227,14 @@ class TreeMerger:
         if not incoming.images:
             return False
 
-        incoming_path = os.path.normpath(incoming.path)
-        kept = [img for img in target.images if not self._is_from_path(img, incoming_path)]
+        specific_image = self._specific_image_for_node(incoming)
+        if specific_image is not None:
+            kept = [img for img in target.images if os.path.normpath(img) != specific_image]
+        else:
+            incoming_path = os.path.normpath(incoming.path)
+            kept = [
+                img for img in target.images if not self._is_from_path(img, incoming_path)
+            ]
         new_images = kept + list(incoming.images)
         if new_images == target.images:
             return False
@@ -331,6 +337,22 @@ class TreeMerger:
         norm_src = os.path.normpath(src_path)
         img_dir = os.path.normpath(os.path.dirname(image_path))
         return img_dir == norm_src or img_dir.startswith(norm_src + os.path.sep)
+
+    @staticmethod
+    def _specific_image_for_node(node: TreeNode) -> str | None:
+        """
+        Detect virtual nodes created for a single specific image.
+        These use the image stem as the node path and repeat the same image in
+        the node payload according to weighting.
+        """
+        unique_images = {os.path.normpath(img) for img in node.images}
+        if len(unique_images) != 1:
+            return None
+        only_image = next(iter(unique_images))
+        expected_node_path = os.path.normpath(os.path.splitext(only_image)[0])
+        if os.path.normpath(node.path) != expected_node_path:
+            return None
+        return only_image
 
     # ---------------------------- Graft alignment helpers ----------------------------
 

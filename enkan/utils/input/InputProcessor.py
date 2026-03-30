@@ -97,7 +97,24 @@ class InputProcessor:
                     line_ext = os.path.splitext(line)[1].lower()
                     if line_ext in {".txt", ".lst", ".tree"}:
                         if nested_paths is not None:
-                            nested_paths.append(line)
+                            nested_ref = constants.MODIFIER_PATTERN.sub("", line).strip()
+                            if nested_ref != line:
+                                logger.warning(
+                                    "Ignoring modifiers on nested input reference '%s'.",
+                                    line,
+                                )
+                            resolved_nested = utils.find_input_file(
+                                nested_ref,
+                                [os.path.dirname(input_filename_full)],
+                            )
+                            if not resolved_nested and not os.path.isabs(nested_ref):
+                                resolved_nested = os.path.normpath(
+                                    os.path.join(
+                                        os.path.dirname(input_filename_full),
+                                        nested_ref,
+                                    )
+                                )
+                            nested_paths.append(resolved_nested or nested_ref)
                     else:
                         path, modifier_list = self.parse_input_line(
                             line,
