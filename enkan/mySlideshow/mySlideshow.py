@@ -17,7 +17,7 @@ from enkan.tree import Tree
 from enkan.tree.TreeNode import TreeNode
 from enkan.utils import utils
 from enkan.utils.Defaults import Defaults, resolve_mode, parse_mode_string
-from enkan.utils.FolderSelectionMemory import FolderSelectionMemory
+from enkan.plugables.FolderSelectionMemory import FolderSelectionMemory
 from enkan.utils.Filters import Filters
 from enkan.utils.SelectionWeights import SelectionWeights
 from enkan.utils.myStack import Stack

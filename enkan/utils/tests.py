@@ -6,9 +6,9 @@ from collections import defaultdict
 from itertools import zip_longest
 
 from enkan.constants import TOTAL_WEIGHT
+from enkan.plugables.FolderSelectionMemory import FolderSelectionMemory
 from enkan.plugables.ImageProviders import ImageProviders
 from enkan.utils.Defaults import resolve_mode
-from enkan.utils.FolderSelectionMemory import FolderSelectionMemory
 from enkan.utils.progress import progress
 from enkan.tree.TreeNode import TreeNode
 
