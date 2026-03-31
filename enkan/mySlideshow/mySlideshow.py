@@ -744,52 +744,6 @@ class ImageSlideshow:
         )
         dialog.top.bind("<Destroy>", self._on_dialog_closed)
         self.mode_dialog = dialog
-    # --- Dynamic Mode Methods ---
-
-    def _handle_mode_apply(self, mode_str: str, ignore_user: bool) -> Optional[str]:
-        mode_dict = parse_mode_string(mode_str)
-        if not mode_dict:
-            raise ValueError("Unable to parse mode string.")
-        self._ignore_user_proportion = ignore_user
-        self.defaults.set_global_defaults(mode=mode_dict)
-        self._recalculate_slideshow(ignore_user=ignore_user)
-        return self.original_tree.current_mode_string() or mode_str
-
-    def _handle_mode_reset(self) -> Optional[str]:
-        if not self.original_tree.built_mode:
-            raise ValueError("Tree does not have a recorded original mode.")
-        return (
-            self.original_tree.built_mode_string
-            or self.original_tree.current_mode_string()
-        )
-
-    def _recalculate_slideshow(self, ignore_user: bool) -> None:
-        images, weights, cum_weights = apply_mode_and_recalculate(
-            self.original_tree, self.defaults, ignore_user_proportion=ignore_user
-        )
-        self.original_image_paths = images[:]
-        self.folder_memory = self._new_scope_memory()
-        self.scope_seen_folders = set()
-        self.original_selection_weights = SelectionWeights.from_parts(
-            weights,
-            cum_weights,
-        )
-        self.original_folder_memory = self.folder_memory.copy()
-        self.original_scope_seen_folders = set()
-        self.update_slide_show(
-            images,
-            SelectionWeights.from_parts(weights, cum_weights),
-        )
-        mode_dict = self.defaults.mode or {}
-        if mode_dict:
-            lowest = min(mode_dict.keys())
-            self.mode, _ = resolve_mode(mode_dict, lowest)
-        else:
-            self.mode = None
-        self.update_filename_display()
-
-    def _on_dialog_closed(self, _event=None) -> None:
-        self.mode_dialog = None
 
     # --- Auto Advance Methods ---
 
