@@ -16,6 +16,7 @@ from enkan.tree.tree_logic import extract_image_paths_and_weights_from_tree
 from enkan.utils.input.input_models import SourceKind, LoadedSource
 from enkan.utils.input.TreeMerger import TreeMerger
 from enkan.utils.input.MultiSourceBuilder import MultiSourceBuilder
+from enkan.utils.input.SourceScope import SourceScope
 from enkan.constants import TOTAL_WEIGHT
 
 
@@ -406,6 +407,49 @@ def test_file_level_globals_do_not_leak_between_inputs():
     assert str(first_video) not in paths
     assert str(second_video) in paths
     assert defaults.global_video is None
+
+
+def test_source_scope_preserves_cli_precedence_and_isolates_defaults_mutation():
+    defaults = Defaults(
+        args=SimpleNamespace(
+            mode="b2",
+            random=False,
+            dont_recurse=False,
+            video=True,
+            mute=True,
+            debug=2,
+            no_background=False,
+            quiet=False,
+        )
+    )
+    defaults.set_global_defaults(mode={3: ("w", [0, 0])}, is_random=True)
+    defaults.set_global_video(video=False, mute=False)
+    defaults.groups["shared"] = {"proportion": 10}
+
+    source_scope = SourceScope.from_runtime(defaults, Filters())
+
+    assert resolve_mode(source_scope.defaults.mode, 2)[0] == "b"
+    assert source_scope.defaults.video is True
+    source_scope.defaults.set_global_defaults(mode={4: ("b", [1, 2])}, is_random=False)
+    source_scope.defaults.set_global_defaults(is_random=False)
+    source_scope.defaults.groups["shared"]["proportion"] = 99
+
+    assert defaults.global_mode == {3: ("w", [0, 0])}
+    assert defaults.global_is_random is True
+    assert defaults.groups["shared"]["proportion"] == 10
+
+
+def test_source_scope_isolates_filters_mutation():
+    filters = Filters()
+    filters.add_must_contain("keep")
+    filters.preprocess_ignored_files()
+
+    source_scope = SourceScope.from_runtime(_make_defaults(), filters)
+    source_scope.filters.add_must_not_contain("skip")
+    source_scope.filters.add_dont_recurse_beyond_folder(r"C:\tmp")
+
+    assert "skip" not in filters.must_not_contain
+    assert r"C:\tmp" not in filters.dont_recurse_beyond
 
 
 def test_single_source_txt_applies_detected_mode():

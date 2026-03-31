@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import logging
 import os
 
@@ -12,6 +11,7 @@ from enkan.utils.input.InputProcessor import InputProcessor
 from enkan.utils.utils import find_input_file
 from enkan.utils.Defaults import Defaults, Mode
 from enkan.utils.Filters import Filters
+from enkan.utils.input.SourceScope import SourceScope
 from enkan.utils.input.input_models import LoadedSource, SourceKind, classify_input_path
 from enkan.utils.input.TreeMerger import TreeMerger
 
@@ -221,9 +221,8 @@ class MultiSourceBuilder:
         """
         nested_paths: List[str] = []
         warnings_out: List[str] = collector if collector is not None else []
-        source_defaults = copy.deepcopy(self.defaults)
-        source_filters = copy.deepcopy(self.filters)
-        processor = InputProcessor(source_defaults, source_filters)
+        source_scope = SourceScope.from_runtime(self.defaults, self.filters)
+        processor = InputProcessor(source_scope.defaults, source_scope.filters)
 
         image_dirs, specific_images = (
             processor.process_input(
@@ -237,8 +236,8 @@ class MultiSourceBuilder:
 
         if image_dirs or specific_images:
             base_tree = build_tree(
-                source_defaults,
-                source_filters,
+                source_scope.defaults,
+                source_scope.filters,
                 image_dirs=image_dirs,
                 specific_images=specific_images,
                 mode=detected_mode,

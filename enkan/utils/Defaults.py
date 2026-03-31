@@ -1,4 +1,5 @@
 from __future__ import annotations
+import copy
 import re
 from typing import Dict, List, Tuple, Optional, Any
 
@@ -84,6 +85,33 @@ class Defaults:
 
         # Group metadata container
         self.groups: dict[str, Any] = {}
+
+    def clone_for_source(self) -> "Defaults":
+        """
+        Create a source-local clone for input parsing/building.
+
+        This preserves current CLI override precedence and any already-resolved
+        top-level runtime defaults, while isolating per-source mutations such as
+        txt-file globals and group definitions from the shared runtime Defaults.
+        """
+        clone = Defaults(
+            weight_modifier=self._weight_modifier,
+            mode=_copy_mode_map(self._mode),
+            is_random=self._is_random,
+            dont_recurse=self._dont_recurse,
+            args=self.args,
+            video=self._video,
+            mute=self._mute,
+            no_background=not self.background,
+            quiet=self.quiet,
+        )
+        clone.global_mode = _copy_mode_map(self.global_mode)
+        clone.global_is_random = self.global_is_random
+        clone.global_dont_recurse = self.global_dont_recurse
+        clone.global_video = self.global_video
+        clone.global_mute = self.global_mute
+        clone.groups = copy.deepcopy(self.groups)
+        return clone
 
     @property
     def weight_modifier(self) -> int:
@@ -192,6 +220,15 @@ def _ensure_mode_map(mode: Any) -> ModeMap:
     if isinstance(mode, str):
         return parse_mode_string(mode)
     raise TypeError(f"Unsupported mode type: {type(mode).__name__}")
+
+
+def _copy_mode_map(mode_data: Optional[ModeMap]) -> Optional[ModeMap]:
+    if mode_data is None:
+        return None
+    return {
+        int(level): (str(ch), list(slopes or []))
+        for level, (ch, slopes) in mode_data.items()
+    }
 
 
 def parse_mode_string(mode_str: str) -> ModeMap:

@@ -9,6 +9,22 @@ class Filters:
         self.ignored_files_dirs = set()
         self.dont_recurse_beyond = set()
 
+    def clone_for_source(self) -> "Filters":
+        """
+        Create a source-local clone for input parsing/building.
+
+        This preserves top-level filter state while isolating per-source filter
+        mutations such as txt-local include/exclude directives.
+        """
+        clone = Filters()
+        clone.must_contain = set(self.must_contain)
+        clone.must_not_contain = set(self.must_not_contain)
+        clone.ignored_dirs = set(self.ignored_dirs)
+        clone.ignored_files = set(self.ignored_files)
+        clone.ignored_files_dirs = set(self.ignored_files_dirs)
+        clone.dont_recurse_beyond = set(self.dont_recurse_beyond)
+        return clone
+
     def preprocess_ignored_files(self):
         for ignored in self.ignored_files:
             dir_path = os.path.dirname(ignored)
