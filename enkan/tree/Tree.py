@@ -27,7 +27,7 @@ class Tree:
         self._post_init_indexes()
 
     def _post_init_indexes(self) -> None:
-        # Backward compatibility for older pickles
+        # Repair fields that may be missing when loading older .tree pickles.
         if not hasattr(self, "virtual_image_lookup"):
             self.virtual_image_lookup = {}
         if not hasattr(self, "built_mode_string"):
@@ -112,11 +112,6 @@ class Tree:
             node.images = node_data["images"]
         if "group" in node_data:
             node.group = node_data["group"]
-
-        """
-        TODO: If later you want to merge images instead of replace, add a flag
-              e.g. if node_data.get("append_images"): node.images.extend(...)
-        """
 
     def detach_node(self, node: TreeNode) -> None:
         if node.parent:

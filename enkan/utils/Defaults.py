@@ -261,7 +261,7 @@ def resolve_mode(mode_dict: ModeMap, number: int) -> Tuple[str, List[int]]:
         return ("w", [0, 0])
     first_key = min(mode_dict.keys())
     if number < first_key:
-        return ("l", [0, 0])  # legacy low marker?
+        return ("l", [0, 0])  # Sentinel for levels above the first configured rung.
     if number in mode_dict:
         ch, slopes = mode_dict[number]
         s = list(slopes or [])
