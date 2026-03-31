@@ -3,7 +3,7 @@ import random
 
 from enkan.plugables.FolderSelectionMemory import FolderSelectionMemory
 from enkan.plugables.ImageProviders import ImageProviders
-from enkan.utils.tests import _resolve_test_provider
+from enkan.tree.diagnostics import _resolve_test_provider
 
 
 def test_controlled_random_weighted_registered():

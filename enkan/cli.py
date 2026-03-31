@@ -44,7 +44,7 @@ def main_with_args(args) -> None:
 
     # Print tree if requested
     if args.printtree:
-        from enkan.utils.tests import print_tree
+        from enkan.tree.diagnostics import print_tree
         print_tree(defaults, tree.root, max_depth=args.testdepth or 9999)
         return
 
@@ -84,7 +84,7 @@ def main_with_args(args) -> None:
 
     # Test or start the slideshow
     if args.test:
-        from enkan.utils.tests import test_distribution
+        from enkan.tree.diagnostics import test_distribution
         test_distribution(
             images,
             weights,

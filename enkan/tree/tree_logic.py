@@ -7,8 +7,8 @@ from .Tree import Tree
 from .TreeBuilderTXT import TreeBuilderTXT
 from .TreeBuilderLST import TreeBuilderLST
 from .TreeNode import TreeNode
+from .diagnostics import report_branch_weight_sums
 from enkan.utils.Defaults import Defaults, resolve_mode, ModeMap
-from enkan.utils.tests import report_branch_weight_sums
 from enkan.utils.Filters import Filters
 from enkan.constants import TOTAL_WEIGHT
 from enkan.utils.logging import HURT_LEVEL

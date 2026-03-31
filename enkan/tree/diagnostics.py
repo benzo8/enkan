@@ -1,7 +1,5 @@
 import os
-import time
 import logging
-from functools import wraps
 from collections import defaultdict
 from itertools import zip_longest
 
@@ -13,21 +11,7 @@ from enkan.utils.progress import progress
 from enkan.tree.TreeNode import TreeNode
 
 
-logger: logging.Logger = logging.getLogger("enkan.tests")
-
-
-def timeit(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        start_time = time.perf_counter()
-        result = func(*args, **kwargs)
-        end_time = time.perf_counter()
-        print(
-            f"Function {func.__name__} executed in {end_time - start_time:.4f} seconds"
-        )
-        return result
-
-    return wrapper
+logger: logging.Logger = logging.getLogger("enkan.tree.diagnostics")
 
 
 def print_tree(
@@ -42,7 +26,7 @@ def print_tree(
     proportion, weight modifier, weight, and number of images (if any).
     """
     if node is None:
-        return  # Or raise an error
+        return
 
     if max_depth is not None and current_depth > max_depth:
         return
@@ -94,7 +78,14 @@ def _truncate_test_path(image_path, testdepth):
     return "\\".join(image_path.split("\\")[:testdepth])
 
 
-def _directory_counts_for_model(provider_name, image_nodes, weights, cum_weights, iterations, testdepth):
+def _directory_counts_for_model(
+    provider_name,
+    image_nodes,
+    weights,
+    cum_weights,
+    iterations,
+    testdepth,
+):
     providers = ImageProviders()
     resolved_name = _resolve_test_provider(providers.providers, provider_name)
     folder_memory = FolderSelectionMemory()
@@ -140,7 +131,9 @@ def _print_distribution_table(results_by_model, iterations, total_images):
 
     headers = ["Directory"]
     for model_name in results_by_model:
-        headers.extend([f"{model_name} hits", f"{model_name} %", f"{model_name} weight"])
+        headers.extend(
+            [f"{model_name} hits", f"{model_name} %", f"{model_name} weight"]
+        )
 
     widths = [
         max(len(str(cell)) for cell in column)
@@ -185,9 +178,14 @@ def test_distribution(
 
     if histo:
         if len(results_by_model) != 1:
-            logger.warning("Histogram output only supports a single test model; skipping.")
+            logger.warning(
+                "Histogram output only supports a single test model; skipping."
+            )
         else:
-            plot_distribution_histogram(next(iter(results_by_model.values())), iterations)
+            plot_distribution_histogram(
+                next(iter(results_by_model.values())),
+                iterations,
+            )
 
 
 def plot_distribution_histogram(directory_counts, iterations):
@@ -197,10 +195,9 @@ def plot_distribution_histogram(directory_counts, iterations):
     Plots a histogram of hit counts per directory, ordered from least to most.
     """
 
-    # Sort by hit count (least to most)
     sorted_items = sorted(directory_counts.items(), key=lambda x: x[1])
 
-    labels = [f"{i}" for i, (directory, _) in enumerate(sorted_items)]
+    labels = [f"{i}" for i, (_directory, _) in enumerate(sorted_items)]
     percentage = [count / iterations * 100 for _, count in sorted_items]
 
     plt.figure(figsize=(max(8, len(labels) // 2), 6))
@@ -210,7 +207,6 @@ def plot_distribution_histogram(directory_counts, iterations):
     plt.ylabel("Hits")
     plt.title("Distribution Histogram (Least to Most)")
 
-    # Optional: show folder name on hover (simple version)
     def on_move(event):
         for bar, (directory, percentage) in zip(bars, sorted_items):
             if bar.contains(event)[0]:
@@ -231,12 +227,6 @@ def test_node_lookup_consistency(tree) -> bool:
     """
     Test that every entry in tree.node_lookup has a key matching its node's name.
     Prints mismatches and returns True if all are consistent, False otherwise.
-
-    Args:
-        tree (Tree): The Tree instance to check.
-
-    Returns:
-        bool: True if all keys match node names, False otherwise.
     """
     all_good = True
     for key, node in tree.node_lookup.items():
@@ -251,45 +241,36 @@ def test_node_lookup_consistency(tree) -> bool:
 
 
 def _sum_leaf_image_weights(node: TreeNode) -> float:
-    """
-    Sum the total effective weight contributed by images in this subtree.
-    For a node:
-        - if is_percentage: each image gets node.weight / num_images, sum = node.weight
-        - if not is_percentage: each image gets node.weight / weight_modifier
-        (this can cause sum != node.weight if num_images != weight_modifier)
-    """
     total = 0.0
     if node.images:
         if node.is_percentage:
             total += node.weight
         else:
-            # safeguard against zero modifier
             denom = node.weight_modifier if node.weight_modifier else 1
             total += (node.weight / denom) * len(node.images)
-    for c in node.children:
-        total += _sum_leaf_image_weights(c)
+    for child in node.children:
+        total += _sum_leaf_image_weights(child)
     return total
 
 
 def _sum_node_weights(node: TreeNode) -> float:
-    """Sum node.weight for this subtree (diagnostic only)."""
-    s = node.weight or 0.0
-    for c in node.children:
-        s += _sum_node_weights(c)
-    return s
+    total = node.weight or 0.0
+    for child in node.children:
+        total += _sum_node_weights(child)
+    return total
 
 
 def report_branch_weight_sums(start_nodes: list[TreeNode]) -> None:
     lines: list[str] = []
     grand_leaf = 0.0
     grand_nodes = 0.0
-    for sn in start_nodes:
-        leaf = _sum_leaf_image_weights(sn)
-        nodes_sum = _sum_node_weights(sn)
+    for start_node in start_nodes:
+        leaf = _sum_leaf_image_weights(start_node)
+        nodes_sum = _sum_node_weights(start_node)
         grand_leaf += leaf
         grand_nodes += nodes_sum
         lines.append(
-            f"[weights] branch='{sn.name}' "
+            f"[weights] branch='{start_node.name}' "
             f"leaf_total={leaf:.4f} node_weight_sum={nodes_sum:.4f}"
         )
     lines.append(

@@ -27,9 +27,9 @@ from enkan.tree.tree_logic import (
     build_tree,
     extract_image_paths_and_weights_from_tree,
 )
+from enkan.tree.diagnostics import print_tree
 from enkan.mySlideshow.Gui.Gui import Gui
 from enkan.mySlideshow.ZoomPan import ZoomPan
-from enkan.utils.tests import print_tree
 
 # Configure logging
 logger: logging.Logger = logging.getLogger("enkan.ui")
