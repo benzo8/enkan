@@ -4,19 +4,14 @@ This file summarizes user-facing and project-shaping changes across the practica
 
 It is intentionally concise. Detailed engineering-level change history remains in Git commit history.
 
-## 2.3b (dev)
+## 2.4.9
 
-- Preserved viewer history across scope changes, so back/forward navigation survives temporary `SUB` and `PAR` scope transitions.
-- Added a tracked root changelog and clarified the split between public/tracked docs and local-only planning notes.
-- Continued release-process cleanup and documentation alignment for the upcoming 2.x release line.
-
-## 2.2b (dev)
-
-- Added the `controlled_random_weighted` (`CRW`) image provider.
-- Added folder-level recency control, streak suppression, and runtime memory for less clumpy slideshow behavior.
-- Added provider comparison tooling via `--test` plus `--test_model` / `--tm`.
-- Added CRW runtime diagnostics and hotkeys, including CRW display modes and memory reset.
-- Improved CRW runtime performance so provider cost scales primarily with folder count rather than total image count.
+- Merged the long-running `dev` work into the first public `2.4` release line.
+- Added the `controlled_random_weighted` (`CRW`) provider with folder-level recency control, streak suppression, persistent runtime memory, and provider comparison tooling via `--test` plus `--tm`.
+- Preserved viewer history across temporary `SUB` and `PAR` scope changes so back/forward navigation follows what the user actually saw.
+- Hardened multi-input and merge handling, including nested input resolution, source-local parsing scope, and specific-image replacement during merge.
+- Improved runtime responsiveness with better cache/queue semantics, real video caching, and a typed slideshow scope stack.
+- Cleaned up diagnostics, slideshow internals, and release/documentation infrastructure for the modern 2.x line.
 
 ## v2.0.3
 
