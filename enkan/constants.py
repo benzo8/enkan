@@ -7,12 +7,13 @@ try:
     VERSION = _pkg_version(PACKAGE_NAME)
 except PackageNotFoundError:
     # Fallback during source-only situations (keep in sync with pyproject if used)
-    VERSION = "2.0.3"
+    VERSION = "2.4.9"
 TOTAL_WEIGHT = 100
 PARENT_STACK_MAX = 5
 HISTORY_QUEUE_LENGTH = 25
 CACHE_SIZE = 10
 PRELOAD_QUEUE_LENGTH = 3
+ROOT_NODE_NAME = "root"
 IMAGE_FILES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff")
 VIDEO_FILES = (".mp4", ".mkv", ".webm", ".avi", ".mov", ".wmv")
 TEXT_FILES = (".txt", ".lst")
@@ -30,4 +31,3 @@ NO_VIDEO_PATTERN = re.compile(r"^nv$", re.IGNORECASE)
 MUTE_PATTERN = re.compile(r"^m$", re.IGNORECASE)
 NO_MUTE_PATTERN = re.compile(r"^nm$", re.IGNORECASE)
 DONT_RECURSE_PATTERN = re.compile(r"^/$", re.IGNORECASE)
-IGNORE_BELOW_BOTTOM_PATTERN = re.compile(r"^ibb$", re.IGNORECASE)

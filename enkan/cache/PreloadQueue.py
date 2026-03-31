@@ -1,9 +1,20 @@
+from __future__ import annotations
+
 from collections import deque
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass(frozen=True)
+class PreloadedMedia:
+    path: str
+    media: Any
+
 
 class PreloadQueue:
     """
-    A FIFO queue of preloaded images with a maximum size.
-    Each element is a {path: image_obj} dict.
+    A FIFO queue of preloaded media with a maximum size.
+    Each element is a `PreloadedMedia` item.
     """
 
     def __init__(self, max_size: int):
@@ -11,20 +22,19 @@ class PreloadQueue:
         self.lookup = set()  # For fast membership checks
         self.max_size = max_size
 
-    def push(self, path, image_obj):
+    def push(self, path, media):
         """
-        Push a new (path, image_obj) to the bottom of the queue.
+        Push a new preloaded media item to the bottom of the queue.
         If the queue is full, the oldest item is automatically dropped.
         """
         if path in self.lookup:
-            return False  # Avoid duplicates
+            return False
 
-        # If queue is full, remove oldest
         if len(self.queue) == self.max_size:
             oldest = self.queue.popleft()
-            self.lookup.difference_update(oldest.keys())
+            self.lookup.discard(oldest.path)
 
-        self.queue.append({path: image_obj})
+        self.queue.append(PreloadedMedia(path=path, media=media))
         self.lookup.add(path)
         return True
 
@@ -36,9 +46,9 @@ class PreloadQueue:
         if not self.queue:
             return None
         item = self.queue.popleft()
-        self.lookup.difference_update(item.keys())
+        self.lookup.discard(item.path)
         return item
-    
+
     def discard(self, path):
         """
         Remove a specific path from the queue if present.
@@ -49,11 +59,11 @@ class PreloadQueue:
         self.lookup.discard(path)
         new_queue = deque(maxlen=self.max_size)
         for item in self.queue:
-            if path not in item:
+            if item.path != path:
                 new_queue.append(item)
         self.queue = new_queue
         return True
-    
+
     def clear(self):
         """Remove all items from the queue."""
         self.queue.clear()

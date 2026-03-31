@@ -34,10 +34,10 @@ def get_arg_parser() -> argparse.ArgumentParser:
         help="Input file(s) and/or folder(s) to build or .lst file to load",
     )
     parser.add_argument(
-        "--outputlist", "--ol", action="store_true", help="Output lst slideshow file and exit"
+        "--outputlist", "--ol", nargs="?", const=True, metavar="FILE", help="Output lst slideshow file (optionally specify FILE) and exit"
     )
     parser.add_argument(
-        "--outputtree", "--ot", action="store_true", help="Output tree binary file and exit"
+        "--outputtree", "--ot", nargs="?", const=True, metavar="FILE", help="Output tree binary file (optionally specify FILE) and exit"
     )
     parser.add_argument(
         "--run", dest="run", action="store_true", help="Run the slideshow"
@@ -68,12 +68,6 @@ def get_arg_parser() -> argparse.ArgumentParser:
     )
     parser.set_defaults(dont_recurse=None)
     parser.add_argument(
-        "--ignore-below-bottom",
-        "--ibb",
-        action="store_true",
-        help="Ignore images in folders below the first mode rung",
-    )
-    parser.add_argument(
         "--video", dest="video", action="store_true", help="Enable video playback"
     )
     parser.add_argument(
@@ -89,9 +83,6 @@ def get_arg_parser() -> argparse.ArgumentParser:
     )
     parser.set_defaults(mute=None)
     parser.add_argument(
-        "--quiet", "-q", action="store_true", help="Run in quiet mode (no output)"
-    )
-    parser.add_argument(
         "--no-background", "--nbg", action="store_true", help="Force queue/cache loading into foreground"
     )
     parser.set_defaults(no_background=False)
@@ -99,10 +90,28 @@ def get_arg_parser() -> argparse.ArgumentParser:
         "--test", metavar="N", type=int, help="Run the test with N iterations"
     )
     parser.add_argument(
+        "--test_model",
+        "--tm",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated image provider model suffixes to test, "
+            "for example: weighted,controlled_random_weighted"
+        ),
+    )
+    parser.add_argument(
         "--histo", action="store_true", help="Show distribution histogram"
     )
     parser.add_argument(
-        "--debug", action="store_true"
+        "--quiet", "-q", action="store_true", help="Suppress non-error console output"
+    )
+    parser.set_defaults(quiet=False)
+    parser.add_argument(
+        "--debug",
+        type=int,
+        choices=[1, 2, 3, 4, 5],
+        default=2,
+        help="Logging level: 5=hurt, 4=debug, 3=warn, 2=info (default), 1=error",
     )
     parser.add_argument(
         "--testdepth", type=int, default=None, help="Depth to display test results"

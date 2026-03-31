@@ -1,9 +1,14 @@
 # Project structure
+docs/
 lists/
+docs/
 test_zone/
 input-file-tests/
+test_tmp_dir/
+tests_tmp_root/
 old versions/
 enkan/TODO.md
+benchmarks/
 benchmarks/
 
 # IDE/Editor settings

@@ -1,151 +1,271 @@
+from __future__ import annotations
+import copy
 import re
+from typing import Dict, List, Tuple, Optional, Any
+
+# Mode type: level -> (mode_char, [slope1, slope2])
+ModeMap = Dict[int, Tuple[str, List[int]]]
+
+_current_defaults: Defaults | None = None
 
 
-def parse_mode_string(mode_str):
-    # Updated regex: ([bw])(\d+)(?:,(-?\d+))?(?:,(-?\d+))?
-    pattern = re.compile(r"([bw])(\d+)(?:,(-?\d+))?(?:,(-?\d+))?", re.IGNORECASE)
-    matches = pattern.findall(mode_str)
-    # Each match is a tuple: (mode, level, slope1, slope2)
-    # Convert level to int, slopes to int if present, else None
-    result = {}
-    for char, num, slope1, slope2 in matches:
-        level = int(num)
-        slopes = []
-        if slope1:
-            slopes.append(int(slope1))
-        else:
-            slopes.append(0)
-        if slope2:
-            slopes.append(int(slope2))
-        else:
-            slopes.append(0)
-        result[level] = (char.lower(), slopes)
-    return result
+def set_current_defaults(defaults: "Defaults") -> None:
+    global _current_defaults
+    _current_defaults = defaults
 
 
-def resolve_mode(mode_dict, number):
-    if not mode_dict:
-        return ("w", [0, 0])  # Default to weighted mode, no slope
-
-    first_key = min(mode_dict.keys())
-
-    if number < first_key:
-        return ("l", [0, 0])
-    elif number in mode_dict:
-        mode_info = mode_dict[number]
-        if isinstance(mode_info, tuple):
-            # (mode, slopes)
-            mode, slope = mode_info
-            # Ensure slopes is always a list of two ints
-            if len(slope) == 1:
-                slope = [slope[0], 0]
-            elif len(slope) == 0:
-                slope = [0, 0]
-            return (mode, slope)
-        else:
-            # Backward compatibility: just a string
-            return (mode_info, [0, 0])
-    else:
-        return ("w", [0, 0])
+def get_current_defaults() -> "Defaults":
+    return _current_defaults if _current_defaults is not None else Defaults()
 
 
 class Defaults:
+    """
+    Holds global / CLI overrides and mutable runtime defaults.
+    Resolution order for each property:
+    CLI args override > global_* override > initial value passed at construction.
+    """
+
     def __init__(
         self,
-        weight_modifier=100,
-        mode={1: "w"},
-        is_random=False,
-        dont_recurse=False,
-        args=None,
-        video=True,
-        mute=True,
+        weight_modifier: int = 100,
+        mode: Any | None = None,
+        is_random: bool = False,
+        dont_recurse: bool = False,
+        args: Any | None = None,
+        video: bool = True,
+        mute: bool = True,
+        no_background: bool | None = None,
+        quiet: bool | None = None,
     ):
         self.args = args
+
+        # Base values
         self._weight_modifier = weight_modifier
-        self._mode = mode
-        self._is_random = is_random
-        self._dont_recurse = dont_recurse
-        self._video = video
-        self._mute = mute
+        self._mode: ModeMap = _ensure_mode_map(mode)
+        self._is_random: bool = is_random
+        self._dont_recurse: bool = dont_recurse
+        self._video: bool = video
+        self._mute: bool = mute
 
-        self.global_mode = None
-        self.global_is_random = None
-        self.global_dont_recurse = None
-        self.global_video = None
-        self.global_mute = None
-
-        self.args_mode = (
-            parse_mode_string(args.mode) if args and args.mode is not None else None
+        # CLI-sourced overrides (stored separately so properties can resolve precedence)
+        self.args_mode: ModeMap | None = (
+            _ensure_mode_map(args.mode)
+            if args and getattr(args, "mode", None) is not None
+            else None
         )
-        self.args_is_random = args.random if args and args.random is not None else None
-        self.args_dont_recurse = args.dont_recurse if args and args.dont_recurse is not None else None
-        self.args_video = args.video if args and args.video is not None else None
-        self.args_mute = args.mute if args and args.mute is not None else None
+        self.args_is_random = getattr(args, "random", None) if args else None
+        self.args_dont_recurse = getattr(args, "dont_recurse", None) if args else None
+        self.args_video = getattr(args, "video", None) if args else None
+        self.args_mute = getattr(args, "mute", None) if args else None
+        self.args_quiet = getattr(args, "quiet", None) if args else None
+        self.args_no_background = getattr(args, "no_background", None) if args else None
 
-        self.debug = args.debug
-        self.background = not args.no_background
+        # Global (runtime) overrides (set later via setters)
+        self.global_mode: ModeMap | None = None
+        self.global_is_random: bool | None = None
+        self.global_dont_recurse: bool | None = None
+        self.global_video: bool | None = None
+        self.global_mute: bool | None = None
 
-        self.groups = {}
+        # Derived flags
+        self.background: bool = not (
+            no_background
+            if no_background is not None
+            else (
+                bool(self.args_no_background)
+                if self.args_no_background is not None
+                else False
+            )
+        )
+        self.quiet: bool = (
+            quiet
+            if quiet is not None
+            else bool(self.args_quiet) if self.args_quiet is not None else False
+        )
+
+        # Group metadata container
+        self.groups: dict[str, Any] = {}
+
+    def clone_for_source(self) -> "Defaults":
+        """
+        Create a source-local clone for input parsing/building.
+
+        This preserves current CLI override precedence and any already-resolved
+        top-level runtime defaults, while isolating per-source mutations such as
+        txt-file globals and group definitions from the shared runtime Defaults.
+        """
+        clone = Defaults(
+            weight_modifier=self._weight_modifier,
+            mode=_copy_mode_map(self._mode),
+            is_random=self._is_random,
+            dont_recurse=self._dont_recurse,
+            args=self.args,
+            video=self._video,
+            mute=self._mute,
+            no_background=not self.background,
+            quiet=self.quiet,
+        )
+        clone.global_mode = _copy_mode_map(self.global_mode)
+        clone.global_is_random = self.global_is_random
+        clone.global_dont_recurse = self.global_dont_recurse
+        clone.global_video = self.global_video
+        clone.global_mute = self.global_mute
+        clone.groups = copy.deepcopy(self.groups)
+        return clone
 
     @property
-    def weight_modifier(self):
+    def weight_modifier(self) -> int:
         return self._weight_modifier
 
     @property
-    def mode(self):
+    def mode(self) -> ModeMap:
         if self.args_mode is not None:
             return self.args_mode
-        elif self.global_mode is not None:
+        if self.global_mode is not None:
             return self.global_mode
-        else:
-            return self._mode
+        return self._mode
 
     @property
-    def is_random(self):
+    def is_random(self) -> bool:
         if self.args_is_random is not None:
             return self.args_is_random
-        elif self.global_is_random is not None:
+        if self.global_is_random is not None:
             return self.global_is_random
-        else:
-            return self._is_random
+        return self._is_random
 
     @property
-    def dont_recurse(self):
+    def dont_recurse(self) -> bool:
         if self.args_dont_recurse is not None:
             return self.args_dont_recurse
-        elif self.global_dont_recurse is not None:
+        if self.global_dont_recurse is not None:
             return self.global_dont_recurse
-        else:
-            return self._dont_recurse
+        return self._dont_recurse
 
     @property
-    def video(self):
-        if self.args_video is not None:  # CLI overrides all
+    def video(self) -> bool:
+        if self.args_video is not None:
             return self.args_video
-        elif self.global_video is not None:  # folder-specific config
+        if self.global_video is not None:
             return self.global_video
-        else:
-            return self._video  # built-in fallback
+        return self._video
 
     @property
-    def mute(self):
+    def mute(self) -> bool:
         if self.args_mute is not None:
             return self.args_mute
-        elif self.global_mute is not None:
+        if self.global_mute is not None:
             return self.global_mute
-        else:
-            return self._mute
+        return self._mute
 
-    def set_global_defaults(self, mode=None, is_random=None, dont_recurse=None):
+    def set_global_defaults(
+        self,
+        mode: Any | None = None,
+        is_random: bool | None = None,
+        dont_recurse: bool | None = None,
+    ) -> None:
         if mode is not None:
-            self.global_mode = mode
+            self.global_mode = _ensure_mode_map(mode)
         if is_random is not None:
             self.global_is_random = is_random
         if dont_recurse is not None:
             self.global_dont_recurse = dont_recurse
 
-    def set_global_video(self, video=None, mute=None):
+    def set_global_video(
+        self, video: bool | None = None, mute: bool | None = None
+    ) -> None:
         if video is not None:
             self.global_video = video
         if mute is not None:
             self.global_mute = mute
+
+
+class Mode:
+    """Wrapper around a ModeMap providing parsing and resolution."""
+
+    def __init__(self, mode_map: Optional[ModeMap] = None) -> None:
+        self.map: ModeMap = mode_map or {}
+
+    @classmethod
+    def from_string(cls, mode_str: str) -> "Mode":
+        return cls(parse_mode_string(mode_str))
+
+    def resolve(self, level: int) -> Tuple[str, List[int]]:
+        return resolve_mode(self.map, level)
+
+    def serialise(self) -> Optional[str]:
+        return serialise_mode(self.map)
+
+    def __bool__(self) -> bool:
+        return bool(self.map)
+
+    def __repr__(self) -> str:
+        return f"Mode({self.serialise()!r})"
+
+
+def _ensure_mode_map(mode: Any) -> ModeMap:
+    if mode is None:
+        return {1: ("w", [0, 0])}
+    if isinstance(mode, dict):
+        out: ModeMap = {}
+        for level, val in mode.items():
+            if isinstance(val, tuple):
+                ch, slopes = val
+                slopes_list = list(slopes or [])
+                if len(slopes_list) < 2:
+                    slopes_list.extend([0] * (2 - len(slopes_list)))
+                out[int(level)] = (str(ch), slopes_list[:2])
+            else:
+                out[int(level)] = (str(val), [0, 0])
+        return out
+    if isinstance(mode, str):
+        return parse_mode_string(mode)
+    raise TypeError(f"Unsupported mode type: {type(mode).__name__}")
+
+
+def _copy_mode_map(mode_data: Optional[ModeMap]) -> Optional[ModeMap]:
+    if mode_data is None:
+        return None
+    return {
+        int(level): (str(ch), list(slopes or []))
+        for level, (ch, slopes) in mode_data.items()
+    }
+
+
+def parse_mode_string(mode_str: str) -> ModeMap:
+    pattern = re.compile(r"([bw])(\d+)(?:,(-?\d+))?(?:,(-?\d+))?", re.IGNORECASE)
+    matches = pattern.findall(mode_str)
+    result: ModeMap = {}
+    for char, num, slope1, slope2 in matches:
+        level = int(num)
+        s1 = int(slope1) if slope1 else 0
+        s2 = int(slope2) if slope2 else 0
+        result[level] = (char.lower(), [s1, s2])
+    return result
+
+
+def serialise_mode(mode_data: Optional[ModeMap]) -> Optional[str]:
+    if not mode_data:
+        return None
+    parts: List[str] = []
+    for level in sorted(mode_data.keys()):
+        ch, slopes = mode_data[level]
+        s = list(slopes or [])
+        if len(s) < 2:
+            s.extend([0] * (2 - len(s)))
+        parts.append(f"{ch}{level},{s[0]},{s[1]}")
+    return " ".join(parts)
+
+
+def resolve_mode(mode_dict: ModeMap, number: int) -> Tuple[str, List[int]]:
+    if not mode_dict:
+        return ("w", [0, 0])
+    first_key = min(mode_dict.keys())
+    if number < first_key:
+        return ("l", [0, 0])  # Sentinel for levels above the first configured rung.
+    if number in mode_dict:
+        ch, slopes = mode_dict[number]
+        s = list(slopes or [])
+        if len(s) < 2:
+            s.extend([0] * (2 - len(s)))
+        return ch, s[:2]
+    return ("w", [0, 0])

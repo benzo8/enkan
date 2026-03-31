@@ -37,19 +37,25 @@ class Grafting:
         # Resolve group graft level override
         group_config = t.defaults.groups.get(group) if group else None
         group_graft_level = group_config.get("graft_level") if group_config else None
-        graft_level = graft_level or group_graft_level
-        if not graft_level:
+        graft_level = graft_level if graft_level is not None else group_graft_level
+        if graft_level is None:
             return
 
         current_node: TreeNode | None = t.find_node(root, lookup_dict=t.path_lookup)
         if not current_node:
             logger.debug("Node '%s' not found for grafting. Skipping.", root)
             return
-        current_node_parent: TreeNode | None = current_node.parent
 
         levelled_name: str = t.convert_path_to_tree_format(
             t.set_path_to_level(root, graft_level, group)
         )
+        # Non-group nodes already at the target location do not need re-parenting.
+        if not group and current_node.name == levelled_name:
+            return
+
+        current_node_parent: TreeNode | None = current_node.parent
+        if not current_node.group:
+            current_node.group = group
         parent_name: str = os.path.dirname(levelled_name)
         parent_node: TreeNode = t.ensure_parent_exists(parent_name)
 
@@ -96,6 +102,7 @@ class Grafting:
             2. lowest mode_modifier level (if any)
             (else skip proportion)
         """
+        t: Tree = self.tree
         proportion = group_config.get("proportion")
         mode_mods: dict[int, Any] | None = group_config.get("mode_modifier")
 
@@ -107,8 +114,13 @@ class Grafting:
             if effective_level is not None:
                 target_node = self._ascend_to_level(anchor, effective_level)
                 if target_node and target_node.level == effective_level:
-                    target_node.proportion = proportion
-
+                    t.update_node(
+                        target_node,
+                        {
+                            "proportion": proportion,
+                            "user_proportion": proportion,
+                        },
+                    )
         # Mode modifiers
         if mode_mods:
             # Keys are absolute levels; assign only within this subtree.

@@ -30,13 +30,13 @@ from enkan.cli import main_with_args
 def main() -> None:
     """Console script / module entry point."""
     args = get_arg_parser().parse_args()
-    configure_logging(debug=getattr(args, "debug", False), quiet=getattr(args, "quiet", False))
+    configure_logging(log_level=getattr(args, "debug", 2))
     try:
         main_with_args(args)
     except Exception as e:
         logging.getLogger("enkan").error("Fatal: %s", e)
         # No traceback shown unless debug enabled
-        if getattr(args, "debug", False):
+        if getattr(args, "debug", 0) >= 4:
             raise
 
 if __name__ == "__main__":

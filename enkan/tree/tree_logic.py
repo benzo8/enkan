@@ -1,28 +1,60 @@
 from __future__ import annotations
 import logging
-from typing import Callable, Literal, Mapping, Optional, Sequence, Tuple, List
+from itertools import accumulate
+from typing import Any, Callable, Literal, Mapping, Optional, Sequence, Tuple, List
 
 from .Tree import Tree
-from .TreeBuilder import TreeBuilder
+from .TreeBuilderTXT import TreeBuilderTXT
+from .TreeBuilderLST import TreeBuilderLST
 from .TreeNode import TreeNode
-from enkan.utils.Defaults import Defaults, resolve_mode
-from enkan.utils.tests import report_branch_weight_sums
+from .diagnostics import report_branch_weight_sums
+from enkan.utils.Defaults import Defaults, resolve_mode, ModeMap
 from enkan.utils.Filters import Filters
 from enkan.constants import TOTAL_WEIGHT
+from enkan.utils.logging import HURT_LEVEL
 
-logger: logging.Logger = logging.getLogger("__name__")
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 def build_tree(
     defaults: Defaults,
     filters: Filters,
-    image_dirs: Mapping[str, dict],
-    specific_images: Optional[Mapping[str, dict]],
-    quiet: bool = False,
+    image_dirs: Mapping[str, dict] | None = None,
+    specific_images: Optional[Mapping[str, dict]] = None,
+    mode: Optional[ModeMap] = None,
+    *,
+    kind: str | None = None,
+    list_path: str | None = None,
+    tk_root: Any = None,
+    tk_enabled: bool = True,
 ) -> Tree:
+    """
+    Dispatch tree construction by source kind.
+        kind="txt" (default): use directory/image mappings (image_dirs/specific_images)
+        kind="lst": build from a .lst path
+    """
     tree = Tree(defaults, filters)
-    builder = TreeBuilder(tree)
-    builder.build_tree(image_dirs, specific_images, quiet)
+
+    source_kind = (kind or "txt").lower()
+    match source_kind:
+        case "txt":
+            builder = TreeBuilderTXT(tree)
+            builder.build_tree(
+                image_dirs or {},
+                specific_images,
+                mode,
+                tk_root=tk_root,
+                tk_enabled=tk_enabled,
+            )
+        case "lst":
+            if not list_path:
+                raise ValueError("list_path is required when building from a .lst file.")
+            builder = TreeBuilderLST(tree)
+            builder.build(list_path)
+        case _:
+            raise ValueError(f"Unsupported build kind '{kind}'.")
+
+    # tree.record_built_mode()
     _, num_images = tree.count_branches(tree.root)
     if num_images == 0:
         raise ValueError("No images found in the provided input files.")
@@ -30,7 +62,15 @@ def build_tree(
     return tree
 
 
-def calculate_weights(tree: Tree) -> None:
+def clear_weights(tree: Tree) -> None:
+    """
+    Clear all cached node weights so subsequent recalculation doesn't show stale values.
+    """
+    for node in tree.node_lookup.values():
+        node.weight = None
+
+
+def calculate_weights(tree: Tree, ignore_user_proportion: bool = False) -> None:
     """
     Calculates and assigns weights to all nodes in the tree based on the current mode and slope settings.
 
@@ -44,6 +84,16 @@ def calculate_weights(tree: Tree) -> None:
     Returns:
         None. The function updates the 'weight' attribute of each node in-place.
     """
+
+    class _ImageBucket:
+        """
+        Synthetic recipient used to apportion a parent node's own images
+        alongside its real child nodes without double-counting total weight.
+        """
+
+        def __init__(self, image_count: int) -> None:
+            self.image_count = image_count
+            self.proportion: float | None = None
 
     def _process_node(
         node: TreeNode,
@@ -64,14 +114,15 @@ def calculate_weights(tree: Tree) -> None:
         Returns:
             None. The function updates the 'weight' attribute of each node in-place and recurses through the tree.
         """
-        # Apply node's weight_modifier
-        node.weight = (
+        # Effective total weight available at this node after modifier.
+        total_node_weight = (
             apportioned_weight * (node.weight_modifier / 100)
             if node.is_percentage
             else apportioned_weight
         )
 
         if not node.children:
+            node.weight = total_node_weight
             return
 
         mode_modifier = node.mode_modifier or mode_modifier
@@ -80,18 +131,40 @@ def calculate_weights(tree: Tree) -> None:
             tree.defaults.mode | (node.children[0].mode_modifier or {}), child_level
         )
 
-        children: List[TreeNode] = _fill_missing_proportions(
-            node.children,
+        image_bucket: _ImageBucket | None = (
+            _ImageBucket(len(node.images)) if node.images else None
+        )
+        recipients: List[TreeNode | _ImageBucket] = list(node.children)
+        if image_bucket is not None:
+            recipients.append(image_bucket)
+
+        recipients = _fill_missing_proportions(
+            recipients,
             child_mode,
             slope,
             count_fn=(
-                (lambda n: tree.count_branches(n)[1]) if child_mode == "w" else None
+                (
+                    lambda n: (
+                        n.image_count
+                        if isinstance(n, _ImageBucket)
+                        else tree.count_branches(n)[1]
+                    )
+                )
+                if child_mode == "w"
+                else None
             ),
         )
 
-        for child in children:
+        if image_bucket is not None:
+            own_proportion = image_bucket.proportion if image_bucket.proportion is not None else 0
+            node.weight = total_node_weight * (own_proportion / 100)
+        else:
+            # Internal nodes without direct images should not contribute leaf weight directly.
+            node.weight = 0.0
+
+        for child in node.children:
             proportion = child.proportion if child.proportion is not None else 0
-            child_weight = node.weight * (proportion / 100)
+            child_weight = total_node_weight * (proportion / 100)
             _process_node(child, child_weight, mode_modifier)
 
     def _fill_missing_proportions(
@@ -169,7 +242,17 @@ def calculate_weights(tree: Tree) -> None:
                     n.proportion *= factor
         return nodes
 
-    lowest_rung: int = tree.filters.lowest_rung if tree.filters.lowest_rung is not None else min(tree.defaults.mode.keys())
+    def _reset_proportions(node: TreeNode) -> None:
+        if not ignore_user_proportion and node.user_proportion is not None:
+            node.proportion = float(node.user_proportion)
+        else:
+            node.proportion = None
+        for child in node.children:
+            _reset_proportions(child)
+
+    _reset_proportions(tree.root)
+
+    lowest_rung: int = min(tree.defaults.mode.keys())
     starting_nodes: List[TreeNode] = tree.get_nodes_at_level(lowest_rung) or [tree.root]
 
     mode, slope = resolve_mode(tree.defaults.mode, lowest_rung)
@@ -181,24 +264,6 @@ def calculate_weights(tree: Tree) -> None:
         count_fn=(lambda n: tree.count_branches(n)[1]) if mode == "w" else None,
     )
 
-    offending: List[TreeNode] = []
-
-    def _collect_with_images_below_lowest_rung(node: TreeNode) -> None:
-        if node.level < lowest_rung and node.images:
-            offending.append(node)
-        for child in node.children:
-            _collect_with_images_below_lowest_rung(child)
-
-    _collect_with_images_below_lowest_rung(tree.root)
-
-    if offending:
-        details = "\n  ".join(sorted(n.path or n.name for n in offending))
-        raise ValueError(
-            "Images detected below the first mode rung "
-            f"(level {lowest_rung}):\n  {details}.\n"
-            "Use grafting to place those images at or above the balancing level or use the --ibb argument."
-        )
-
     for node in starting_nodes:
         if node.proportion is None:
             # If still unset, give remaining equally (single node fallback)
@@ -207,7 +272,7 @@ def calculate_weights(tree: Tree) -> None:
         _process_node(node, apportioned_weight)
 
     # DIAGNOSTIC REPORT (optional)
-    if logger.isEnabledFor(logging.DEBUG):
+    if logger.isEnabledFor(HURT_LEVEL):
         report_branch_weight_sums(starting_nodes)
 
 
@@ -234,6 +299,7 @@ def extract_image_paths_and_weights_from_tree(
     """
     all_images: List[str] = []
     weights: List[float] = []
+    unweighted_image_nodes: List[TreeNode] = []
 
     # Helper function to recursively gather data
     def traverse_node(node: Optional[TreeNode]) -> None:
@@ -241,6 +307,11 @@ def extract_image_paths_and_weights_from_tree(
             return
         num_images = len(node.images)
         if num_images:
+            if node.weight is None:
+                unweighted_image_nodes.append(node)
+                for child in node.children:
+                    traverse_node(child)
+                return
             normalised_weight = node.weight / (
                 num_images if node.is_percentage else node.weight_modifier
             )
@@ -255,4 +326,35 @@ def extract_image_paths_and_weights_from_tree(
         start_node = tree.root
     traverse_node(start_node)
 
+    if unweighted_image_nodes:
+        lowest_rung = min(tree.defaults.mode.keys()) if tree.defaults.mode else None
+        sample = ", ".join(
+            f"{n.path} (level {n.level}, images {len(n.images)})"
+            for n in unweighted_image_nodes[:3]
+        )
+        raise ValueError(
+            "Found image-bearing node(s) without calculated weight "
+            f"(lowest rung {lowest_rung}). "
+            "This usually means images exist above the lowest rung after merge/harmonisation. "
+            f"Examples: {sample}"
+        )
+
     return all_images, weights
+
+
+def apply_mode_and_recalculate(
+    tree: Tree, defaults: Defaults, ignore_user_proportion: bool = False
+) -> tuple[list[str], list[float], list[float]]:
+    """
+    Apply the current defaults.mode to the tree, recalculate weights, and return
+    images/weights/cumulative weights for downstream consumers.
+    """
+    # Ensure the tree sees the latest defaults (mode may have just changed)
+    tree.defaults = defaults
+    clear_weights(tree)
+    calculate_weights(tree, ignore_user_proportion=ignore_user_proportion)
+    images, weights = extract_image_paths_and_weights_from_tree(tree)
+    if not images:
+        raise ValueError("Recalculation produced no images.")
+    cum_weights = list(accumulate(weights))
+    return images, weights, cum_weights

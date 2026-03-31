@@ -1,11 +1,22 @@
-# enkan
+# enkan dev
 
 A not-so-simple slideshow application for building rich, weighted photo and video playlists that you can drive with a lean Tkinter UI. enkan reads structured text input, builds a tree of sources, and serves images (and optional video) according to the weighting rules you specify.
 
 Of course, enkan can show you images completely at random, but its real power comes as you delve deeper into weighting and grafting, giving you complete control over the balance of images you see.
 
+For release history, see [CHANGELOG.md](CHANGELOG.md).
+
 ## Requirements
 
+- Python ≥3.11
+- Pillow
+- python-vlc (for video support)
+- matplotlib (for tree visualization)
+- tqdm (progress bars)
+
+Optional:
+
+- customtkinter (enhanced GUI appearance)
 - Python ≥3.11
 - Pillow
 - python-vlc (for video support)
@@ -20,7 +31,7 @@ Optional:
 
 ### Using uv (recommended)
 
-```
+```bash
 uv tool install enkan
 ```
 
@@ -42,10 +53,12 @@ If you install into a fresh environment, remember to install VLC separately so t
 
 ## Features
 
-- Weighted and balanced image selection modes
+- Weighted, fully random, sequential, folder-burst, and controlled-random image providers
 - Tree-based directory organization with grafting
+- Persistent viewing history, including across temporary scope changes
+- Folder-aware subfolder and parent navigation modes
 - EXIF orientation support
-- Image caching for performance
+- Image caching and background preload for performance
 - Video playback support (via VLC)
 - Interactive GUI with zoom/pan
 - Rotation persistence to EXIF
@@ -60,7 +73,29 @@ If you install into a fresh environment, remember to install VLC separately so t
 enkan --input_file shows/summer-show.txt --run
 ```
 
-enkan will parse the file, build an in-memory tree, and open the slideshow window. Use the keyboard or on-screen controls to navigate. Add `--auto 8` to advance every eight seconds, or `--random` to drop into completely random mode.
+enkan will parse the file, build an in-memory tree, and open the slideshow window. Use the keyboard controls to navigate and switch providers. Add `--auto 8` to advance every eight seconds, or `--random` to start in completely random mode.
+
+## Runtime Providers
+
+enkan currently ships with five runtime image providers:
+
+- `weighted` - the default weighted/balanced behavior, using the tree-derived image weights
+- `random` - pure random selection, ignoring weights
+- `sequential` - simple linear stepping through the current image set
+- `burst` - weighted selection of a folder seed, then a short burst of images from that folder
+- `controlled_random_weighted` (`CRW`) - a weighted provider with folder-level memory that reduces obvious streaks and repeatedly favors folders that have not been seen for a while
+
+### Controlled Random Weighted (CRW)
+
+CRW is deliberately less statistically random than plain weighted selection so that it feels more random to a human viewer.
+
+It keeps the existing image and folder weightings, but adds folder-level memory:
+
+- recently seen folders are cooled off
+- folders that have not been seen for a while are gradually boosted
+- repeated streaks from the same folder are penalised
+
+The result is usually a slideshow that feels less clumpy than pure weighted random, while still respecting the underlying weighting rules.
 
 ## `.txt` Input Files
 
@@ -126,18 +161,17 @@ A group definition stores graft level, proportion, and mode modifiers. Any line 
 | --- | --- |
 | `-i`, `--input_file` | One or more `.txt`, `.lst` or `.tree` files, or folder and/or file paths (including [modifiers] if desired) to process. |
 | `--run` | Explicitly launch the slideshow (optional when you omit `--output*`). |
-| `--outputlist` | Write a `.lst` file next to the inputs instead of launching the GUI. |
-| `--outputtree` | Persist the computed tree to a `.tree` file for fast reloads. |
+| `--outputlist [filename]` | Write a weighted `.lst` file instead of launching the GUI. |
+| `--outputtree [filename]` | Persist the computed tree to a `.tree` file for fast reloads instead of lauching the GUI. |
 | `--mode` | Provide a global mode string such as `b1w2` to override file defaults. |
 | `--random` | Start in fully random mode (same as `[r]` in a file). |
 | `--auto N` | Advance automatically every `N` seconds. |
 | `--no-recurse` | Treat every supplied folder as non-recursive. |
-| `--ignore-below-bottom` | Ignore files in folders below lowest balance level. |
 | `--video` / `--no-video` | Force-enable or disable video globally. |
 | `--no-mute` | Keep audio tracks unmuted (video default is muted). |
-| `--quiet` | Suppress progress output. |
 | `--no-background` | Run loaders in the foreground (useful when debugging). |
 | `--test N` | Run `N` randomised draws and report the observed distribution. Combine with `--histo` for a matplotlib histogram. |
+| `--test_model`, `--tm` | Comma-separated provider suffixes to compare during `--test`, for example `weighted,controlled_random_weighted`. |
 | `--printtree` | Emit a text representation of the computed tree. |
 | `--testdepth`, `--histo`, `--debug` | Extra diagnostics for tuning your weighting setup. |
 
@@ -150,19 +184,25 @@ A group definition stores graft level, proportion, and mode modifiers. Any line 
 | Right | Forward through history |
 | Up | Next sequential image |
 | Down | Previous sequential image |
-| N | Toggle information line |
-| C | Toggle Random Mode - overrides weightings |
-| S | Toggle Slideshow Mode - limit slideshow to subfolder containing current image |
-| N | Toggle Navigation Mode - switch between Branch and Folder. See below for details on Navigation Mode and Parent Mode|
-| P | Enter Parent Mode - move up tree and limit slideshow to images in folders below current parent |
-| I | Step backwards through Parent Mode (if possible) |
+| N | Toggle the information line |
+| C | Select fully random provider |
+| W | Select weighted/balanced provider |
+| D | Select controlled-random weighted (`CRW`) provider |
+| Shift-D | Cycle CRW status display: off / friendly / useful / debug |
+| L | Select linear / sequential provider |
+| B | Select Folder Burst mode |
+| Ctrl-B | Reset Folder Burst mode and force a new burst seed |
+| S | Toggle Subfolder mode |
+| T | Toggle Navigation mode between Branch and Folder |
+| P | Follow branch/folder down into Parent Mode |
+| O | Follow branch/folder up within Parent Mode |
+| I | Step backwards through Parent Mode stack |
 | U | Reset Parent Mode |
-| W | Select Weighted/Balanced mode |
-| B | Select Folder Burst Mode - pick 5 images from the current folder, then randomly select the next folder and repeat |
-| L | Select Liner / Sequential Mode |
-| Ctrl-B | Reset Folder Burst Mode - pick a new folder and begin Folder Burst mode again |
+| Ctrl-D | Clear controlled-random folder memory for the current scope |
+| M | Toggle mute |
 | R | Rotate image clockwise by 90 degrees |
 | Ctrl-R | Try to write current orientation to image EXIF data |
+| Delete | Delete current image or video |
 | = / + / - | Zoom image |
 | 0 | Reset Zoom |
 | Shift-Cursor | Move viewport around zoomed image |
@@ -175,11 +215,14 @@ enkan can navigate in two modes:
 - Branch - Parent Mode moves up and down the branches of the tree
 - Folder - Parent Mode moves up and down the folder structure of the disk. If the folder you move to is not in the tree, enkan will need to read all the files below the current folder, whether they are in you input files or not. This can take a lot of time.
 
+Subfolder mode and Parent mode temporarily restrict future selection to a smaller scope, but your viewer history is still preserved across those scope changes. If you explicitly go back, enkan can revisit images you saw before entering the temporary scope.
+
 ## Working With Lists and Trees
 
 - Run `enkan -i show.txt --outputlist` to capture the fully expanded list (including virtual nodes and weights) into `show.lst`.
 - Run `enkan -i show.txt --outputtree` to produce `show.tree`, a binary cache you can ship with a release for faster loading.
 - Combine `--printtree` and `--test` while iterating on your `.txt` files to confirm that proportions and grafting behave the way you expect.
+- Use `--tm weighted,controlled_random_weighted` with `--test` when you want to compare plain weighted behavior against CRW distribution on the same dataset.
 
 ## Tips
 
