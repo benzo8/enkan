@@ -20,7 +20,6 @@ from enkan.utils.Defaults import Defaults, resolve_mode, parse_mode_string
 from enkan.plugables.FolderSelectionMemory import FolderSelectionMemory
 from enkan.utils.Filters import Filters
 from enkan.utils.SelectionWeights import SelectionWeights
-from enkan.utils.myStack import Stack
 from enkan.plugables.ImageProviders import ImageProviders
 from enkan.tree.tree_logic import (
     apply_mode_and_recalculate,
@@ -29,6 +28,7 @@ from enkan.tree.tree_logic import (
 )
 from enkan.tree.diagnostics import print_tree
 from enkan.mySlideshow.Gui.Gui import Gui
+from enkan.mySlideshow.ScopeStack import ScopeStack, ScopeStackEntry
 from enkan.mySlideshow.ZoomPan import ZoomPan
 
 # Configure logging
@@ -71,8 +71,10 @@ class ImageSlideshow:
         self.original_image_paths: list = image_paths
         self.number_of_images: int = len(image_paths)
         self.current_image_index = 0
-        self.subFolderStack = Stack(1)
-        self.parentFolderStack = Stack(constants.PARENT_STACK_MAX)
+        self.subFolderStack: ScopeStack[_ScopeState] = ScopeStack(1)
+        self.parentFolderStack: ScopeStack[_ScopeState] = ScopeStack(
+            constants.PARENT_STACK_MAX
+        )
         self.subfolder_mode = False
         self.parent_mode = False
         self.navigation_mode = "folder"
@@ -1027,9 +1029,11 @@ class ImageSlideshow:
                 folder: str = os.path.dirname(self.current_image_path)
                 self._record_scope_entry(folder)
                 self.subFolderStack.push(
-                    folder,
-                    self.image_paths[:],
-                    self._capture_scope_state(),
+                    ScopeStackEntry(
+                        path=folder,
+                        image_paths=self.image_paths[:],
+                        scope_state=self._capture_scope_state(),
+                    )
                 )
                 temp_image_paths: list[str] = utils.images_from_path(
                     os.path.dirname(self.current_image_path),
@@ -1046,9 +1050,11 @@ class ImageSlideshow:
                     return
                 self._record_scope_entry(node.name)
                 self.subFolderStack.push(
-                    node.name,
-                    self.image_paths[:],
-                    self._capture_scope_state(),
+                    ScopeStackEntry(
+                        path=node.name,
+                        image_paths=self.image_paths[:],
+                        scope_state=self._capture_scope_state(),
+                    )
                 )
                 temp_image_paths, temp_weights = (
                     extract_image_paths_and_weights_from_tree(
@@ -1066,10 +1072,14 @@ class ImageSlideshow:
         )
 
     def subfolder_mode_off(self) -> None:
-        _, self.image_paths, scope_state = self.subFolderStack.pop()
+        scope_entry = self.subFolderStack.pop()
+        if scope_entry is None:
+            logger.warning("Cannot leave subfolder mode - scope stack is empty.")
+            return
+        self.image_paths = scope_entry.image_paths
         self.number_of_images = len(self.image_paths)
         self.subfolder_mode = False
-        self._apply_scope_state(scope_state)
+        self._apply_scope_state(scope_entry.scope_state)
         self.update_slide_show(
             image_paths=self.image_paths,
             selection_weights=self.selection_weights,
@@ -1147,16 +1157,22 @@ class ImageSlideshow:
             return
 
         current_path: str = os.path.dirname(self.current_image_path)
-        current_top = self.parentFolderStack.read_top()
         child_path = None
 
         if self.navigation_mode == "folder":
+            current_entry = self.parentFolderStack.peek()
+            if current_entry is None or current_entry.path is None:
+                logger.warning("Cannot navigate up - parent scope stack is empty.")
+                return
+            current_top = current_entry.path
             if utils.contains_subdirectory(current_top):
                 current_path_level: int = utils.level_of(current_top)
                 child_level: int = current_path_level + 1
                 child_path: str = utils.truncate_path(current_path, child_level)
 
-                if child_path == self.parentFolderStack.read_top(2):
+                previous_entry = self.parentFolderStack.peek(2)
+                previous_path = previous_entry.path if previous_entry else None
+                if child_path == previous_path:
                     self.step_backwards()
                     return
                 elif not utils.contains_subdirectory(child_path):
@@ -1164,9 +1180,11 @@ class ImageSlideshow:
                 else:
                     self._record_scope_entry(child_path)
                     self.parentFolderStack.push(
-                        child_path,
-                        self.image_paths[:],
-                        self._capture_scope_state(),
+                        ScopeStackEntry(
+                            path=child_path,
+                            image_paths=self.image_paths[:],
+                            scope_state=self._capture_scope_state(),
+                        )
                     )
             else:
                 logger.warning("No valid child directory found.")
@@ -1222,22 +1240,34 @@ class ImageSlideshow:
                         break
                 self._record_scope_entry(parent_path)
                 self.parentFolderStack.push(
-                    parent_path,
-                    self.image_paths[:],
-                    self._capture_scope_state(),
+                    ScopeStackEntry(
+                        path=parent_path,
+                        image_paths=self.image_paths[:],
+                        scope_state=self._capture_scope_state(),
+                    )
                 )
             case ("folder", True):
-                previous_path = self.parentFolderStack.read_top()
+                previous_entry = self.parentFolderStack.peek()
+                if previous_entry is None or previous_entry.path is None:
+                    logger.warning(
+                        "Cannot navigate down - parent scope stack is empty."
+                    )
+                    return
+                previous_path = previous_entry.path
                 parent_level = utils.level_of(previous_path) - 1
                 parent_path = utils.truncate_path(previous_path, parent_level)
-                if parent_path == self.parentFolderStack.read_top(2):
+                prior_entry = self.parentFolderStack.peek(2)
+                prior_path = prior_entry.path if prior_entry else None
+                if parent_path == prior_path:
                     self.step_backwards()
                     return
                 self._record_scope_entry(parent_path)
                 self.parentFolderStack.push(
-                    parent_path,
-                    self.image_paths[:],
-                    self._capture_scope_state(),
+                    ScopeStackEntry(
+                        path=parent_path,
+                        image_paths=self.image_paths[:],
+                        scope_state=self._capture_scope_state(),
+                    )
                 )
             case ("branch", False):
                 self.navigation_node = self.find_node_for_image(
@@ -1263,9 +1293,12 @@ class ImageSlideshow:
         if self.parentFolderStack.is_empty():
             logger.warning("Cannot step back - Stack is empty.")
             return
-        _, images, scope_state = self.parentFolderStack.pop()
-        self._apply_scope_state(scope_state)
-        self.update_slide_show(images, self.selection_weights)
+        scope_entry = self.parentFolderStack.pop()
+        if scope_entry is None:
+            logger.warning("Cannot step back - parent scope stack is empty.")
+            return
+        self._apply_scope_state(scope_entry.scope_state)
+        self.update_slide_show(scope_entry.image_paths, self.selection_weights)
 
     def reset_parent_mode(self, event=None) -> None:
         self.parent_mode = False
@@ -1317,21 +1350,27 @@ class ImageSlideshow:
 
             match (self.navigation_mode, self.parent_mode, self.subfolder_mode):
                 case ("folder", True, False):
-                    fixed_path: str = self.parentFolderStack.read_top()
+                    parent_entry = self.parentFolderStack.peek()
+                    fixed_path = parent_entry.path if parent_entry else None
                     fixed_colour = "gold"
                 case ("folder", _, True):
-                    fixed_path = self.subFolderStack.read_top()
+                    subfolder_entry = self.subFolderStack.peek()
+                    fixed_path = subfolder_entry.path if subfolder_entry else None
                     fixed_colour = "tomato"
                 case ("branch", True, False):
                     fixed_path = self.navigation_node.name
                     fixed_colour = "lightgreen"
                 case ("branch", _, True):
-                    fixed_path = self.original_tree.find_node(
-                        self.subFolderStack.read_top(), self.original_tree.node_lookup
-                    ).name
+                    subfolder_entry = self.subFolderStack.peek()
+                    if subfolder_entry is None or subfolder_entry.path is None:
+                        fixed_path = None
+                    else:
+                        fixed_path = self.original_tree.find_node(
+                            subfolder_entry.path, self.original_tree.node_lookup
+                        ).name
                     fixed_colour = "tomato"
 
-            if fixed_colour:
+            if fixed_colour and fixed_path:
                 if label_path.startswith(fixed_path):
                     fixed_portion: str = fixed_path
                     remaining_portion: str = label_path[len(fixed_path) :]
