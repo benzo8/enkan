@@ -1,7 +1,6 @@
 # ——— Standard library ———
 import os
 import sys
-import random
 import tkinter as tk
 import logging
 from dataclasses import dataclass, field
@@ -12,6 +11,7 @@ import vlc
 
 # ——— Local ———
 from enkan import constants
+from enkan.cache.CachedVideoData import CachedVideoData
 from enkan.cache.ImageCacheManager import ImageCacheManager
 from enkan.tree import Tree
 from enkan.tree.TreeNode import TreeNode
@@ -100,6 +100,8 @@ class ImageSlideshow:
 
         self.rotation_angle: int | float = 0
         self.current_exif_orientation: int = 1
+        self.current_vlc_media = None
+        self.current_video_payload: CachedVideoData | None = None
 
         self.root.configure(background="black")  # Set root background to black
         self.label = tk.Label(root, bg="black")  # Set label background to black
@@ -196,6 +198,19 @@ class ImageSlideshow:
     def _new_scope_memory(self) -> FolderSelectionMemory:
         return FolderSelectionMemory()
 
+    def _release_video_resources(self) -> None:
+        if hasattr(self, "video_player") and self.video_player:
+            self.video_player.stop()
+            self.video_player.release()
+            self.video_player = None
+        if self.current_vlc_media is not None:
+            try:
+                self.current_vlc_media.release()
+            except Exception:
+                logger.debug("Failed to release VLC media cleanly.", exc_info=True)
+            self.current_vlc_media = None
+        self.current_video_payload = None
+
     def _capture_scope_state(self) -> _ScopeState:
         return _ScopeState(
             selection_weights=self.selection_weights.copy(),
@@ -266,16 +281,16 @@ class ImageSlideshow:
 
     def show_image(self, image_path: str = None, record_history: bool = True) -> None:
         # Stop existing video playback and clean up resources
-        if hasattr(self, "video_player") and self.video_player:
-            self.video_player.stop()
-            self.video_player.release()
-            self.video_player = None
+        self._release_video_resources()
         if hasattr(self, "video_frame"):
             self.video_frame.place_forget()
 
-        image_path, image = self.manager.get_next(
+        image_path, media_payload = self.manager.get_next(
             image_path, record_history=record_history
         )
+        if not image_path:
+            logger.warning("No displayable media available.")
+            return
 
         self.current_image_path: str = image_path
         self.current_image_index = self.image_paths.index(image_path)
@@ -288,7 +303,10 @@ class ImageSlideshow:
             self.current_crw_metrics = None
         self._record_memory_for_view(image_path, record_history)
 
-        if image:
+        if not utils.is_videofile(image_path):
+            image = media_payload
+            self.current_vlc_media = None
+            self.current_video_payload = None
             self.current_exif_orientation = image.info.get("exif_orientation", 1)
             # If rotating, apply before handing to ZoomPan
             if hasattr(self, "rotation_angle") and self.rotation_angle:
@@ -314,12 +332,21 @@ class ImageSlideshow:
             if not hasattr(self, "vlc_instance"):
                 self.vlc_instance = vlc.Instance("--no-video-title-show", "--quiet")
 
-            media = self.vlc_instance.media_new(image_path)
-            media.get_mrl()  # Ensure it's fully initialised
+            media = None
+            if isinstance(media_payload, CachedVideoData):
+                media = media_payload.to_vlc_media(self.vlc_instance)
+            if media is None:
+                logger.debug("Falling back to path-based VLC media for %s", image_path)
+                media = self.vlc_instance.media_new(image_path)
+                media.get_mrl()  # Ensure it's fully initialised
 
             self.video_player = self.vlc_instance.media_player_new()
             self.video_player.set_media(media)
             self.video_player.audio_set_mute(self.video_muted)
+            self.current_vlc_media = media
+            self.current_video_payload = (
+                media_payload if isinstance(media_payload, CachedVideoData) else None
+            )
 
             window_id: int = self.video_frame.winfo_id()
             if sys.platform.startswith("win"):
@@ -496,6 +523,7 @@ class ImageSlideshow:
         image_paths: list,
         selection_weights: SelectionWeights,
         record_initial_history: bool = False,
+        preferred_index: int | None = None,
     ) -> None:
         """Updates the slideshow with the new set of images and weights."""
         history_snapshot = (
@@ -506,7 +534,14 @@ class ImageSlideshow:
         self._rebuild_folder_weight_cache()
         self._recalculate_controlled_random_settings()
         self.number_of_images = len(image_paths)
-        self.current_image_index: int = self.safe_current_image_index(image_paths)
+        self.current_image_index = self.safe_current_image_index(
+            image_paths,
+            preferred_index=preferred_index,
+        )
+        if not image_paths:
+            self.current_image_path = None
+            self.update_filename_display()
+            return
         self.manager: ImageCacheManager = self.providers.reset_manager(
             image_paths=image_paths,
             provider_name=self.providers.get_current_provider_name(),
@@ -584,14 +619,25 @@ class ImageSlideshow:
             os.path.dirname(image_path), self.original_tree.path_lookup
         )
 
-    def safe_current_image_index(self, image_paths: list) -> int:
+    def safe_current_image_index(
+        self,
+        image_paths: list,
+        preferred_index: int | None = None,
+    ) -> int:
         number_of_images: int = len(image_paths)
-        try:
-            current_image_index: int = self.image_paths.index(self.current_image_path)
-        except ValueError:
-            current_image_index: int = random.randint(0, number_of_images - 1)
+        if number_of_images <= 0:
+            return 0
 
-        return current_image_index
+        if self.current_image_path in image_paths:
+            return image_paths.index(self.current_image_path)
+
+        if preferred_index is None:
+            preferred_index = getattr(self, "current_image_index", 0)
+
+        if preferred_index is None:
+            return 0
+
+        return max(0, min(int(preferred_index), number_of_images - 1))
 
     def traverse_directory(
         self,
@@ -860,21 +906,29 @@ class ImageSlideshow:
             )
             if confirm:
                 # Stop and release video player if a video is playing
-                if hasattr(self, "video_player") and self.video_player:
-                    self.video_player.stop()
-                    self.video_player.release()
-                    self.video_player = None
+                self._release_video_resources()
                 if hasattr(self, "video_frame"):
                     self.video_frame.place_forget()
                 try:
-                    os.remove(self.current_image_path)
-                    index = self.image_paths.index(self.current_image_path)
+                    deleted_path = self.current_image_path
+                    os.remove(deleted_path)
+                    index = self.image_paths.index(deleted_path)
                     self.image_paths.pop(index)
                     self.selection_weights.remove_at(index)
-                    self.manager.history_manager.remove(self.current_image_path)
+                    self.manager.history_manager.remove(deleted_path)
+                    if not self.image_paths:
+                        self.current_image_path = None
+                        self.current_image_index = 0
+                        self._sync_original_scope_state()
+                        self.exit_slideshow()
+                        return
+                    next_index = min(index, len(self.image_paths) - 1)
+                    self.current_image_index = next_index
+                    self.current_image_path = self.image_paths[next_index]
                     self.update_slide_show(
                         image_paths=self.image_paths,
                         selection_weights=self.selection_weights,
+                        preferred_index=next_index,
                     )
                     self._sync_original_scope_state()
                 except Exception as e:
@@ -1245,6 +1299,11 @@ class ImageSlideshow:
 
     def update_filename_display(self) -> None:
         if self.show_filename:
+            if not self.current_image_path or not self.image_paths:
+                self.filename_label.place_forget()
+                self.mode_label.place_forget()
+                self.root.update_idletasks()
+                return
             fixed_colour = None
             fixed_path = None
             self.filename_label.config(state=tk.NORMAL)
@@ -1313,7 +1372,10 @@ class ImageSlideshow:
                 scope_parts.append("PAR")
 
             count = len(self.image_paths)
-            idx = self.image_paths.index(self.current_image_path) + 1
+            if self.current_image_path in self.image_paths:
+                idx = self.image_paths.index(self.current_image_path) + 1
+            else:
+                idx = max(1, min(self.current_image_index + 1, count))
             count_text = f"({idx}/{count})"
             crw_text = self._crw_status_text()
 
@@ -1355,10 +1417,7 @@ class ImageSlideshow:
     def exit_slideshow(self, event=None) -> None:
         self.manager.lru_cache.clear()
         self.manager.preload_queue.clear()
-        if hasattr(self, "video_player") and self.video_player:
-            self.video_player.stop()
-            self.video_player.release()
-            self.video_player = None
+        self._release_video_resources()
         if hasattr(self, "vlc_instance") and self.vlc_instance:
             self.vlc_instance.release()
             self.vlc_instance = None
