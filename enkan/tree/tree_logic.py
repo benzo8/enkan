@@ -13,7 +13,7 @@ from enkan.utils.Filters import Filters
 from enkan.constants import TOTAL_WEIGHT
 from enkan.utils.logging import HURT_LEVEL
 
-logger: logging.Logger = logging.getLogger("__name__")
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 def build_tree(

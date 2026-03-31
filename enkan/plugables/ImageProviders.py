@@ -8,7 +8,7 @@ from itertools import accumulate
 from enkan.cache.ImageCacheManager import ImageCacheManager
 from enkan.utils.utils import weighted_choice, images_from_path
 
-logger: logging.Logger = logging.getLogger("__name__")  
+logger: logging.Logger = logging.getLogger(__name__)
 
 class ImageProviders:
     def __init__(self):

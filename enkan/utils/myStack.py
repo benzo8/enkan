@@ -1,6 +1,6 @@
 import logging
 
-logger: logging.Logger = logging.getLogger("__name__")   
+logger: logging.Logger = logging.getLogger(__name__)
 
 class Stack:
     def __init__(self, max_size=None):
@@ -60,4 +60,3 @@ class Stack:
         if self.max_size is None:
             return False
         return len(self.stack) >= self.max_size
-
