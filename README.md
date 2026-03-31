@@ -1,4 +1,4 @@
-# enkan dev
+# enkan
 
 A not-so-simple slideshow application for building rich, weighted photo and video playlists that you can drive with a lean Tkinter UI. enkan reads structured text input, builds a tree of sources, and serves images (and optional video) according to the weighting rules you specify.
 
