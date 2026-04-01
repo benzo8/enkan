@@ -43,6 +43,8 @@ class ImageProviders:
         }
         self.current_provider_name = None
         self.current_provider_display_mode_index = 0
+        self.current_provider_settings: dict[str, float | int] = {}
+        self.current_provider_setting_overrides: dict[str, float | int] = {}
 
     def register_provider(self, name, func):
         self.providers[name] = func
@@ -54,6 +56,11 @@ class ImageProviders:
         if not provider_func:
             raise ValueError(f"No such provider: {provider_name}")
         preserve_display_mode = provider_name == self.current_provider_name
+        kwargs = self._resolve_provider_kwargs(
+            image_paths=image_paths,
+            provider_name=provider_name,
+            provider_kwargs=kwargs,
+        )
 
         # Each provider factory should accept image_paths and kwargs
         image_provider = provider_func(image_paths, **kwargs)
@@ -93,6 +100,51 @@ class ImageProviders:
         if spec:
             return spec.label
         return self.current_provider_name[0:3].upper()
+
+    def get_current_provider_settings(self) -> dict[str, float | int]:
+        return dict(self.current_provider_settings)
+
+    def _resolve_provider_kwargs(
+        self,
+        *,
+        image_paths: list[str],
+        provider_name: str,
+        provider_kwargs: dict[str, object],
+    ) -> dict[str, object]:
+        if provider_name != "controlled_random_weighted":
+            self.current_provider_settings = {}
+            self.current_provider_setting_overrides = {}
+            return provider_kwargs
+
+        weights = list(provider_kwargs.get("weights", []))
+        overrides: dict[str, float | int] = {}
+        if provider_name == self.current_provider_name:
+            overrides.update(self.current_provider_setting_overrides)
+
+        for key in ("gap_min", "gap_max", "alpha", "repeat_penalty"):
+            if key in provider_kwargs:
+                overrides[key] = provider_kwargs[key]
+
+        settings = self.get_controlled_random_settings(
+            image_paths=image_paths,
+            weights=weights,
+            gap_min=int(overrides.get("gap_min", 3)),
+            repeat_penalty=float(overrides.get("repeat_penalty", 0.1)),
+        )
+        if "gap_max" in overrides:
+            settings["gap_max"] = max(
+                int(settings["gap_min"]),
+                int(overrides["gap_max"]),
+            )
+        if "alpha" in overrides:
+            settings["alpha"] = float(overrides["alpha"])
+
+        self.current_provider_settings = dict(settings)
+        self.current_provider_setting_overrides = dict(overrides)
+        return {
+            **provider_kwargs,
+            **settings,
+        }
 
     def get_current_provider_status(
         self,
@@ -200,9 +252,13 @@ class ImageProviders:
             ) + weight
 
         one_folder_only = len(folder_base_totals) <= 1
-        resolved_settings = settings or self.get_controlled_random_settings(
-            image_paths=image_paths,
-            weights=weights,
+        resolved_settings = (
+            settings
+            or self.current_provider_settings
+            or self.get_controlled_random_settings(
+                image_paths=image_paths,
+                weights=weights,
+            )
         )
         gap_min = max(0, int(resolved_settings["gap_min"]))
         gap_max = max(gap_min, int(resolved_settings["gap_max"]))

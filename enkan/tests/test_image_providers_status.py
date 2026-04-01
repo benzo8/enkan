@@ -87,6 +87,39 @@ def test_image_providers_returns_controlled_random_settings():
     assert settings["gap_max"] >= 4
 
 
+def test_image_providers_recomputes_crw_settings_on_same_provider_rebuild(monkeypatch):
+    providers = ImageProviders()
+    providers.register_provider(
+        "controlled_random_weighted",
+        lambda image_paths, **kwargs: iter(()),
+    )
+
+    monkeypatch.setattr(
+        "enkan.plugables.ImageProviders.ImageCacheManager",
+        lambda image_provider, current_image_index, background_preload=True: object(),
+    )
+
+    providers.select_manager(
+        ["root\\a\\one.jpg", "root\\b\\two.jpg"],
+        provider_name="controlled_random_weighted",
+        weights=[1.0, 1.0],
+        gap_min=5,
+        repeat_penalty=0.2,
+    )
+    initial_settings = providers.get_current_provider_settings()
+
+    providers.select_manager(
+        [f"root\\{i}\\file.jpg" for i in range(20)],
+        provider_name="controlled_random_weighted",
+        weights=[1.0] * 20,
+    )
+    rebuilt_settings = providers.get_current_provider_settings()
+
+    assert rebuilt_settings["gap_min"] == 5
+    assert rebuilt_settings["repeat_penalty"] == 0.2
+    assert rebuilt_settings["gap_max"] > initial_settings["gap_max"]
+
+
 def test_image_providers_cycles_display_mode_for_current_provider():
     providers = ImageProviders()
     providers.current_provider_name = "controlled_random_weighted"

@@ -371,7 +371,6 @@ def test_show_image_preserves_provider_payload_on_same_image_redisplay():
     )
     slideshow.selection_weights = SimpleNamespace(weights=[1.0])
     slideshow.folder_memory = SimpleNamespace()
-    slideshow.controlled_random_settings = {"gap_min": 3}
     slideshow._record_memory_for_view = lambda image_path, record_history: None
     slideshow.zoompan = SimpleNamespace(set_image=lambda image: None)
     slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)

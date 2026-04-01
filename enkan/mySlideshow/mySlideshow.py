@@ -96,12 +96,6 @@ class ImageSlideshow:
         self.show_filename = False
         self._last_burst_memory_token = None
         self.current_provider_status_payload = None
-        self.controlled_random_settings = {
-            "gap_min": 3,
-            "gap_max": 80,
-            "alpha": 0.01,
-            "repeat_penalty": 0.1,
-        }
 
         self.screen_width: int = root.winfo_screenwidth()
         self.screen_height: int = root.winfo_screenheight()
@@ -190,7 +184,6 @@ class ImageSlideshow:
         # Instantiate Classes
         self.gui = Gui(use_customtkinter=True)
         self.providers = ImageProviders()
-        self._recalculate_controlled_random_settings()
         
         if self.defaults.is_random:
             self.set_provider("random")
@@ -360,7 +353,6 @@ class ImageSlideshow:
                     current_image_path=self.current_image_path,
                     target_image_path=image_path,
                     folder_memory=self.folder_memory,
-                    settings=self.controlled_random_settings,
                 )
             )
         else:
@@ -441,14 +433,6 @@ class ImageSlideshow:
             "folder_memory": self.folder_memory,
         }
 
-    def _recalculate_controlled_random_settings(self) -> None:
-        self.controlled_random_settings = self.providers.get_controlled_random_settings(
-            image_paths=self.image_paths,
-            weights=self.selection_weights.weights,
-            gap_min=int(self.controlled_random_settings["gap_min"]),
-            repeat_penalty=float(self.controlled_random_settings["repeat_penalty"]),
-        )
-
     def update_slide_show(
         self,
         image_paths: list,
@@ -462,7 +446,6 @@ class ImageSlideshow:
         )
         self.image_paths = image_paths
         self.selection_weights = selection_weights.copy()
-        self._recalculate_controlled_random_settings()
         self.number_of_images = len(image_paths)
         self.current_image_index = self.safe_current_image_index(
             image_paths,
@@ -486,7 +469,7 @@ class ImageSlideshow:
             record_history=record_initial_history,
         )
 
-    # --- Utility Methods ---
+    # --- Provider and Display Pipeline ---
 
     def _check_video_ended(self) -> None:
         if not self.video_player:
@@ -502,19 +485,15 @@ class ImageSlideshow:
 
         self.root.after(500, self._check_video_ended)
 
-        # --- Dynamic mode adjustment ---
+    # --- Provider Selection and Mode Recalculation ---
 
     def set_provider(self, provider_name: str, **provider_kwargs) -> None:
         # Easily switch to any provider by name/key
-        self.current_provider: str = provider_name
         history_snapshot = (
             self.manager.history_snapshot() if getattr(self, "manager", None) else None
         )
         if provider_name == "controlled_random_weighted":
-            self._recalculate_controlled_random_settings()
-            for key in self.controlled_random_settings:
-                if key in provider_kwargs:
-                    self.controlled_random_settings[key] = provider_kwargs[key]
+            provider_kwargs.setdefault("gap_min", 3)
         provider_kwargs = {
             **self._provider_kwargs(),
             **provider_kwargs,
@@ -606,7 +585,7 @@ class ImageSlideshow:
             record_initial_history=record_initial_history,
         )
 
-    # --- Dynamic Mode Methods ---
+    # --- Dynamic Mode Adjustment ---
 
     def _handle_mode_apply(self, mode_str: str, ignore_user: bool) -> Optional[str]:
         mode_dict = parse_mode_string(mode_str)
@@ -712,7 +691,7 @@ class ImageSlideshow:
         if getattr(self, "auto_advance_running", False):
             self._schedule_next_image()
 
-    # -- Keyboard Hooks ---
+    # --- UI Messaging and User Actions ---
 
     def _confirm_action(self, title: str, message: str) -> bool:
         return bool(self.gui.messagebox(title=title, message=message, type_="yesno"))
@@ -722,6 +701,26 @@ class ImageSlideshow:
 
     def _show_warning(self, title: str, message: str) -> None:
         self.gui.messagebox(title, message, icon="warning")
+
+    def select_mode(self, event=None) -> None:
+        match event.char.upper():
+            case "C":
+                self.set_provider("random")
+            case "L":
+                self.set_provider("sequential", index=self.current_image_index + 1)
+            case "W":
+                self.set_provider("weighted")
+            case "D":
+                self.set_provider(
+                    "controlled_random_weighted",
+                    gap_min=3,
+                )
+            case "B":
+                self.set_provider(
+                    "burst",
+                    burst_size=5,
+                    index=self.current_image_index,
+                )
 
     def delete_image(self, event=None) -> None:
         if self.current_image_path:
@@ -834,6 +833,17 @@ class ImageSlideshow:
         self.current_exif_orientation = outcome.new_orientation
         self.show_image(self.current_image_path, record_history=False)
 
+    def rotate_image(self, event=None) -> None:
+        self.rotation_angle = (self.rotation_angle - 90) % 360
+        self.show_image(self.current_image_path, record_history=False)
+
+    def toggle_mute(self, event=None) -> None:
+        if hasattr(self, "video_player") and self.video_player:
+            current_mute: bool = self.video_player.audio_get_mute()
+            new_mute: bool = not current_mute
+            self.video_player.audio_set_mute(new_mute)
+            self.video_muted = new_mute
+
     def print_tree_to_console(self, event=None) -> None:
         print_tree(self.defaults, self.original_tree.root, max_depth=9999)
 
@@ -856,6 +866,12 @@ class ImageSlideshow:
         self.manager.refresh_provider()
         self._sync_original_scope_state()
         logger.debug("Folder selection memory cleared for current scope.")
+
+    def toggle_filename_display(self, event=None) -> None:
+        self.show_filename: bool = not self.show_filename
+        self.update_filename_display()
+
+    # --- Scope Navigation ---
 
     def subfolder_mode_on(self) -> None:
         match self._navigation_basis():
@@ -917,33 +933,6 @@ class ImageSlideshow:
             selection_weights=self.selection_weights,
             record_initial_history=True,
         )
-
-    def select_mode(self, event=None) -> None:
-        match event.char.upper():
-            case "C":
-                self.set_provider("random")
-            case "L":
-                self.set_provider("sequential", index=self.current_image_index + 1)
-            case "W":
-                self.set_provider("weighted")
-            case "D":
-                self.set_provider(
-                    "controlled_random_weighted",
-                    gap_min=3,
-                )
-            case "B":
-                self.set_provider(
-                    "burst",
-                    burst_size=5,
-                    index=self.current_image_index,
-                )
-
-    def toggle_mute(self, event=None) -> None:
-        if hasattr(self, "video_player") and self.video_player:
-            current_mute: bool = self.video_player.audio_get_mute()
-            new_mute: bool = not current_mute
-            self.video_player.audio_set_mute(new_mute)
-            self.video_muted = new_mute
 
     def toggle_subfolder_mode(self, event=None) -> None:
         if not self.subfolder_mode:
@@ -1150,7 +1139,7 @@ class ImageSlideshow:
         self.show_image(self.image_paths[self.current_image_index], record_history=False)
         logger.debug("Parent mode reset and modes updated.")
 
-    # --- Filename and Mode Display Methods ---
+    # --- Status-Bar Display ---
 
     def _format_rotation_display(self) -> str:
         exif_angle: int = ORIENTATION_TO_CW.get(self.current_exif_orientation, 0)
@@ -1209,7 +1198,6 @@ class ImageSlideshow:
                 weights=self.selection_weights.weights,
                 current_image_path=self.current_image_path,
                 folder_memory=self.folder_memory,
-                settings=self.controlled_random_settings,
             )
         )
         return StatusBarContext(
@@ -1236,10 +1224,6 @@ class ImageSlideshow:
             auto_advance_running=bool(getattr(self, "auto_advance_running", False)),
             auto_advance_interval=getattr(self, "auto_advance_interval", None),
         )
-
-    def toggle_filename_display(self, event=None) -> None:
-        self.show_filename: bool = not self.show_filename
-        self.update_filename_display()
 
     def update_filename_display(self) -> None:
         if self.show_filename:
@@ -1276,12 +1260,6 @@ class ImageSlideshow:
             self.filename_label.place_forget()
             self.mode_label.place_forget()
         self.root.update_idletasks()
-
-    # --- Image Manipulation Methods ---
-
-    def rotate_image(self, event=None) -> None:
-        self.rotation_angle = (self.rotation_angle - 90) % 360
-        self.show_image(self.current_image_path, record_history=False)
 
     # --- Exit Method ---
 
