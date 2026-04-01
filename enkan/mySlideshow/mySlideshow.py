@@ -33,6 +33,11 @@ from enkan.mySlideshow.MediaFileOps import (
     delete_media_file,
     write_exif_orientation,
 )
+from enkan.mySlideshow.NavigationTypes import (
+    NavigationBasis,
+    NavigationState,
+    ScopeKind,
+)
 from enkan.mySlideshow.StatusBar import (
     StatusBarContext,
     build_filename_display,
@@ -240,8 +245,25 @@ class ImageSlideshow:
         self.original_folder_memory = self.folder_memory.copy()
         self.original_scope_seen_folders = set(self.scope_seen_folders)
 
+    def _navigation_basis(self) -> NavigationBasis:
+        return NavigationBasis(self.navigation_mode)
+
+    def _scope_kind(self) -> ScopeKind:
+        if self.subfolder_mode:
+            return ScopeKind.SUBFOLDER
+        if self.parent_mode:
+            return ScopeKind.PARENT
+        return ScopeKind.ROOT
+
+    def _navigation_state(self) -> NavigationState:
+        return NavigationState(
+            basis=self._navigation_basis(),
+            scope_kind=self._scope_kind(),
+            branch_anchor=self.navigation_node.name if self.navigation_node else None,
+        )
+
     def _scope_records_once_per_folder(self) -> bool:
-        return self.subfolder_mode or self.parent_mode
+        return self._navigation_state().scope_kind is not ScopeKind.ROOT
 
     def _record_scope_entry(self, folder: str) -> None:
         if not folder:
@@ -978,16 +1000,16 @@ class ImageSlideshow:
         self.show_image(self.current_image_path, record_history=False)
 
     def toggle_navigation_mode(self, event=None) -> None:
-        match self.navigation_mode:
-            case "branch":
+        match self._navigation_basis():
+            case NavigationBasis.BRANCH:
                 self.navigation_node = None
-                self.navigation_mode = "folder"
-            case "folder":
+                self.navigation_mode = NavigationBasis.FOLDER.value
+            case NavigationBasis.FOLDER:
                 self.navigation_node: TreeNode = self.find_node_for_image(
                     self.current_image_path
                 )
                 if self.navigation_node:
-                    self.navigation_mode = "branch"
+                    self.navigation_mode = NavigationBasis.BRANCH.value
                 else:
                     (
                         logger.warning(
@@ -1015,8 +1037,9 @@ class ImageSlideshow:
 
         current_path: str = os.path.dirname(self.current_image_path)
         child_path = None
+        nav_state = self._navigation_state()
 
-        if self.navigation_mode == "folder":
+        if nav_state.is_folder:
             current_entry = self.parentFolderStack.peek()
             if current_entry is None or current_entry.path is None:
                 logger.warning("Cannot navigate up - parent scope stack is empty.")
@@ -1045,7 +1068,7 @@ class ImageSlideshow:
                     )
             else:
                 logger.warning("No valid child directory found.")
-        elif self.navigation_mode == "branch":
+        elif nav_state.is_branch:
             current_path_node = self.original_tree.find_node(
                 current_path, self.original_tree.path_lookup
             )
@@ -1083,9 +1106,10 @@ class ImageSlideshow:
 
     def navigate_down(self) -> None:
         parent_path = None
+        nav_state = self._navigation_state()
 
-        match (self.navigation_mode, self.parent_mode):
-            case ("folder", False):
+        match (nav_state.basis, nav_state.scope_kind):
+            case (NavigationBasis.FOLDER, ScopeKind.ROOT):
                 current_path: str = os.path.dirname(self.current_image_path)
                 current_path_level: int = utils.level_of(current_path)
                 for i in range(current_path_level - 1, 1, -1):
@@ -1103,7 +1127,7 @@ class ImageSlideshow:
                         scope_state=self._capture_scope_state(),
                     )
                 )
-            case ("folder", True):
+            case (NavigationBasis.FOLDER, ScopeKind.PARENT):
                 previous_entry = self.parentFolderStack.peek()
                 if previous_entry is None or previous_entry.path is None:
                     logger.warning(
@@ -1126,13 +1150,13 @@ class ImageSlideshow:
                         scope_state=self._capture_scope_state(),
                     )
                 )
-            case ("branch", False):
+            case (NavigationBasis.BRANCH, ScopeKind.ROOT):
                 self.navigation_node = self.find_node_for_image(
                     self.current_image_path
                 ).parent
                 if self.navigation_node:
                     self._record_scope_entry(self.navigation_node.name)
-            case ("branch", True):
+            case (NavigationBasis.BRANCH, ScopeKind.PARENT):
                 self.navigation_node = self.navigation_node.parent
                 if self.navigation_node:
                     self._record_scope_entry(self.navigation_node.name)
@@ -1185,7 +1209,7 @@ class ImageSlideshow:
 
     def _status_label_path(self) -> str:
         label_path = self.current_image_path
-        if self.navigation_mode == "branch":
+        if self._navigation_state().is_branch:
             label_path = os.path.join(
                 self.find_node_for_image(self.current_image_path).name,
                 os.path.basename(self.current_image_path),
@@ -1195,20 +1219,21 @@ class ImageSlideshow:
     def _status_fixed_path_and_colour(self) -> tuple[str | None, str | None]:
         fixed_path = None
         fixed_colour = None
+        nav_state = self._navigation_state()
 
-        match (self.navigation_mode, self.parent_mode, self.subfolder_mode):
-            case ("folder", True, False):
+        match (nav_state.basis, nav_state.scope_kind):
+            case (NavigationBasis.FOLDER, ScopeKind.PARENT):
                 parent_entry = self.parentFolderStack.peek()
                 fixed_path = parent_entry.path if parent_entry else None
                 fixed_colour = "gold"
-            case ("folder", _, True):
+            case (NavigationBasis.FOLDER, ScopeKind.SUBFOLDER):
                 subfolder_entry = self.subFolderStack.peek()
                 fixed_path = subfolder_entry.path if subfolder_entry else None
                 fixed_colour = "tomato"
-            case ("branch", True, False):
-                fixed_path = self.navigation_node.name
+            case (NavigationBasis.BRANCH, ScopeKind.PARENT):
+                fixed_path = nav_state.branch_anchor
                 fixed_colour = "lightgreen"
-            case ("branch", _, True):
+            case (NavigationBasis.BRANCH, ScopeKind.SUBFOLDER):
                 subfolder_entry = self.subFolderStack.peek()
                 if subfolder_entry is None or subfolder_entry.path is None:
                     fixed_path = None

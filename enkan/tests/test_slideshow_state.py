@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from PIL import Image
 
 from enkan.mySlideshow.MediaFileOps import ExifWriteResult
+from enkan.mySlideshow.NavigationTypes import NavigationBasis, ScopeKind
 from enkan.mySlideshow.mySlideshow import ImageSlideshow
 from enkan.mySlideshow.ScopeStack import ScopeStack
 
@@ -62,6 +63,34 @@ def test_navigate_up_in_branch_mode_does_not_require_parent_scope_stack():
     assert slideshow.folder_memory == "new-memory"
     assert slideshow.scope_seen_folders == set()
     assert calls == [(None, parent, True)]
+
+
+def test_navigation_state_reports_basis_and_scope_kind():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.navigation_mode = "branch"
+    slideshow.parent_mode = True
+    slideshow.subfolder_mode = False
+    slideshow.navigation_node = SimpleNamespace(name="root\\branch")
+
+    state = slideshow._navigation_state()
+
+    assert state.basis is NavigationBasis.BRANCH
+    assert state.scope_kind is ScopeKind.PARENT
+    assert state.branch_anchor == "root\\branch"
+
+
+def test_navigation_state_prefers_subfolder_scope_over_parent_flag():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.navigation_mode = "folder"
+    slideshow.parent_mode = True
+    slideshow.subfolder_mode = True
+    slideshow.navigation_node = None
+
+    state = slideshow._navigation_state()
+
+    assert state.basis is NavigationBasis.FOLDER
+    assert state.scope_kind is ScopeKind.SUBFOLDER
+    assert state.branch_anchor is None
 
 
 def test_delete_image_uses_media_file_op_and_updates_state(monkeypatch):
