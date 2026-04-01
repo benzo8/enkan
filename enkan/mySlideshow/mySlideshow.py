@@ -1273,7 +1273,7 @@ class ImageSlideshow:
 
     def _status_context(self) -> StatusBarContext:
         fixed_path, fixed_colour = self._status_fixed_path_and_colour()
-        crw_metrics = self.current_crw_metrics or self._crw_folder_metrics()
+        provider_status_payload = self.current_crw_metrics or self._crw_folder_metrics()
         return StatusBarContext(
             label_path=self._status_label_path(),
             fixed_path=fixed_path,
@@ -1287,14 +1287,16 @@ class ImageSlideshow:
             current_image_path=self.current_image_path,
             image_paths=self.image_paths,
             current_image_index=self.current_image_index,
-            provider_name=self.providers.get_current_provider_name(),
             provider_enabled=bool(self.mode),
+            provider_label=self.providers.get_current_provider_label(),
+            provider_status_text=self.providers.get_current_provider_status(
+                display_mode=self._current_crw_display_mode(),
+                status_payload=provider_status_payload,
+            ),
             subfolder_mode=self.subfolder_mode,
             parent_mode=self.parent_mode,
             auto_advance_running=bool(getattr(self, "auto_advance_running", False)),
             auto_advance_interval=getattr(self, "auto_advance_interval", None),
-            crw_display_mode=self._current_crw_display_mode(),
-            crw_metrics=crw_metrics,
         )
 
     def toggle_filename_display(self, event=None) -> None:

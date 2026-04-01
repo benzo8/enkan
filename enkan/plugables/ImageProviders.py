@@ -2,6 +2,7 @@ import bisect
 import os
 import random
 import logging
+from dataclasses import dataclass
 from collections import deque
 from itertools import accumulate
 
@@ -9,6 +10,13 @@ from enkan.cache.ImageCacheManager import ImageCacheManager
 from enkan.utils.utils import weighted_choice, images_from_path
 
 logger: logging.Logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ProviderSpec:
+    factory_name: str
+    label: str
+
 
 class ImageProviders:
     def __init__(self):
@@ -21,10 +29,20 @@ class ImageProviders:
             "controlled_random_weighted": self.image_provider_controlled_random_weighted,
             "burst": self.image_provider_folder_burst,
         }
+        self.provider_specs = {
+            "sequential": ProviderSpec("image_provider_sequential", "SEQ"),
+            "random": ProviderSpec("image_provider_random", "RND"),
+            "weighted": ProviderSpec("image_provider_weighted", "WGT"),
+            "controlled_random_weighted": ProviderSpec(
+                "image_provider_controlled_random_weighted", "CRW"
+            ),
+            "burst": ProviderSpec("image_provider_folder_burst", "BUR"),
+        }
         self.current_provider_name = None
 
     def register_provider(self, name, func):
         self.providers[name] = func
+        self.provider_specs.setdefault(name, ProviderSpec(func.__name__, name[0:3].upper()))
 
     def select_manager(self, image_paths, provider_name="sequential", **kwargs):
         # Look up provider by name
@@ -44,6 +62,61 @@ class ImageProviders:
     
     def get_current_provider_name(self):
         return self.current_provider_name
+
+    def get_current_provider_label(self) -> str:
+        if not self.current_provider_name:
+            return "-"
+        spec = self.provider_specs.get(self.current_provider_name)
+        if spec:
+            return spec.label
+        return self.current_provider_name[0:3].upper()
+
+    def get_current_provider_status(
+        self,
+        *,
+        display_mode: str = "off",
+        status_payload: dict[str, float | int | str] | None = None,
+    ) -> str:
+        provider_name = self.current_provider_name
+        if provider_name != "controlled_random_weighted":
+            return ""
+        if display_mode == "off" or status_payload is None:
+            return ""
+
+        age = int(status_payload["age"])
+        seen_before = bool(status_payload["seen_before"])
+        streak_len = int(status_payload["streak_len"])
+        bias_pct = float(status_payload["bias_pct"])
+        folder_factor = float(status_payload["folder_factor"])
+        boost = float(status_payload["boost"])
+        streak_factor = float(status_payload["streak_factor"])
+        combined = float(status_payload["combined"])
+
+        if display_mode == "friendly":
+            if not seen_before:
+                return "NEW"
+            if combined >= 1.75:
+                return "DUE"
+            if combined >= 1.15:
+                return "WARM"
+            if folder_factor < 0.75:
+                return "COOLING"
+            return "NEUTRAL"
+
+        if display_mode == "useful":
+            if not seen_before:
+                return f"NEW S{streak_len} B{bias_pct:+.0f}%"
+            return f"A{age} S{streak_len} B{bias_pct:+.0f}%"
+
+        if not seen_before:
+            return (
+                f"NEW S{streak_len} F{folder_factor:.2f} U{boost:.2f} T{streak_factor:.2f} "
+                f"X{combined:.2f} B{bias_pct:+.0f}%"
+            )
+        return (
+            f"A{age} S{streak_len} F{folder_factor:.2f} U{boost:.2f} T{streak_factor:.2f} "
+            f"X{combined:.2f} B{bias_pct:+.0f}%"
+        )
     
     def reset_manager(self, image_paths, provider_name=None, **kwargs):
         """

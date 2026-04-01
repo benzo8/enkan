@@ -24,68 +24,13 @@ class StatusBarContext:
     current_image_path: str | None
     image_paths: list[str]
     current_image_index: int
-    provider_name: str
     provider_enabled: bool
+    provider_label: str
+    provider_status_text: str
     subfolder_mode: bool
     parent_mode: bool
     auto_advance_running: bool
     auto_advance_interval: int | float | None
-    crw_display_mode: str
-    crw_metrics: dict[str, float | int | str] | None
-
-
-def provider_display_name(provider_name: str) -> str:
-    labels = {
-        "random": "RND",
-        "weighted": "WGT",
-        "controlled_random_weighted": "CRW",
-        "sequential": "SEQ",
-        "burst": "BUR",
-    }
-    return labels.get(provider_name, provider_name[0:3].upper())
-
-
-def crw_status_text(
-    display_mode: str,
-    metrics: dict[str, float | int | str] | None,
-) -> str:
-    if display_mode == "off" or metrics is None:
-        return ""
-
-    age = int(metrics["age"])
-    seen_before = bool(metrics["seen_before"])
-    streak_len = int(metrics["streak_len"])
-    bias_pct = float(metrics["bias_pct"])
-    folder_factor = float(metrics["folder_factor"])
-    boost = float(metrics["boost"])
-    streak_factor = float(metrics["streak_factor"])
-    combined = float(metrics["combined"])
-
-    if display_mode == "friendly":
-        if not seen_before:
-            return "NEW"
-        if combined >= 1.75:
-            return "DUE"
-        if combined >= 1.15:
-            return "WARM"
-        if folder_factor < 0.75:
-            return "COOLING"
-        return "NEUTRAL"
-
-    if display_mode == "useful":
-        if not seen_before:
-            return f"NEW S{streak_len} B{bias_pct:+.0f}%"
-        return f"A{age} S{streak_len} B{bias_pct:+.0f}%"
-
-    if not seen_before:
-        return (
-            f"NEW S{streak_len} F{folder_factor:.2f} U{boost:.2f} T{streak_factor:.2f} "
-            f"X{combined:.2f} B{bias_pct:+.0f}%"
-        )
-    return (
-        f"A{age} S{streak_len} F{folder_factor:.2f} U{boost:.2f} T{streak_factor:.2f} "
-        f"X{combined:.2f} B{bias_pct:+.0f}%"
-    )
 
 
 def build_filename_display(context: StatusBarContext) -> FilenameDisplay:
@@ -116,7 +61,7 @@ def build_filename_display(context: StatusBarContext) -> FilenameDisplay:
 
 
 def build_mode_text(context: StatusBarContext) -> str:
-    provider_label = provider_display_name(context.provider_name) if context.provider_enabled else "-"
+    provider_label = context.provider_label if context.provider_enabled else "-"
     scope_parts: list[str] = []
     if context.subfolder_mode:
         scope_parts.append("SUB")
@@ -132,10 +77,9 @@ def build_mode_text(context: StatusBarContext) -> str:
         idx = max(1, min(context.current_image_index + 1, count))
         count_text = f"({idx}/{count})"
 
-    crw_text = crw_status_text(context.crw_display_mode, context.crw_metrics)
     mode_parts = [count_text]
-    if crw_text:
-        mode_parts.append(crw_text)
+    if context.provider_status_text:
+        mode_parts.append(context.provider_status_text)
     if scope_parts:
         mode_parts.append(" ".join(scope_parts))
     mode_parts.append(provider_label)
