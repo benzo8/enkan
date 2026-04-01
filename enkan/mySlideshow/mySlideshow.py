@@ -28,16 +28,17 @@ from enkan.tree.tree_logic import (
 )
 from enkan.tree.diagnostics import print_tree
 from enkan.mySlideshow.Gui.Gui import Gui
+from enkan.mySlideshow.MediaFileOps import (
+    ORIENTATION_TO_CW,
+    delete_media_file,
+    write_exif_orientation,
+)
 from enkan.mySlideshow.ScopeStack import ScopeStack, ScopeStackEntry
 from enkan.mySlideshow.ZoomPan import ZoomPan
 
 # Configure logging
 logger: logging.Logger = logging.getLogger("enkan.ui")
 
-ORIENTATION_TO_CW: dict[int, int] = {1: 0, 3: 180, 6: 90, 8: 270}
-CW_TO_ORIENTATION: dict[int, int] = {
-    value: key for key, value in ORIENTATION_TO_CW.items()
-}
 CRW_DISPLAY_MODES = ("off", "friendly", "useful", "debug")
 
 
@@ -796,64 +797,6 @@ class ImageSlideshow:
     def _show_warning(self, title: str, message: str) -> None:
         self.gui.messagebox(title, message, icon="warning")
 
-    def _write_exif_orientation(self, image_path: str) -> int | None:
-        from PIL import Image
-
-        orientation_tag: int = 0x0112
-        rotation_cw: int = (-self.rotation_angle) % 360
-        if rotation_cw % 90 != 0:
-            logger.error(
-                "EXIF update aborted: rotation %s deg is not a multiple of 90 for %s.",
-                self.rotation_angle,
-                image_path,
-            )
-            return None
-
-        with Image.open(image_path) as img:
-            exif = img.getexif()
-            if exif is None:
-                if hasattr(Image, "Exif"):
-                    exif = Image.Exif()
-                else:
-                    logger.warning(
-                        "EXIF update skipped for %s: Pillow build lacks Exif support.",
-                        image_path,
-                    )
-                    return None
-            if not hasattr(exif, "tobytes"):
-                logger.warning(
-                    "EXIF update skipped for %s: Pillow Exif object has no tobytes().",
-                    image_path,
-                )
-                return None
-            current_orientation: int = exif.get(orientation_tag, 1)
-            base_cw: int = ORIENTATION_TO_CW.get(current_orientation, 0)
-            new_cw: int = (base_cw + rotation_cw) % 360
-            new_orientation: int = CW_TO_ORIENTATION.get(new_cw, 1)
-            exif[orientation_tag] = new_orientation
-            exif_bytes = exif.tobytes() if hasattr(exif, "tobytes") else None
-            save_kwargs = {"exif": exif_bytes} if exif_bytes else {}
-            try:
-                img.save(image_path, **save_kwargs)
-            except PermissionError as err:
-                logger.warning(
-                    "EXIF update failed (permission) for %s: %s", image_path, err
-                )
-                self._show_warning(
-                    "Permission Denied",
-                    "Could not save the updated rotation because access was denied.",
-                )
-                return None
-            except OSError as err:
-                logger.warning("EXIF update failed for %s: %s", image_path, err)
-                self._show_warning(
-                    "Save Failed",
-                    "Could not write the updated rotation to this file.",
-                )
-                return None
-
-        return new_orientation
-
     def delete_image(self, event=None) -> None:
         if self.current_image_path:
             confirm: bool = self._confirm_action(
@@ -867,7 +810,7 @@ class ImageSlideshow:
                     self.video_frame.place_forget()
                 try:
                     deleted_path = self.current_image_path
-                    os.remove(deleted_path)
+                    delete_media_file(deleted_path)
                     index = self.image_paths.index(deleted_path)
                     self.image_paths.pop(index)
                     self.selection_weights.remove_at(index)
@@ -933,10 +876,15 @@ class ImageSlideshow:
             "Apply the current rotation to this image's EXIF orientation?",
         )
         if not confirm:
-                    return
+            return
         try:
-            new_orientation: int = self._write_exif_orientation(self.current_image_path)
-            if new_orientation is None:
+            outcome = write_exif_orientation(
+                self.current_image_path,
+                self.rotation_angle,
+            )
+            if outcome.warning_title and outcome.warning_message:
+                self._show_warning(outcome.warning_title, outcome.warning_message)
+            if outcome.new_orientation is None:
                 return
         except Exception as exc:
             logger.error(
@@ -951,7 +899,7 @@ class ImageSlideshow:
 
         self.manager.invalidate(self.current_image_path)
         self.rotation_angle = 0
-        self.current_exif_orientation = new_orientation
+        self.current_exif_orientation = outcome.new_orientation
         self.show_image(self.current_image_path, record_history=False)
 
     def print_tree_to_console(self, event=None) -> None:
