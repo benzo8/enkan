@@ -323,13 +323,15 @@ def test_show_image_allows_history_item_outside_current_scope():
     slideshow.current_image_path = "scope\\two.jpg"
     slideshow.current_exif_orientation = 1
     slideshow.rotation_angle = 0
-    slideshow.current_crw_metrics = None
+    slideshow.current_provider_status_payload = None
     slideshow.video_muted = False
     slideshow.screen_width = 100
     slideshow.screen_height = 100
     slideshow._release_video_resources = lambda: None
-    slideshow.providers = SimpleNamespace(get_current_provider_name=lambda: "weighted")
-    slideshow._current_crw_display_mode = lambda: "off"
+    slideshow.providers = SimpleNamespace(
+        get_current_provider_name=lambda: "weighted",
+        get_current_provider_display_mode=lambda: "off",
+    )
     slideshow._record_memory_for_view = lambda image_path, record_history: None
     slideshow.zoompan = SimpleNamespace(set_image=lambda image: None)
     slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
@@ -348,3 +350,42 @@ def test_show_image_allows_history_item_outside_current_scope():
 
     assert slideshow.current_image_path == "other\\seen-before.jpg"
     assert slideshow.current_image_index == 1
+
+
+def test_show_image_preserves_provider_payload_on_same_image_redisplay():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.image_paths = ["scope\\one.jpg"]
+    slideshow.current_image_index = 0
+    slideshow.current_image_path = "scope\\one.jpg"
+    slideshow.current_provider_status_payload = {"kept": True}
+    slideshow.current_exif_orientation = 1
+    slideshow.rotation_angle = 0
+    slideshow.video_muted = False
+    slideshow.screen_width = 100
+    slideshow.screen_height = 100
+    slideshow._release_video_resources = lambda: None
+    slideshow.providers = SimpleNamespace(
+        get_current_provider_name=lambda: "controlled_random_weighted",
+        get_current_provider_display_mode=lambda: "useful",
+        get_current_provider_status_payload=lambda **kwargs: {"recomputed": True},
+    )
+    slideshow.selection_weights = SimpleNamespace(weights=[1.0])
+    slideshow.folder_memory = SimpleNamespace()
+    slideshow.controlled_random_settings = {"gap_min": 3}
+    slideshow._record_memory_for_view = lambda image_path, record_history: None
+    slideshow.zoompan = SimpleNamespace(set_image=lambda image: None)
+    slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
+    slideshow.filename_label = SimpleNamespace(tkraise=lambda: None)
+    slideshow.mode_label = SimpleNamespace(tkraise=lambda: None)
+    slideshow.update_filename_display = lambda: None
+    slideshow.root = SimpleNamespace(after=lambda *args, **kwargs: None)
+    slideshow.manager = SimpleNamespace(
+        get_next=lambda image_path=None, record_history=True: (
+            "scope\\one.jpg",
+            Image.new("RGB", (1, 1)),
+        )
+    )
+
+    slideshow.show_image("scope\\one.jpg", record_history=False)
+
+    assert slideshow.current_provider_status_payload == {"kept": True}

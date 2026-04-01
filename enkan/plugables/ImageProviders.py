@@ -38,7 +38,11 @@ class ImageProviders:
             ),
             "burst": ProviderSpec("image_provider_folder_burst", "BUR"),
         }
+        self.provider_display_modes = {
+            "controlled_random_weighted": ("off", "friendly", "useful", "debug"),
+        }
         self.current_provider_name = None
+        self.current_provider_display_mode_index = 0
 
     def register_provider(self, name, func):
         self.providers[name] = func
@@ -49,6 +53,7 @@ class ImageProviders:
         provider_func = self.providers.get(provider_name)
         if not provider_func:
             raise ValueError(f"No such provider: {provider_name}")
+        preserve_display_mode = provider_name == self.current_provider_name
 
         # Each provider factory should accept image_paths and kwargs
         image_provider = provider_func(image_paths, **kwargs)
@@ -58,10 +63,28 @@ class ImageProviders:
             background_preload=kwargs.get("background_preload", True)
         )
         self.current_provider_name = provider_name
+        if not preserve_display_mode:
+            self.current_provider_display_mode_index = 0
         return self.manager
     
     def get_current_provider_name(self):
         return self.current_provider_name
+
+    def get_current_provider_display_modes(self) -> tuple[str, ...]:
+        if not self.current_provider_name:
+            return ("off",)
+        return self.provider_display_modes.get(self.current_provider_name, ("off",))
+
+    def get_current_provider_display_mode(self) -> str:
+        modes = self.get_current_provider_display_modes()
+        return modes[self.current_provider_display_mode_index % len(modes)]
+
+    def cycle_current_provider_display_mode(self) -> str:
+        modes = self.get_current_provider_display_modes()
+        self.current_provider_display_mode_index = (
+            self.current_provider_display_mode_index + 1
+        ) % len(modes)
+        return modes[self.current_provider_display_mode_index]
 
     def get_current_provider_label(self) -> str:
         if not self.current_provider_name:
@@ -117,6 +140,119 @@ class ImageProviders:
             f"A{age} S{streak_len} F{folder_factor:.2f} U{boost:.2f} T{streak_factor:.2f} "
             f"X{combined:.2f} B{bias_pct:+.0f}%"
         )
+
+    def get_controlled_random_settings(
+        self,
+        *,
+        image_paths: list[str],
+        weights: list[float],
+        gap_min: int = 3,
+        repeat_penalty: float = 0.1,
+    ) -> dict[str, float | int]:
+        folder_count = max(
+            1,
+            len(
+                {
+                    os.path.dirname(path)
+                    for path in image_paths
+                    if os.path.dirname(path)
+                }
+            ),
+        )
+        gap_min = max(1, int(gap_min))
+        gap_max = max(gap_min + 1, min(80, round(folder_count * 1.5)))
+        alpha = max(0.0025, min(0.03, 0.12 / folder_count))
+        return {
+            "gap_min": gap_min,
+            "gap_max": gap_max,
+            "alpha": alpha,
+            "repeat_penalty": max(0.0, min(float(repeat_penalty), 1.0)),
+        }
+
+    def get_current_provider_status_payload(
+        self,
+        *,
+        image_paths: list[str],
+        weights: list[float],
+        current_image_path: str | None,
+        folder_memory,
+        settings: dict[str, float | int] | None = None,
+        target_image_path: str | None = None,
+    ) -> dict[str, float | int | str] | None:
+        provider_name = self.current_provider_name
+        if provider_name != "controlled_random_weighted":
+            return None
+
+        image_path = target_image_path or current_image_path
+        if not image_path or not image_paths:
+            return None
+        folder = os.path.dirname(image_path)
+        if not folder:
+            return None
+
+        folder_base_totals: dict[str, float] = {}
+        for path, weight in zip(image_paths, weights):
+            path_folder = os.path.dirname(path)
+            if not path_folder:
+                continue
+            folder_base_totals[path_folder] = folder_base_totals.get(
+                path_folder, 0.0
+            ) + weight
+
+        one_folder_only = len(folder_base_totals) <= 1
+        resolved_settings = settings or self.get_controlled_random_settings(
+            image_paths=image_paths,
+            weights=weights,
+        )
+        gap_min = max(0, int(resolved_settings["gap_min"]))
+        gap_max = max(gap_min, int(resolved_settings["gap_max"]))
+        alpha = float(resolved_settings["alpha"])
+        repeat_penalty = max(
+            0.0,
+            min(float(resolved_settings["repeat_penalty"]), 1.0),
+        )
+
+        seen_before = folder_memory.has_seen(folder)
+        distance = folder_memory.distance_for(folder)
+        if not seen_before:
+            distance = min(distance, gap_max)
+        clamped_distance = min(distance, gap_max)
+        streak_len = folder_memory.streak_for(folder)
+
+        if one_folder_only:
+            folder_factor = 1.0
+        elif gap_min > 0 and distance < gap_min:
+            folder_factor = repeat_penalty + (
+                (1.0 - repeat_penalty) * (distance / gap_min)
+            )
+        else:
+            folder_factor = 1.0
+
+        extra = max(0.0, clamped_distance - 10)
+        boost = 1.0 + alpha * extra * extra
+        if one_folder_only or not seen_before or streak_len <= 0:
+            streak_factor = 1.0
+        else:
+            streak_factor = max(0.25, 0.75 ** max(0, streak_len - 1))
+        combined = folder_factor * boost * streak_factor
+
+        base_total = folder_base_totals.get(folder, 0.0)
+        effective_total = base_total * combined
+        bias_pct = ((combined - 1.0) * 100.0) if base_total > 0 else 0.0
+
+        return {
+            "folder": folder,
+            "age": distance,
+            "seen_before": seen_before,
+            "streak_len": streak_len,
+            "folder_factor": folder_factor,
+            "boost": boost,
+            "streak_factor": streak_factor,
+            "combined": combined,
+            "bias_pct": bias_pct,
+            "base_total": base_total,
+            "effective_total": effective_total,
+        }
     
     def reset_manager(self, image_paths, provider_name=None, **kwargs):
         """

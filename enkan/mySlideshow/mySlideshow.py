@@ -49,8 +49,6 @@ from enkan.mySlideshow.ZoomPan import ZoomPan
 # Configure logging
 logger: logging.Logger = logging.getLogger("enkan.ui")
 
-CRW_DISPLAY_MODES = ("off", "friendly", "useful", "debug")
-
 
 @dataclass
 class _ScopeState:
@@ -97,10 +95,7 @@ class ImageSlideshow:
         self.navigation_node = None
         self.show_filename = False
         self._last_burst_memory_token = None
-        self.crw_display_mode_index = 0
-        self.current_crw_metrics = None
-        self.folder_base_totals: dict[str, float] = {}
-        self.one_folder_only = False
+        self.current_provider_status_payload = None
         self.controlled_random_settings = {
             "gap_min": 3,
             "gap_max": 80,
@@ -174,7 +169,7 @@ class ImageSlideshow:
         self.root.bind("<s>", self.toggle_subfolder_mode)
         self.root.bind("<Control-b>", self.reset_burst_cycle)
         self.root.bind("<Control-d>", self.clear_memory)
-        self.root.bind("<D>", self.toggle_crw_display_mode)
+        self.root.bind("<D>", self.toggle_provider_display_mode)
         self.root.bind("<a>", self.toggle_auto_advance)
         self.root.bind("<Control-Shift-M>", self.open_mode_dialog)
         self.root.bind("<Control-Shift-T>", self.print_tree_to_console)
@@ -195,7 +190,6 @@ class ImageSlideshow:
         # Instantiate Classes
         self.gui = Gui(use_customtkinter=True)
         self.providers = ImageProviders()
-        self._rebuild_folder_weight_cache()
         self._recalculate_controlled_random_settings()
         
         if self.defaults.is_random:
@@ -300,14 +294,6 @@ class ImageSlideshow:
         self.folder_memory.record_folder(folder)
         self._sync_original_scope_state()
 
-    def _crw_folder_metrics_for_path(self, image_path: str) -> dict[str, float | int | str] | None:
-        if self.providers.get_current_provider_name() != "controlled_random_weighted":
-            return None
-        folder = os.path.dirname(image_path)
-        if not folder:
-            return None
-        return self._crw_folder_metrics(folder=folder)
-
     def _record_memory_for_view(self, image_path: str, record_history: bool) -> None:
         if not record_history:
             return
@@ -344,6 +330,13 @@ class ImageSlideshow:
         if hasattr(self, "video_frame"):
             self.video_frame.place_forget()
 
+        previous_image_path = getattr(self, "current_image_path", None)
+        previous_provider_status_payload = getattr(
+            self,
+            "current_provider_status_payload",
+            None,
+        )
+
         image_path, media_payload = self.manager.get_next(
             image_path, record_history=record_history
         )
@@ -354,13 +347,24 @@ class ImageSlideshow:
         self.current_image_path: str = image_path
         if image_path in self.image_paths:
             self.current_image_index = self.image_paths.index(image_path)
-        if (
+        if not record_history and image_path == previous_image_path:
+            self.current_provider_status_payload = previous_provider_status_payload
+        elif (
             self.providers.get_current_provider_name() == "controlled_random_weighted"
-            and self._current_crw_display_mode() != "off"
+            and self.providers.get_current_provider_display_mode() != "off"
         ):
-            self.current_crw_metrics = self._crw_folder_metrics_for_path(image_path)
+            self.current_provider_status_payload = (
+                self.providers.get_current_provider_status_payload(
+                    image_paths=self.image_paths,
+                    weights=self.selection_weights.weights,
+                    current_image_path=self.current_image_path,
+                    target_image_path=image_path,
+                    folder_memory=self.folder_memory,
+                    settings=self.controlled_random_settings,
+                )
+            )
         else:
-            self.current_crw_metrics = None
+            self.current_provider_status_payload = None
         self._record_memory_for_view(image_path, record_history)
 
         if not utils.is_videofile(image_path):
@@ -437,89 +441,13 @@ class ImageSlideshow:
             "folder_memory": self.folder_memory,
         }
 
-    def _rebuild_folder_weight_cache(self) -> None:
-        folder_base_totals: dict[str, float] = {}
-        for path, weight in zip(self.image_paths, self.selection_weights.weights):
-            folder = os.path.dirname(path)
-            if not folder:
-                continue
-            folder_base_totals[folder] = folder_base_totals.get(folder, 0.0) + weight
-        self.folder_base_totals = folder_base_totals
-        self.one_folder_only = len(folder_base_totals) <= 1
-
-    def _controlled_random_folder_count(self) -> int:
-        return max(1, len(self.folder_base_totals))
-
     def _recalculate_controlled_random_settings(self) -> None:
-        folder_count = self._controlled_random_folder_count()
-        gap_min = max(1, int(self.controlled_random_settings["gap_min"]))
-        gap_max = max(gap_min + 1, min(80, round(folder_count * 1.5)))
-        alpha = max(0.0025, min(0.03, 0.12 / folder_count))
-        self.controlled_random_settings["gap_max"] = gap_max
-        self.controlled_random_settings["alpha"] = alpha
-
-    def _current_crw_display_mode(self) -> str:
-        return CRW_DISPLAY_MODES[self.crw_display_mode_index]
-
-    def _crw_folder_metrics(self, folder: str | None = None) -> dict[str, float | int | str] | None:
-        if self.providers.get_current_provider_name() != "controlled_random_weighted":
-            return None
-        if folder is None:
-            if not self.current_image_path:
-                return None
-            folder = os.path.dirname(self.current_image_path)
-        if not folder or not self.image_paths:
-            return None
-
-        seen_before = self.folder_memory.has_seen(folder)
-        distance = self.folder_memory.distance_for(folder)
-        gap_min = max(0, int(self.controlled_random_settings["gap_min"]))
-        gap_max = max(gap_min, int(self.controlled_random_settings["gap_max"]))
-        alpha = float(self.controlled_random_settings["alpha"])
-        repeat_penalty = max(
-            0.0,
-            min(float(self.controlled_random_settings["repeat_penalty"]), 1.0),
+        self.controlled_random_settings = self.providers.get_controlled_random_settings(
+            image_paths=self.image_paths,
+            weights=self.selection_weights.weights,
+            gap_min=int(self.controlled_random_settings["gap_min"]),
+            repeat_penalty=float(self.controlled_random_settings["repeat_penalty"]),
         )
-        if not seen_before:
-            distance = min(distance, gap_max)
-        clamped_distance = min(distance, gap_max)
-        one_folder_only = self.one_folder_only
-        streak_len = self.folder_memory.streak_for(folder)
-
-        if one_folder_only:
-            folder_factor = 1.0
-        elif gap_min > 0 and distance < gap_min:
-            folder_factor = repeat_penalty + (
-                (1.0 - repeat_penalty) * (distance / gap_min)
-            )
-        else:
-            folder_factor = 1.0
-
-        extra = max(0.0, clamped_distance - 10)
-        boost = 1.0 + alpha * extra * extra
-        if one_folder_only or not seen_before or streak_len <= 0:
-            streak_factor = 1.0
-        else:
-            streak_factor = max(0.25, 0.75 ** max(0, streak_len - 1))
-        combined = folder_factor * boost * streak_factor
-
-        base_total = self.folder_base_totals.get(folder, 0.0)
-        effective_total = base_total * combined
-
-        bias_pct = ((combined - 1.0) * 100.0) if base_total > 0 else 0.0
-        return {
-            "folder": folder,
-            "age": distance,
-            "seen_before": seen_before,
-            "streak_len": streak_len,
-            "folder_factor": folder_factor,
-            "boost": boost,
-            "streak_factor": streak_factor,
-            "combined": combined,
-            "bias_pct": bias_pct,
-            "base_total": base_total,
-            "effective_total": effective_total,
-        }
 
     def update_slide_show(
         self,
@@ -534,7 +462,6 @@ class ImageSlideshow:
         )
         self.image_paths = image_paths
         self.selection_weights = selection_weights.copy()
-        self._rebuild_folder_weight_cache()
         self._recalculate_controlled_random_settings()
         self.number_of_images = len(image_paths)
         self.current_image_index = self.safe_current_image_index(
@@ -553,6 +480,7 @@ class ImageSlideshow:
         )
         self.manager.restore_history(history_snapshot)
         self._last_burst_memory_token = None
+        self.current_provider_status_payload = None
         self.show_image(
             self.image_paths[self.current_image_index],
             record_history=record_initial_history,
@@ -602,13 +530,11 @@ class ImageSlideshow:
         self._last_burst_memory_token = None
         self.update_filename_display()
 
-    def toggle_crw_display_mode(self, event=None) -> None:
-        self.crw_display_mode_index = (
-            self.crw_display_mode_index + 1
-        ) % len(CRW_DISPLAY_MODES)
+    def toggle_provider_display_mode(self, event=None) -> None:
+        current_mode = self.providers.cycle_current_provider_display_mode()
         logger.debug(
-            "Controlled-random display mode set to %s.",
-            self._current_crw_display_mode(),
+            "Provider display mode set to %s.",
+            current_mode,
         )
         self.update_filename_display()
 
@@ -1276,7 +1202,16 @@ class ImageSlideshow:
 
     def _status_context(self) -> StatusBarContext:
         fixed_path, fixed_colour = self._status_fixed_path_and_colour()
-        provider_status_payload = self.current_crw_metrics or self._crw_folder_metrics()
+        provider_status_payload = (
+            self.current_provider_status_payload
+            or self.providers.get_current_provider_status_payload(
+                image_paths=self.image_paths,
+                weights=self.selection_weights.weights,
+                current_image_path=self.current_image_path,
+                folder_memory=self.folder_memory,
+                settings=self.controlled_random_settings,
+            )
+        )
         return StatusBarContext(
             label_path=self._status_label_path(),
             fixed_path=fixed_path,
@@ -1293,7 +1228,7 @@ class ImageSlideshow:
             provider_enabled=bool(self.mode),
             provider_label=self.providers.get_current_provider_label(),
             provider_status_text=self.providers.get_current_provider_status(
-                display_mode=self._current_crw_display_mode(),
+                display_mode=self.providers.get_current_provider_display_mode(),
                 status_payload=provider_status_payload,
             ),
             subfolder_mode=self.subfolder_mode,
