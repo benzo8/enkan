@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from PIL import Image
 
 from enkan.mySlideshow.MediaFileOps import ExifWriteResult
-from enkan.mySlideshow.NavigationTypes import NavigationBasis, ScopeKind
+from enkan.mySlideshow.NavigationTypes import NavigationBasis, NavigationState, ScopeKind
 from enkan.mySlideshow.mySlideshow import ImageSlideshow
 from enkan.mySlideshow.ScopeStack import ScopeStack
 
@@ -91,6 +91,85 @@ def test_navigation_state_prefers_subfolder_scope_over_parent_flag():
     assert state.basis is NavigationBasis.FOLDER
     assert state.scope_kind is ScopeKind.SUBFOLDER
     assert state.branch_anchor is None
+
+
+def test_apply_scope_state_restores_navigation_modes_from_snapshot():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.original_tree = SimpleNamespace(
+        find_node=lambda path, lookup: SimpleNamespace(name=path),
+        node_lookup={},
+    )
+    slideshow.selection_weights = SimpleNamespace(copy=lambda: "copy-before")
+    slideshow.folder_memory = SimpleNamespace(copy=lambda: "mem-before")
+    slideshow.scope_seen_folders = {"before"}
+    slideshow.navigation_mode = "folder"
+    slideshow.parent_mode = False
+    slideshow.subfolder_mode = False
+    slideshow.navigation_node = None
+    slideshow._last_burst_memory_token = "token"
+
+    class _SelectionWeights:
+        def copy(self):
+            return "copy-after"
+
+    class _FolderMemory:
+        def copy(self):
+            return "mem-after"
+
+    scope_state = SimpleNamespace(
+        selection_weights=_SelectionWeights(),
+        folder_memory=_FolderMemory(),
+        navigation_state=NavigationState(
+            basis=NavigationBasis.BRANCH,
+            scope_kind=ScopeKind.PARENT,
+            branch_anchor="root\\branch",
+        ),
+        seen_folders={"seen"},
+    )
+
+    slideshow._apply_scope_state(scope_state)
+
+    assert slideshow.navigation_mode == "branch"
+    assert slideshow.parent_mode is True
+    assert slideshow.subfolder_mode is False
+    assert slideshow.navigation_node.name == "root\\branch"
+    assert slideshow.scope_seen_folders == {"seen"}
+    assert slideshow._last_burst_memory_token is None
+
+
+def test_reset_parent_mode_restores_original_navigation_state():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.parentFolderStack = ScopeStack(5)
+    slideshow.subFolderStack = ScopeStack(1)
+    slideshow.parent_mode = True
+    slideshow.subfolder_mode = True
+    slideshow.navigation_mode = "folder"
+    slideshow.navigation_node = None
+    slideshow.original_navigation_state = NavigationState(
+        basis=NavigationBasis.BRANCH,
+        scope_kind=ScopeKind.ROOT,
+        branch_anchor="root\\branch",
+    )
+    slideshow.original_tree = SimpleNamespace(
+        find_node=lambda path, lookup: SimpleNamespace(name=path),
+        node_lookup={},
+    )
+    slideshow.original_image_paths = ["a.jpg"]
+    slideshow.original_selection_weights = SimpleNamespace(copy=lambda: "sel")
+    slideshow.original_folder_memory = SimpleNamespace(copy=lambda: "mem")
+    slideshow.original_scope_seen_folders = {"seen"}
+    slideshow.current_image_index = 0
+    slideshow._last_burst_memory_token = "token"
+    slideshow.update_slide_show = lambda image_paths, selection_weights: None
+    slideshow.show_image = lambda image_path, record_history=False: None
+
+    slideshow.reset_parent_mode()
+
+    assert slideshow.parent_mode is False
+    assert slideshow.subfolder_mode is False
+    assert slideshow.navigation_mode == "branch"
+    assert slideshow.navigation_node.name == "root\\branch"
+    assert slideshow._last_burst_memory_token is None
 
 
 def test_delete_image_uses_media_file_op_and_updates_state(monkeypatch):

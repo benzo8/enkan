@@ -56,6 +56,7 @@ CRW_DISPLAY_MODES = ("off", "friendly", "useful", "debug")
 class _ScopeState:
     selection_weights: SelectionWeights
     folder_memory: FolderSelectionMemory
+    navigation_state: NavigationState
     seen_folders: set[str] = field(default_factory=set)
 
 
@@ -79,6 +80,10 @@ class ImageSlideshow:
         self.original_folder_memory: FolderSelectionMemory = self.folder_memory.copy()
         self.scope_seen_folders: set[str] = set()
         self.original_scope_seen_folders: set[str] = set()
+        self.original_navigation_state = NavigationState(
+            basis=NavigationBasis.FOLDER,
+            scope_kind=ScopeKind.ROOT,
+        )
         self.original_image_paths: list = image_paths
         self.number_of_images: int = len(image_paths)
         self.current_image_index = 0
@@ -228,13 +233,30 @@ class ImageSlideshow:
         return _ScopeState(
             selection_weights=self.selection_weights.copy(),
             folder_memory=self.folder_memory.copy(),
+            navigation_state=self._navigation_state(),
             seen_folders=set(self.scope_seen_folders),
+        )
+
+    def _navigation_node_from_anchor(self, branch_anchor: str | None) -> TreeNode | None:
+        if not branch_anchor:
+            return None
+        if not getattr(self, "original_tree", None):
+            return None
+        return self.original_tree.find_node(branch_anchor, self.original_tree.node_lookup)
+
+    def _apply_navigation_state(self, navigation_state: NavigationState) -> None:
+        self.navigation_mode = navigation_state.basis.value
+        self.parent_mode = navigation_state.is_parent
+        self.subfolder_mode = navigation_state.is_subfolder
+        self.navigation_node = self._navigation_node_from_anchor(
+            navigation_state.branch_anchor
         )
 
     def _apply_scope_state(self, scope_state: _ScopeState) -> None:
         self.selection_weights = scope_state.selection_weights.copy()
         self.folder_memory = scope_state.folder_memory.copy()
         self.scope_seen_folders = set(scope_state.seen_folders)
+        self._apply_navigation_state(scope_state.navigation_state)
         self._last_burst_memory_token = None
 
     def _sync_original_scope_state(self) -> None:
@@ -244,6 +266,7 @@ class ImageSlideshow:
         self.original_selection_weights = self.selection_weights.copy()
         self.original_folder_memory = self.folder_memory.copy()
         self.original_scope_seen_folders = set(self.scope_seen_folders)
+        self.original_navigation_state = self._navigation_state()
 
     def _navigation_basis(self) -> NavigationBasis:
         return NavigationBasis(getattr(self, "navigation_mode", "folder"))
@@ -263,6 +286,10 @@ class ImageSlideshow:
                 self.navigation_node.name if getattr(self, "navigation_node", None) else None
             ),
         )
+
+    def _set_scope_kind(self, scope_kind: ScopeKind) -> None:
+        self.parent_mode = scope_kind is ScopeKind.PARENT
+        self.subfolder_mode = scope_kind is ScopeKind.SUBFOLDER
 
     def _scope_records_once_per_folder(self) -> bool:
         return self._navigation_state().scope_kind is not ScopeKind.ROOT
@@ -905,8 +932,8 @@ class ImageSlideshow:
         logger.debug("Folder selection memory cleared for current scope.")
 
     def subfolder_mode_on(self) -> None:
-        match self.navigation_mode:
-            case "folder":
+        match self._navigation_basis():
+            case NavigationBasis.FOLDER:
                 folder: str = os.path.dirname(self.current_image_path)
                 self._record_scope_entry(folder)
                 self.subFolderStack.push(
@@ -921,8 +948,7 @@ class ImageSlideshow:
                     tree=self.original_tree,
                 )
                 temp_weights: list[int] = [1] * len(temp_image_paths)
-                self.subfolder_mode = True
-            case "branch":
+            case NavigationBasis.BRANCH:
                 node: TreeNode = self.find_node_for_image(self.current_image_path)
                 if not node:
                     logger.debug(
@@ -942,7 +968,7 @@ class ImageSlideshow:
                         tree=self.original_tree, start_node=node
                     )
                 )
-                self.subfolder_mode = True
+        self._set_scope_kind(ScopeKind.SUBFOLDER)
 
         self.folder_memory = self._new_scope_memory()
         self.scope_seen_folders = set()
@@ -959,7 +985,6 @@ class ImageSlideshow:
             return
         self.image_paths = scope_entry.image_paths
         self.number_of_images = len(self.image_paths)
-        self.subfolder_mode = False
         self._apply_scope_state(scope_entry.scope_state)
         self.update_slide_show(
             image_paths=self.image_paths,
@@ -1027,7 +1052,7 @@ class ImageSlideshow:
 
     def follow_branch_up(self, event=None) -> None:
         if self.subfolder_mode:
-            self.subfolder_mode = False
+            self._set_scope_kind(ScopeKind.ROOT)
             self.show_image(self.current_image_path, record_history=False)
             return
         self.navigate_up()
@@ -1163,7 +1188,7 @@ class ImageSlideshow:
                 if self.navigation_node:
                     self._record_scope_entry(self.navigation_node.name)
 
-        self.parent_mode = True
+        self._set_scope_kind(ScopeKind.PARENT)
         self.folder_memory = self._new_scope_memory()
         self.scope_seen_folders = set()
         self.traverse_directory(
@@ -1184,8 +1209,6 @@ class ImageSlideshow:
         self.update_slide_show(scope_entry.image_paths, self.selection_weights)
 
     def reset_parent_mode(self, event=None) -> None:
-        self.parent_mode = False
-        self.subfolder_mode = False
         self.parentFolderStack.clear()
         self.subFolderStack.clear()
         self.image_paths = self.original_image_paths[:]
@@ -1193,6 +1216,7 @@ class ImageSlideshow:
         self.folder_memory = self.original_folder_memory.copy()
         self.scope_seen_folders = set(self.original_scope_seen_folders)
         self._last_burst_memory_token = None
+        self._apply_navigation_state(self.original_navigation_state)
         self.update_slide_show(self.image_paths, self.selection_weights)
         self.show_image(self.image_paths[self.current_image_index], record_history=False)
         logger.debug("Parent mode reset and modes updated.")
