@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+from PIL import Image
+
 from enkan.mySlideshow.MediaFileOps import ExifWriteResult
 from enkan.mySlideshow.mySlideshow import ImageSlideshow
 from enkan.mySlideshow.ScopeStack import ScopeStack
@@ -173,3 +175,37 @@ def test_persist_rotation_to_exif_uses_file_op_result(monkeypatch):
     assert slideshow.rotation_angle == 0
     assert slideshow.current_exif_orientation == 6
     assert shown == [("image.jpg", False)]
+
+
+def test_show_image_allows_history_item_outside_current_scope():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.image_paths = ["scope\\one.jpg", "scope\\two.jpg"]
+    slideshow.current_image_index = 1
+    slideshow.current_image_path = "scope\\two.jpg"
+    slideshow.current_exif_orientation = 1
+    slideshow.rotation_angle = 0
+    slideshow.current_crw_metrics = None
+    slideshow.video_muted = False
+    slideshow.screen_width = 100
+    slideshow.screen_height = 100
+    slideshow._release_video_resources = lambda: None
+    slideshow.providers = SimpleNamespace(get_current_provider_name=lambda: "weighted")
+    slideshow._current_crw_display_mode = lambda: "off"
+    slideshow._record_memory_for_view = lambda image_path, record_history: None
+    slideshow.zoompan = SimpleNamespace(set_image=lambda image: None)
+    slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
+    slideshow.filename_label = SimpleNamespace(tkraise=lambda: None)
+    slideshow.mode_label = SimpleNamespace(tkraise=lambda: None)
+    slideshow.update_filename_display = lambda: None
+    slideshow.root = SimpleNamespace(after=lambda *args, **kwargs: None)
+    slideshow.manager = SimpleNamespace(
+        get_next=lambda image_path=None, record_history=True: (
+            "other\\seen-before.jpg",
+            Image.new("RGB", (1, 1)),
+        )
+    )
+
+    slideshow.show_image("other\\seen-before.jpg", record_history=False)
+
+    assert slideshow.current_image_path == "other\\seen-before.jpg"
+    assert slideshow.current_image_index == 1

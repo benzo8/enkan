@@ -33,6 +33,11 @@ from enkan.mySlideshow.MediaFileOps import (
     delete_media_file,
     write_exif_orientation,
 )
+from enkan.mySlideshow.StatusBar import (
+    StatusBarContext,
+    build_filename_display,
+    build_mode_text,
+)
 from enkan.mySlideshow.ScopeStack import ScopeStack, ScopeStackEntry
 from enkan.mySlideshow.ZoomPan import ZoomPan
 
@@ -296,7 +301,8 @@ class ImageSlideshow:
             return
 
         self.current_image_path: str = image_path
-        self.current_image_index = self.image_paths.index(image_path)
+        if image_path in self.image_paths:
+            self.current_image_index = self.image_paths.index(image_path)
         if (
             self.providers.get_current_provider_name() == "controlled_random_weighted"
             and self._current_crw_display_mode() != "off"
@@ -401,17 +407,6 @@ class ImageSlideshow:
         self.controlled_random_settings["gap_max"] = gap_max
         self.controlled_random_settings["alpha"] = alpha
 
-    def _provider_display_name(self) -> str:
-        provider_name = self.providers.get_current_provider_name()
-        labels = {
-            "random": "RND",
-            "weighted": "WGT",
-            "controlled_random_weighted": "CRW",
-            "sequential": "SEQ",
-            "burst": "BUR",
-        }
-        return labels.get(provider_name, provider_name[0:3].upper())
-
     def _current_crw_display_mode(self) -> str:
         return CRW_DISPLAY_MODES[self.crw_display_mode_index]
 
@@ -474,52 +469,6 @@ class ImageSlideshow:
             "base_total": base_total,
             "effective_total": effective_total,
         }
-
-    def _crw_status_text(self) -> str:
-        mode = self._current_crw_display_mode()
-        if mode == "off":
-            return ""
-
-        metrics = self.current_crw_metrics or self._crw_folder_metrics()
-        if metrics is None:
-            return ""
-
-        age = int(metrics["age"])
-        seen_before = bool(metrics["seen_before"])
-        streak_len = int(metrics["streak_len"])
-        bias_pct = float(metrics["bias_pct"])
-        folder_factor = float(metrics["folder_factor"])
-        boost = float(metrics["boost"])
-        streak_factor = float(metrics["streak_factor"])
-        combined = float(metrics["combined"])
-
-        if mode == "friendly":
-            if not seen_before:
-                return "NEW"
-            if combined >= 1.75:
-                label = "DUE"
-            elif combined >= 1.15:
-                label = "WARM"
-            elif folder_factor < 0.75:
-                label = "COOLING"
-            else:
-                label = "NEUTRAL"
-            return label
-
-        if mode == "useful":
-            if not seen_before:
-                return f"NEW S{streak_len} B{bias_pct:+.0f}%"
-            return f"A{age} S{streak_len} B{bias_pct:+.0f}%"
-
-        if not seen_before:
-            return (
-                f"NEW S{streak_len} F{folder_factor:.2f} U{boost:.2f} T{streak_factor:.2f} "
-                f"X{combined:.2f} B{bias_pct:+.0f}%"
-            )
-        return (
-            f"A{age} S{streak_len} F{folder_factor:.2f} U{boost:.2f} T{streak_factor:.2f} "
-            f"X{combined:.2f} B{bias_pct:+.0f}%"
-        )
 
     def update_slide_show(
         self,
@@ -1234,6 +1183,69 @@ class ImageSlideshow:
             return f"{exif_angle}° [EXIF]"
         return "0°"
 
+    def _status_label_path(self) -> str:
+        label_path = self.current_image_path
+        if self.navigation_mode == "branch":
+            label_path = os.path.join(
+                self.find_node_for_image(self.current_image_path).name,
+                os.path.basename(self.current_image_path),
+            )
+        return label_path
+
+    def _status_fixed_path_and_colour(self) -> tuple[str | None, str | None]:
+        fixed_path = None
+        fixed_colour = None
+
+        match (self.navigation_mode, self.parent_mode, self.subfolder_mode):
+            case ("folder", True, False):
+                parent_entry = self.parentFolderStack.peek()
+                fixed_path = parent_entry.path if parent_entry else None
+                fixed_colour = "gold"
+            case ("folder", _, True):
+                subfolder_entry = self.subFolderStack.peek()
+                fixed_path = subfolder_entry.path if subfolder_entry else None
+                fixed_colour = "tomato"
+            case ("branch", True, False):
+                fixed_path = self.navigation_node.name
+                fixed_colour = "lightgreen"
+            case ("branch", _, True):
+                subfolder_entry = self.subFolderStack.peek()
+                if subfolder_entry is None or subfolder_entry.path is None:
+                    fixed_path = None
+                else:
+                    fixed_path = self.original_tree.find_node(
+                        subfolder_entry.path, self.original_tree.node_lookup
+                    ).name
+                fixed_colour = "tomato"
+
+        return fixed_path, fixed_colour
+
+    def _status_context(self) -> StatusBarContext:
+        fixed_path, fixed_colour = self._status_fixed_path_and_colour()
+        crw_metrics = self.current_crw_metrics or self._crw_folder_metrics()
+        return StatusBarContext(
+            label_path=self._status_label_path(),
+            fixed_path=fixed_path,
+            fixed_colour=fixed_colour,
+            rotation_text=self._format_rotation_display(),
+            zoom_percent=(
+                self.zoompan.get_zoom_percent()
+                if hasattr(self, "zoompan") and self.zoompan
+                else 100
+            ),
+            current_image_path=self.current_image_path,
+            image_paths=self.image_paths,
+            current_image_index=self.current_image_index,
+            provider_name=self.providers.get_current_provider_name(),
+            provider_enabled=bool(self.mode),
+            subfolder_mode=self.subfolder_mode,
+            parent_mode=self.parent_mode,
+            auto_advance_running=bool(getattr(self, "auto_advance_running", False)),
+            auto_advance_interval=getattr(self, "auto_advance_interval", None),
+            crw_display_mode=self._current_crw_display_mode(),
+            crw_metrics=crw_metrics,
+        )
+
     def toggle_filename_display(self, event=None) -> None:
         self.show_filename: bool = not self.show_filename
         self.update_filename_display()
@@ -1245,106 +1257,27 @@ class ImageSlideshow:
                 self.mode_label.place_forget()
                 self.root.update_idletasks()
                 return
-            fixed_colour = None
-            fixed_path = None
+
+            status_context = self._status_context()
+            filename_display = build_filename_display(status_context)
+            mode_text = build_mode_text(status_context)
+
             self.filename_label.config(state=tk.NORMAL)
             self.filename_label.delete("1.0", tk.END)
-            label_path: str = self.current_image_path
-            if self.navigation_mode == "branch":
-                label_path = os.path.join(
-                    self.find_node_for_image(self.current_image_path).name,
-                    os.path.basename(self.current_image_path),
-                )
+            for segment in filename_display.segments:
+                self.filename_label.insert(tk.END, segment.text, segment.tag)
 
-            match (self.navigation_mode, self.parent_mode, self.subfolder_mode):
-                case ("folder", True, False):
-                    parent_entry = self.parentFolderStack.peek()
-                    fixed_path = parent_entry.path if parent_entry else None
-                    fixed_colour = "gold"
-                case ("folder", _, True):
-                    subfolder_entry = self.subFolderStack.peek()
-                    fixed_path = subfolder_entry.path if subfolder_entry else None
-                    fixed_colour = "tomato"
-                case ("branch", True, False):
-                    fixed_path = self.navigation_node.name
-                    fixed_colour = "lightgreen"
-                case ("branch", _, True):
-                    subfolder_entry = self.subFolderStack.peek()
-                    if subfolder_entry is None or subfolder_entry.path is None:
-                        fixed_path = None
-                    else:
-                        fixed_path = self.original_tree.find_node(
-                            subfolder_entry.path, self.original_tree.node_lookup
-                        ).name
-                    fixed_colour = "tomato"
-
-            if fixed_colour and fixed_path:
-                if label_path.startswith(fixed_path):
-                    fixed_portion: str = fixed_path
-                    remaining_portion: str = label_path[len(fixed_path) :]
-                else:
-                    fixed_portion = ""
-                    remaining_portion = label_path
-
-                self.filename_label.insert(tk.END, fixed_portion, "fixed")
-                self.filename_label.insert(tk.END, remaining_portion, "normal")
-            else:
-                self.filename_label.insert(tk.END, label_path, "normal")
-                fixed_colour = "white"
-
-            rotation_text: str = self._format_rotation_display()
-            zoom_percent: int = (
-                self.zoompan.get_zoom_percent()
-                if hasattr(self, "zoompan") and self.zoompan
-                else 100
+            self.filename_label.tag_configure(
+                "fixed", foreground=filename_display.fixed_colour
             )
-            meta_text: str = f" ({rotation_text}, {zoom_percent}%)"
-            self.filename_label.insert(tk.END, meta_text, "meta")
-
-            self.filename_label.tag_configure("fixed", foreground=fixed_colour)
             self.filename_label.tag_configure("normal", foreground="white")
             self.filename_label.tag_configure("meta", foreground="white")
             self.filename_label.place(x=0, y=0)
-            full_label_text: str = self.filename_label.get("1.0", "end-1c")
-            self.filename_label.config(
-                height=1, width=len(full_label_text) + 10, bg="black"
-            )
+            self.filename_label.config(height=1, width=filename_display.width, bg="black")
             self.filename_label.config(state=tk.DISABLED)
 
-            provider_label: str = self._provider_display_name() if self.mode else "-"
-            scope_parts: list[str] = []
-            if self.subfolder_mode:
-                scope_parts.append("SUB")
-            if self.parent_mode:
-                scope_parts.append("PAR")
-
-            count = len(self.image_paths)
-            if self.current_image_path in self.image_paths:
-                idx = self.image_paths.index(self.current_image_path) + 1
-            else:
-                idx = max(1, min(self.current_image_index + 1, count))
-            count_text = f"({idx}/{count})"
-            crw_text = self._crw_status_text()
-
-            mode_parts = [count_text]
-            if crw_text:
-                mode_parts.append(crw_text)
-            if scope_parts:
-                mode_parts.append(" ".join(scope_parts))
-            mode_parts.append(provider_label)
-            mode_text = " ".join(mode_parts)
-
-            display_text: str = mode_text
-            if (
-                hasattr(self, "auto_advance_running")
-                and self.auto_advance_running
-                and hasattr(self, "auto_advance_interval")
-                and self.auto_advance_interval > 0
-            ):
-                display_text = f"AUTO ({self.auto_advance_interval}ms)   {mode_text}"
-
             self.mode_label.config(
-                text=display_text,
+                text=mode_text,
                 fg="white",
             )
             self.mode_label.place(x=self.root.winfo_screenwidth(), y=0, anchor="ne")
