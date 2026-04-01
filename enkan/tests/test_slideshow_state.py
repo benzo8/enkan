@@ -172,6 +172,37 @@ def test_reset_parent_mode_restores_original_navigation_state():
     assert slideshow._last_burst_memory_token is None
 
 
+def test_toggle_navigation_mode_preserves_selected_basis_when_resetting_scope():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.navigation_mode = "folder"
+    slideshow.current_image_path = "root\\branch\\image.jpg"
+    slideshow.parent_mode = True
+    slideshow.subfolder_mode = False
+    slideshow.navigation_node = None
+    slideshow.parentFolderStack = ScopeStack(5)
+    slideshow.subFolderStack = ScopeStack(1)
+    slideshow.original_image_paths = ["root\\branch\\image.jpg"]
+    slideshow.original_selection_weights = SimpleNamespace(copy=lambda: "sel")
+    slideshow.original_folder_memory = SimpleNamespace(copy=lambda: "mem")
+    slideshow.original_scope_seen_folders = set()
+    slideshow.original_navigation_state = NavigationState(
+        basis=NavigationBasis.FOLDER,
+        scope_kind=ScopeKind.ROOT,
+    )
+    slideshow.current_image_index = 0
+    slideshow._last_burst_memory_token = None
+    slideshow.find_node_for_image = lambda path: SimpleNamespace(name="root\\branch", parent=None)
+    slideshow.update_slide_show = lambda image_paths, selection_weights: None
+    slideshow.show_image = lambda image_path, record_history=False: None
+    slideshow.update_filename_display = lambda: None
+
+    slideshow.toggle_navigation_mode()
+
+    assert slideshow.navigation_mode == "branch"
+    assert slideshow.parent_mode is False
+    assert slideshow.subfolder_mode is False
+
+
 def test_delete_image_uses_media_file_op_and_updates_state(monkeypatch):
     slideshow = ImageSlideshow.__new__(ImageSlideshow)
     slideshow.current_image_path = "b.jpg"

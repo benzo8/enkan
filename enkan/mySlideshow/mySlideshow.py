@@ -1045,7 +1045,7 @@ class ImageSlideshow:
                         ),
                     )
                     return
-        self.reset_parent_mode()
+        self.reset_parent_mode(preserve_navigation_state=True)
         self.update_filename_display()
 
     # -- Parent Mode Navigation ---
@@ -1208,7 +1208,7 @@ class ImageSlideshow:
         self._apply_scope_state(scope_entry.scope_state)
         self.update_slide_show(scope_entry.image_paths, self.selection_weights)
 
-    def reset_parent_mode(self, event=None) -> None:
+    def reset_parent_mode(self, event=None, preserve_navigation_state: bool = False) -> None:
         self.parentFolderStack.clear()
         self.subFolderStack.clear()
         self.image_paths = self.original_image_paths[:]
@@ -1216,7 +1216,10 @@ class ImageSlideshow:
         self.folder_memory = self.original_folder_memory.copy()
         self.scope_seen_folders = set(self.original_scope_seen_folders)
         self._last_burst_memory_token = None
-        self._apply_navigation_state(self.original_navigation_state)
+        if preserve_navigation_state:
+            self._set_scope_kind(ScopeKind.ROOT)
+        else:
+            self._apply_navigation_state(self.original_navigation_state)
         self.update_slide_show(self.image_paths, self.selection_weights)
         self.show_image(self.image_paths[self.current_image_index], record_history=False)
         logger.debug("Parent mode reset and modes updated.")
