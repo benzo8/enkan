@@ -246,12 +246,12 @@ class ImageSlideshow:
         self.original_scope_seen_folders = set(self.scope_seen_folders)
 
     def _navigation_basis(self) -> NavigationBasis:
-        return NavigationBasis(self.navigation_mode)
+        return NavigationBasis(getattr(self, "navigation_mode", "folder"))
 
     def _scope_kind(self) -> ScopeKind:
-        if self.subfolder_mode:
+        if getattr(self, "subfolder_mode", False):
             return ScopeKind.SUBFOLDER
-        if self.parent_mode:
+        if getattr(self, "parent_mode", False):
             return ScopeKind.PARENT
         return ScopeKind.ROOT
 
@@ -259,7 +259,9 @@ class ImageSlideshow:
         return NavigationState(
             basis=self._navigation_basis(),
             scope_kind=self._scope_kind(),
-            branch_anchor=self.navigation_node.name if self.navigation_node else None,
+            branch_anchor=(
+                self.navigation_node.name if getattr(self, "navigation_node", None) else None
+            ),
         )
 
     def _scope_records_once_per_folder(self) -> bool:
