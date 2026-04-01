@@ -110,6 +110,39 @@ def test_delete_image_uses_media_file_op_and_updates_state(monkeypatch):
     assert updates[0][2] == 1
 
 
+def test_delete_image_ignores_missing_history_entry(monkeypatch):
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.current_image_path = "b.jpg"
+    slideshow.current_image_index = 1
+    slideshow.image_paths = ["a.jpg", "b.jpg", "c.jpg"]
+    slideshow.selection_weights = SimpleNamespace(remove_at=lambda index: None)
+    slideshow._confirm_action = lambda title, message: True
+    slideshow._release_video_resources = lambda: None
+    slideshow._sync_original_scope_state = lambda: None
+    slideshow.exit_slideshow = lambda: (_ for _ in ()).throw(AssertionError("should not exit"))
+
+    class _HistoryManager:
+        def remove(self, path):
+            raise ValueError(f"{path} is not in deque")
+
+    slideshow.manager = SimpleNamespace(history_manager=_HistoryManager())
+    monkeypatch.setattr(
+        "enkan.mySlideshow.mySlideshow.delete_media_file",
+        lambda path: None,
+    )
+
+    updates = []
+    slideshow.update_slide_show = lambda image_paths, selection_weights, preferred_index=None, **kwargs: updates.append(
+        (list(image_paths), preferred_index)
+    )
+
+    slideshow.delete_image()
+
+    assert slideshow.current_image_path == "c.jpg"
+    assert slideshow.current_image_index == 1
+    assert updates == [(["a.jpg", "c.jpg"], 1)]
+
+
 def test_persist_rotation_to_exif_uses_file_op_result(monkeypatch):
     slideshow = ImageSlideshow.__new__(ImageSlideshow)
     slideshow.current_image_path = "image.jpg"

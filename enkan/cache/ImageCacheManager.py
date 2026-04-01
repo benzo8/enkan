@@ -132,7 +132,17 @@ class ImageCacheManager:
                 self.lru_cache.put(image_path, media)
             return media
 
-        image_obj: Image.Image | None = self.image_loader.load_image(image_path)
+        try:
+            image_obj: Image.Image | None = self.image_loader.load_image(image_path)
+        except FileNotFoundError:
+            logger.info("Image path missing during load: %s", image_path)
+            return None
+        except PermissionError:
+            logger.info("Image path unavailable during load: %s", image_path)
+            return None
+        except OSError as exc:
+            logger.info("Image load OS error for %s: %s", image_path, exc)
+            return None
         if image_obj is not None:
             with self._queue_state:
                 if image_path in self.lru_cache:

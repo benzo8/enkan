@@ -35,3 +35,16 @@ def test_image_cache_manager_restore_history_round_trip():
 
     assert cache_manager.history_manager.current() == "scope_a\\two.jpg"
     assert cache_manager.history_manager.back() == "scope_a\\one.jpg"
+
+
+def test_history_manager_remove_ignores_missing_path():
+    history = HistoryManager(max_length=5)
+    history.add("one.jpg")
+    history.add("two.jpg")
+
+    history.remove("missing.jpg")
+    history.remove("two.jpg")
+    history.remove("two.jpg")
+
+    assert list(history.history) == ["one.jpg"]
+    assert history.current() == "one.jpg"

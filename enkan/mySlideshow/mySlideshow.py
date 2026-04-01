@@ -814,7 +814,13 @@ class ImageSlideshow:
                     index = self.image_paths.index(deleted_path)
                     self.image_paths.pop(index)
                     self.selection_weights.remove_at(index)
-                    self.manager.history_manager.remove(deleted_path)
+                    try:
+                        self.manager.history_manager.remove(deleted_path)
+                    except ValueError:
+                        logger.debug(
+                            "Deleted path was not present in history: %s",
+                            deleted_path,
+                        )
                     if not self.image_paths:
                         self.current_image_path = None
                         self.current_image_index = 0
