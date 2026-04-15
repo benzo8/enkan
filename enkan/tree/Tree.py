@@ -254,6 +254,12 @@ class Tree:
             lookup_dict = self.node_lookup
         return lookup_dict.get(name)
 
+    def resolve_node_for_image(self, image_path: str) -> TreeNode | None:
+        node = self.virtual_image_lookup.get(image_path)
+        if node is not None:
+            return node
+        return self.find_node(os.path.dirname(image_path), self.path_lookup)
+
     def get_nodes_at_level(self, target_level: int) -> list[TreeNode]:
         result: list[TreeNode] = []
 

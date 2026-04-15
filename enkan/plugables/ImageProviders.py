@@ -43,8 +43,126 @@ class ImageProviders:
         }
         self.current_provider_name = None
         self.current_provider_display_mode_index = 0
-        self.current_provider_settings: dict[str, float | int] = {}
-        self.current_provider_setting_overrides: dict[str, float | int] = {}
+        self.current_provider_settings: dict[str, float | int | str] = {}
+        self.current_provider_setting_overrides: dict[str, float | int | str] = {}
+
+    def _controlled_random_bucket_for_folder(
+        self,
+        folder: str,
+        bucket_mode: str = "folder_bucket",
+        tree=None,
+    ) -> str:
+        if tree is None:
+            return folder
+        node = tree.find_node(folder, tree.path_lookup)
+        if node is None:
+            return folder
+        return self._controlled_random_bucket_for_node(node, tree, bucket_mode)
+
+    def _controlled_random_mode_map(self, tree) -> dict[int, object]:
+        if tree is None:
+            return {}
+        return getattr(tree, "defaults", None).mode or getattr(tree, "built_mode", None) or {}
+
+    def _controlled_random_target_level(self, node, tree, bucket_mode: str) -> int:
+        if bucket_mode != "balance_bucket":
+            return node.level
+        mode_map = self._controlled_random_mode_map(tree)
+        if not mode_map:
+            return node.level
+        return min(node.level, max(mode_map.keys()))
+
+    def _controlled_random_bucket_for_node(self, node, tree, bucket_mode: str) -> str:
+        target_level = self._controlled_random_target_level(node, tree, bucket_mode)
+        bucket_node = node.ancestor_at_level(target_level) or node
+        return bucket_node.name
+
+    def _controlled_random_bucket_for_image(
+        self,
+        image_path: str,
+        *,
+        tree=None,
+        bucket_mode: str = "folder_bucket",
+    ) -> str:
+        if tree is None:
+            return os.path.dirname(image_path)
+        node = tree.resolve_node_for_image(image_path)
+        if node is None:
+            return os.path.dirname(image_path)
+        return self._controlled_random_bucket_for_node(node, tree, bucket_mode)
+
+    def _controlled_random_bucket_maps(
+        self,
+        image_paths: list[str],
+        bucket_mode: str = "folder_bucket",
+        tree=None,
+    ) -> tuple[dict[str, str], dict[str, list[str]], dict[str, list[str]], list[str]]:
+        folder_to_bucket: dict[str, str] = {}
+        bucket_to_folders: dict[str, list[str]] = {}
+        bucket_to_paths: dict[str, list[str]] = {}
+        ordered_buckets: list[str] = []
+
+        for path in image_paths:
+            folder = os.path.dirname(path)
+            if not folder:
+                continue
+            bucket = self._controlled_random_bucket_for_image(
+                path,
+                tree=tree,
+                bucket_mode=bucket_mode,
+            )
+            folder_to_bucket.setdefault(folder, bucket)
+            if bucket not in bucket_to_folders:
+                bucket_to_folders[bucket] = []
+                bucket_to_paths[bucket] = []
+                ordered_buckets.append(bucket)
+            if folder not in bucket_to_folders[bucket]:
+                bucket_to_folders[bucket].append(folder)
+            bucket_to_paths[bucket].append(path)
+
+        return folder_to_bucket, bucket_to_folders, bucket_to_paths, ordered_buckets
+
+    def _controlled_random_bucket_memory_state(
+        self,
+        folder_memory,
+        bucket_key: str,
+        bucket_folders: list[str],
+        *,
+        tree=None,
+        bucket_mode: str = "folder_bucket",
+    ) -> tuple[bool, int, int]:
+        if not hasattr(folder_memory, "last_seen_by_folder"):
+            folder = bucket_folders[0] if bucket_folders else ""
+            seen_before = folder_memory.has_seen(folder)
+            distance = folder_memory.distance_for(folder)
+            streak_len = folder_memory.streak_for(folder)
+            return seen_before, distance, streak_len
+
+        seen_steps = [
+            folder_memory.last_seen_by_folder[folder]
+            for folder in bucket_folders
+            if folder in folder_memory.last_seen_by_folder
+        ]
+        seen_before = bool(seen_steps)
+        if not seen_before:
+            return False, folder_memory.step + 1, 0
+
+        projected_step = folder_memory.step + 1
+        distance = projected_step - max(seen_steps)
+        streak_len = 0
+        if hasattr(folder_memory, "recent_folders"):
+            for folder in reversed(folder_memory.recent_folders):
+                resolved_bucket = self._controlled_random_bucket_for_folder(
+                    folder,
+                    bucket_mode=bucket_mode,
+                    tree=tree,
+                )
+                if resolved_bucket != bucket_key:
+                    break
+                streak_len += 1
+        elif folder_memory.current_streak_folder in bucket_folders:
+            streak_len = folder_memory.current_streak_length
+        return True, distance, streak_len
 
     def register_provider(self, name, func):
         self.providers[name] = func
@@ -101,7 +219,7 @@ class ImageProviders:
             return spec.label
         return self.current_provider_name[0:3].upper()
 
-    def get_current_provider_settings(self) -> dict[str, float | int]:
+    def get_current_provider_settings(self) -> dict[str, float | int | str]:
         return dict(self.current_provider_settings)
 
     def _resolve_provider_kwargs(
@@ -117,11 +235,12 @@ class ImageProviders:
             return provider_kwargs
 
         weights = list(provider_kwargs.get("weights", []))
-        overrides: dict[str, float | int] = {}
+        tree = provider_kwargs.get("tree")
+        overrides: dict[str, float | int | str] = {}
         if provider_name == self.current_provider_name:
             overrides.update(self.current_provider_setting_overrides)
 
-        for key in ("gap_min", "gap_max", "alpha", "repeat_penalty"):
+        for key in ("gap_min", "gap_max", "alpha", "repeat_penalty", "bucket_mode"):
             if key in provider_kwargs:
                 overrides[key] = provider_kwargs[key]
 
@@ -130,6 +249,8 @@ class ImageProviders:
             weights=weights,
             gap_min=int(overrides.get("gap_min", 3)),
             repeat_penalty=float(overrides.get("repeat_penalty", 0.1)),
+            bucket_mode=str(overrides.get("bucket_mode", "balance_bucket")),
+            tree=tree,
         )
         if "gap_max" in overrides:
             settings["gap_max"] = max(
@@ -166,30 +287,32 @@ class ImageProviders:
         boost = float(status_payload["boost"])
         streak_factor = float(status_payload["streak_factor"])
         combined = float(status_payload["combined"])
+        bucket_mode = str(status_payload.get("bucket_mode", "folder_bucket"))
+        bucket_marker = "BB" if bucket_mode == "balance_bucket" else "FB"
 
         if display_mode == "friendly":
             if not seen_before:
-                return "NEW"
+                return f"{bucket_marker} NEW"
             if combined >= 1.75:
-                return "DUE"
+                return f"{bucket_marker} DUE"
             if combined >= 1.15:
-                return "WARM"
+                return f"{bucket_marker} WARM"
             if folder_factor < 0.75:
-                return "COOLING"
-            return "NEUTRAL"
+                return f"{bucket_marker} COOLING"
+            return f"{bucket_marker} NEUTRAL"
 
         if display_mode == "useful":
             if not seen_before:
-                return f"NEW S{streak_len} B{bias_pct:+.0f}%"
-            return f"A{age} S{streak_len} B{bias_pct:+.0f}%"
+                return f"{bucket_marker} NEW S{streak_len} B{bias_pct:+.0f}%"
+            return f"{bucket_marker} A{age} S{streak_len} B{bias_pct:+.0f}%"
 
         if not seen_before:
             return (
-                f"NEW S{streak_len} F{folder_factor:.2f} U{boost:.2f} T{streak_factor:.2f} "
+                f"{bucket_marker} NEW S{streak_len} F{folder_factor:.2f} U{boost:.2f} T{streak_factor:.2f} "
                 f"X{combined:.2f} B{bias_pct:+.0f}%"
             )
         return (
-            f"A{age} S{streak_len} F{folder_factor:.2f} U{boost:.2f} T{streak_factor:.2f} "
+            f"{bucket_marker} A{age} S{streak_len} F{folder_factor:.2f} U{boost:.2f} T{streak_factor:.2f} "
             f"X{combined:.2f} B{bias_pct:+.0f}%"
         )
 
@@ -200,25 +323,24 @@ class ImageProviders:
         weights: list[float],
         gap_min: int = 3,
         repeat_penalty: float = 0.1,
-    ) -> dict[str, float | int]:
-        folder_count = max(
-            1,
-            len(
-                {
-                    os.path.dirname(path)
-                    for path in image_paths
-                    if os.path.dirname(path)
-                }
-            ),
+        bucket_mode: str = "balance_bucket",
+        tree=None,
+    ) -> dict[str, float | int | str]:
+        _, bucket_to_folders, _, _ = self._controlled_random_bucket_maps(
+            image_paths,
+            bucket_mode=bucket_mode,
+            tree=tree,
         )
+        bucket_count = max(1, len(bucket_to_folders))
         gap_min = max(1, int(gap_min))
-        gap_max = max(gap_min + 1, min(80, round(folder_count * 1.5)))
-        alpha = max(0.0025, min(0.03, 0.12 / folder_count))
+        gap_max = max(gap_min + 1, min(80, round(bucket_count * 1.5)))
+        alpha = max(0.0025, min(0.03, 0.12 / bucket_count))
         return {
             "gap_min": gap_min,
             "gap_max": gap_max,
             "alpha": alpha,
             "repeat_penalty": max(0.0, min(float(repeat_penalty), 1.0)),
+            "bucket_mode": bucket_mode,
         }
 
     def get_current_provider_status_payload(
@@ -228,8 +350,9 @@ class ImageProviders:
         weights: list[float],
         current_image_path: str | None,
         folder_memory,
-        settings: dict[str, float | int] | None = None,
+        settings: dict[str, float | int | str] | None = None,
         target_image_path: str | None = None,
+        tree=None,
     ) -> dict[str, float | int | str] | None:
         provider_name = self.current_provider_name
         if provider_name != "controlled_random_weighted":
@@ -241,6 +364,23 @@ class ImageProviders:
         folder = os.path.dirname(image_path)
         if not folder:
             return None
+        bucket_mode = str(
+            (settings or self.current_provider_settings or {}).get(
+                "bucket_mode",
+                "balance_bucket",
+            )
+        )
+        _, bucket_to_folders, _, _ = self._controlled_random_bucket_maps(
+            image_paths,
+            bucket_mode=bucket_mode,
+            tree=tree,
+        )
+        bucket = self._controlled_random_bucket_for_image(
+            image_path,
+            tree=tree,
+            bucket_mode=bucket_mode,
+        )
+        bucket_folders = bucket_to_folders.get(bucket, [folder])
 
         folder_base_totals: dict[str, float] = {}
         for path, weight in zip(image_paths, weights):
@@ -250,14 +390,26 @@ class ImageProviders:
             folder_base_totals[path_folder] = folder_base_totals.get(
                 path_folder, 0.0
             ) + weight
+        bucket_base_total = sum(
+            weight
+            for path, weight in zip(image_paths, weights)
+            if self._controlled_random_bucket_for_image(
+                path,
+                tree=tree,
+                bucket_mode=bucket_mode,
+            )
+            == bucket
+        )
 
-        one_folder_only = len(folder_base_totals) <= 1
+        one_folder_only = len(bucket_to_folders) <= 1
         resolved_settings = (
             settings
             or self.current_provider_settings
             or self.get_controlled_random_settings(
                 image_paths=image_paths,
                 weights=weights,
+                bucket_mode=bucket_mode,
+                tree=tree,
             )
         )
         gap_min = max(0, int(resolved_settings["gap_min"]))
@@ -268,12 +420,16 @@ class ImageProviders:
             min(float(resolved_settings["repeat_penalty"]), 1.0),
         )
 
-        seen_before = folder_memory.has_seen(folder)
-        distance = folder_memory.distance_for(folder)
+        seen_before, distance, streak_len = self._controlled_random_bucket_memory_state(
+            folder_memory,
+            bucket,
+            bucket_folders,
+            tree=tree,
+            bucket_mode=bucket_mode,
+        )
         if not seen_before:
             distance = min(distance, gap_max)
         clamped_distance = min(distance, gap_max)
-        streak_len = folder_memory.streak_for(folder)
 
         if one_folder_only:
             folder_factor = 1.0
@@ -292,12 +448,14 @@ class ImageProviders:
             streak_factor = max(0.25, 0.75 ** max(0, streak_len - 1))
         combined = folder_factor * boost * streak_factor
 
-        base_total = folder_base_totals.get(folder, 0.0)
+        base_total = bucket_base_total
         effective_total = base_total * combined
         bias_pct = ((combined - 1.0) * 100.0) if base_total > 0 else 0.0
 
         return {
             "folder": folder,
+            "bucket": bucket,
+            "bucket_mode": bucket_mode,
             "age": distance,
             "seen_before": seen_before,
             "streak_len": streak_len,
@@ -355,31 +513,39 @@ class ImageProviders:
         gap_max=None,
         alpha=None,
         repeat_penalty=0.1,
+        bucket_mode="balance_bucket",
+        tree=None,
         **kwargs,
     ):
         if not image_paths:
             return iter(())
 
-        folder_to_paths: dict[str, list[str]] = {}
-        folder_to_image_cum_weights: dict[str, list[float]] = {}
-        folder_base_totals: dict[str, float] = {}
-        ordered_folders: list[str] = []
-
+        bucket_to_paths: dict[str, list[str]] = {}
+        bucket_to_image_cum_weights: dict[str, list[float]] = {}
+        bucket_base_totals: dict[str, float] = {}
+        folder_to_bucket, bucket_to_folders, _, ordered_buckets = (
+            self._controlled_random_bucket_maps(
+                image_paths,
+                bucket_mode=bucket_mode,
+                tree=tree,
+            )
+        )
         for path, weight in zip(image_paths, weights):
-            folder = os.path.dirname(path)
-            if folder not in folder_to_paths:
-                ordered_folders.append(folder)
-                folder_to_paths[folder] = []
-                folder_to_image_cum_weights[folder] = []
-                folder_base_totals[folder] = 0.0
-            folder_to_paths[folder].append(path)
-            folder_base_totals[folder] += weight
-            folder_to_image_cum_weights[folder].append(folder_base_totals[folder])
-
-        unique_folders = set(ordered_folders)
+            bucket = self._controlled_random_bucket_for_image(
+                path,
+                tree=tree,
+                bucket_mode=bucket_mode,
+            )
+            if bucket not in bucket_to_paths:
+                bucket_to_paths[bucket] = []
+                bucket_to_image_cum_weights[bucket] = []
+                bucket_base_totals[bucket] = 0.0
+            bucket_to_paths[bucket].append(path)
+            bucket_base_totals[bucket] += weight
+            bucket_to_image_cum_weights[bucket].append(bucket_base_totals[bucket])
         gap_min = max(0, int(gap_min))
         if gap_max is None:
-            gap_max = max(gap_min + 1, len(unique_folders))
+            gap_max = max(gap_min + 1, len(ordered_buckets))
         gap_max = max(gap_min, int(gap_max))
         if alpha is None:
             alpha = 0.01
@@ -395,15 +561,22 @@ class ImageProviders:
 
         try:
             while True:
-                one_folder_only = len(unique_folders) <= 1
-                folder_weights = []
-                for folder in ordered_folders:
-                    distance = folder_memory.distance_for(folder)
-                    seen_before = folder_memory.has_seen(folder)
+                one_folder_only = len(ordered_buckets) <= 1
+                bucket_weights: list[float] = []
+                bucket_factors: dict[str, float] = {}
+                for bucket in ordered_buckets:
+                    seen_before, distance, streak_len = (
+                        self._controlled_random_bucket_memory_state(
+                            folder_memory,
+                            bucket,
+                            bucket_to_folders[bucket],
+                            tree=tree,
+                            bucket_mode=bucket_mode,
+                        )
+                    )
                     if not seen_before:
                         distance = min(distance, gap_max)
                     clamped_distance = min(distance, gap_max)
-                    streak_len = folder_memory.streak_for(folder)
 
                     if one_folder_only:
                         folder_factor = 1.0
@@ -421,27 +594,28 @@ class ImageProviders:
                     else:
                         streak_factor = max(0.25, 0.75 ** max(0, streak_len - 1))
                     combined = folder_factor * boost * streak_factor
-                    folder_weights.append(folder_base_totals[folder] * combined)
+                    bucket_factors[bucket] = combined
+                    bucket_weights.append(bucket_base_totals[bucket] * combined)
 
-                if not any(folder_weights):
+                if not any(bucket_weights):
                     path, idx = _fallback_pick()
                 else:
-                    cum_eff = list(accumulate(folder_weights))
+                    cum_eff = list(accumulate(bucket_weights))
                     if cum_eff[-1] <= 0.0:
                         path, idx = _fallback_pick()
                     else:
                         x = random.random() * cum_eff[-1]
-                        folder_idx = bisect.bisect_left(cum_eff, x)
-                        if folder_idx >= len(ordered_folders):
-                            folder_idx = len(ordered_folders) - 1
-                        folder = ordered_folders[folder_idx]
-                        folder_paths = folder_to_paths[folder]
-                        folder_cum_weights = folder_to_image_cum_weights[folder]
-                        y = random.random() * folder_cum_weights[-1]
-                        idx = bisect.bisect_left(folder_cum_weights, y)
-                        if idx >= len(folder_paths):
-                            idx = len(folder_paths) - 1
-                        path = folder_paths[idx]
+                        bucket_idx = bisect.bisect_left(cum_eff, x)
+                        if bucket_idx >= len(ordered_buckets):
+                            bucket_idx = len(ordered_buckets) - 1
+                        bucket = ordered_buckets[bucket_idx]
+                        bucket_paths = bucket_to_paths[bucket]
+                        bucket_cum_weights = bucket_to_image_cum_weights[bucket]
+                        y = random.random() * bucket_cum_weights[-1]
+                        idx = bisect.bisect_left(bucket_cum_weights, y)
+                        if idx >= len(bucket_paths):
+                            idx = len(bucket_paths) - 1
+                        path = bucket_paths[idx]
 
                 yield path
         except GeneratorExit:

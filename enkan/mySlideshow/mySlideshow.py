@@ -353,6 +353,7 @@ class ImageSlideshow:
                     current_image_path=self.current_image_path,
                     target_image_path=image_path,
                     folder_memory=self.folder_memory,
+                    tree=self.original_tree,
                 )
             )
         else:
@@ -431,6 +432,7 @@ class ImageSlideshow:
         return {
             **self.selection_weights.provider_kwargs(),
             "folder_memory": self.folder_memory,
+            "tree": self.original_tree,
         }
 
     def update_slide_show(
@@ -1198,6 +1200,7 @@ class ImageSlideshow:
                 weights=self.selection_weights.weights,
                 current_image_path=self.current_image_path,
                 folder_memory=self.folder_memory,
+                tree=self.original_tree,
             )
         )
         return StatusBarContext(

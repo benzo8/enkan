@@ -6,6 +6,43 @@ from enkan.plugables.ImageProviders import ImageProviders
 from enkan.tree.diagnostics import _resolve_test_provider
 
 
+class _FakeNode:
+    def __init__(self, name, level, parent=None):
+        self.name = name
+        self._level = level
+        self.parent = parent
+
+    @property
+    def level(self):
+        return self._level
+
+    def ancestor_at_level(self, target_level):
+        if target_level < 1 or target_level > self.level:
+            return None
+        current = self
+        while current is not None and current.level > target_level:
+            current = current.parent
+        return current
+
+
+class _FakeTree:
+    def __init__(self, image_to_node, folder_to_node, mode_map):
+        self.virtual_image_lookup = dict(image_to_node)
+        self.path_lookup = dict(folder_to_node)
+        self.defaults = type("_Defaults", (), {"mode": mode_map})()
+        self.built_mode = mode_map
+
+    def resolve_node_for_image(self, image_path):
+        node = self.virtual_image_lookup.get(image_path)
+        if node is not None:
+            return node
+        return self.path_lookup.get(os.path.dirname(image_path))
+
+    def find_node(self, name, lookup_dict=None):
+        lookup = self.path_lookup if lookup_dict is None else lookup_dict
+        return lookup.get(name)
+
+
 def test_controlled_random_weighted_registered():
     providers = ImageProviders()
 
@@ -147,6 +184,55 @@ def test_controlled_random_weighted_does_not_mutate_memory_directly():
     _ = next(provider)
 
     assert folder_memory.step == 0
+
+
+def test_controlled_random_weighted_balanced_branch_buckets_share_recency():
+    providers = ImageProviders()
+    providers.current_provider_name = "controlled_random_weighted"
+    folder_memory = FolderSelectionMemory()
+    folder_memory.record_folder(os.path.join("root", "branch_a", "folder_1"))
+    root = _FakeNode("root", 1)
+    branch_a = _FakeNode(os.path.join("root", "branch_a"), 2, root)
+    branch_b = _FakeNode(os.path.join("root", "branch_b"), 2, root)
+    folder_1 = _FakeNode(os.path.join("root", "branch_a", "folder_1"), 3, branch_a)
+    folder_2 = _FakeNode(os.path.join("root", "branch_a", "folder_2"), 3, branch_a)
+    folder_3 = _FakeNode(os.path.join("root", "branch_b", "folder_3"), 3, branch_b)
+    tree = _FakeTree(
+        {
+            os.path.join("root", "branch_a", "folder_1", "a.jpg"): folder_1,
+            os.path.join("root", "branch_a", "folder_2", "b.jpg"): folder_2,
+            os.path.join("root", "branch_b", "folder_3", "c.jpg"): folder_3,
+        },
+        {
+            os.path.join("root", "branch_a", "folder_1"): folder_1,
+            os.path.join("root", "branch_a", "folder_2"): folder_2,
+            os.path.join("root", "branch_b", "folder_3"): folder_3,
+        },
+        {2: ("b", (0, 0))},
+    )
+
+    payload = providers.get_current_provider_status_payload(
+        image_paths=[
+            os.path.join("root", "branch_a", "folder_1", "a.jpg"),
+            os.path.join("root", "branch_a", "folder_2", "b.jpg"),
+            os.path.join("root", "branch_b", "folder_3", "c.jpg"),
+        ],
+        weights=[1.0, 1.0, 1.0],
+        current_image_path=os.path.join("root", "branch_a", "folder_2", "b.jpg"),
+        folder_memory=folder_memory,
+        tree=tree,
+        settings={
+            "gap_min": 3,
+            "gap_max": 10,
+            "alpha": 0.01,
+            "repeat_penalty": 0.1,
+            "bucket_mode": "balance_bucket",
+        },
+    )
+
+    assert payload is not None
+    assert payload["seen_before"] is True
+    assert payload["bucket"] == os.path.join("root", "branch_a")
 
 
 def test_controlled_random_weighted_streak_penalty_discourages_repeat():
