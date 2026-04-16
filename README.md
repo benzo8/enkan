@@ -62,19 +62,26 @@ enkan currently ships with five runtime image providers:
 - `random` - pure random selection, ignoring weights
 - `sequential` - simple linear stepping through the current image set
 - `burst` - weighted selection of a folder seed, then a short burst of images from that folder
-- `controlled_random_weighted` (`CRW`) - a weighted provider with folder-level memory that reduces obvious streaks and repeatedly favors folders that have not been seen for a while
+- `controlled_random_weighted` (`CRW`) - a weighted provider with shared recency memory and streak penalties that reduces obvious streaks while still respecting the underlying weight model
 
 ### Controlled Random Weighted (CRW)
 
 CRW is deliberately less statistically random than plain weighted selection so that it feels more random to a human viewer.
 
-It keeps the existing image and folder weightings, but adds folder-level memory:
+It keeps the existing image and folder weightings, but adds bucket-level memory:
 
-- recently seen folders are cooled off
-- folders that have not been seen for a while are gradually boosted
-- repeated streaks from the same folder are penalised
+- recently seen buckets are cooled off
+- buckets that have not been seen for a while are gradually boosted
+- repeated streaks from the same bucket are penalised
 
 The result is usually a slideshow that feels less clumpy than pure weighted random, while still respecting the underlying weighting rules.
+
+By default, CRW groups images by the active balanced branch bucket rather than the immediate filesystem folder. That means sibling folders inside the same balanced branch can share recency memory when the tree structure says they belong to the same weighted bucket. If you are already running CRW, pressing `D` toggles between:
+
+- `BB` - balanced-branch buckets
+- `FB` - raw folder buckets
+
+Use `Shift-D` to cycle the current provider status overlay. CRW currently supports `off`, `friendly`, `useful`, and `debug`.
 
 ## `.txt` Input Files
 
@@ -132,7 +139,7 @@ A group definition stores graft level, proportion, and mode modifiers. Any line 
 - `.lst` files are either:
   - plain CSV lines (`absolute\path\to\image.jpg,weight`). They are useful when you already have a hand-curated weighted list
   - new-line delimited lists of files (`absolute\path\to\image.jpg`), as produced by irfanView, et al
-- `.tree` files are binary snapshots produced by `--outputtree`. enkan reuses them if the embedded version matches; otherwise it falls back to the sibling `.txt` / `.lst` source.
+- `.tree` files are binary snapshots produced by `--outputtree`. enkan reuses them if the embedded version matches; for older trees it first attempts in-memory index repair and only falls back to the sibling `.txt` / `.lst` source if repair is not possible.
 
 ## CLI Reference
 
@@ -167,8 +174,8 @@ A group definition stores graft level, proportion, and mode modifiers. Any line 
 | N | Toggle the information line |
 | C | Select fully random provider |
 | W | Select weighted/balanced provider |
-| D | Select controlled-random weighted (`CRW`) provider |
-| Shift-D | Cycle CRW status display: off / friendly / useful / debug |
+| D | Select controlled-random weighted (`CRW`), or if CRW is already active toggle its bucket strategy (`BB` / `FB`) |
+| Shift-D | Cycle the current provider status display (`CRW`: off / friendly / useful / debug) |
 | L | Select linear / sequential provider |
 | B | Select Folder Burst mode |
 | Ctrl-B | Reset Folder Burst mode and force a new burst seed |
@@ -178,11 +185,13 @@ A group definition stores graft level, proportion, and mode modifiers. Any line 
 | O | Follow branch/folder up within Parent Mode |
 | I | Step backwards through Parent Mode stack |
 | U | Reset Parent Mode |
-| Ctrl-D | Clear controlled-random folder memory for the current scope |
+| Ctrl-D | Clear controlled-random selection memory for the current scope |
 | M | Toggle mute |
 | R | Rotate image clockwise by 90 degrees |
 | Ctrl-R | Try to write current orientation to image EXIF data |
 | Delete | Delete current image or video |
+| Ctrl-Shift-M | Open the mode-adjust dialog |
+| Ctrl-Shift-T | Print the current tree to the console |
 | = / + / - | Zoom image |
 | 0 | Reset Zoom |
 | Shift-Cursor | Move viewport around zoomed image |
@@ -209,6 +218,6 @@ Subfolder mode and Parent mode temporarily restrict future selection to a smalle
 - Keep your `.txt` files in source control alongside the media curations—they capture the intent of the show far better than flat lists.
 - Use groups to coordinate related folders (for example all portrait shoots) without repeating the same graft and mode modifiers on every line.
 - When emphasising a single standout image, prefer an absolute modifier like `[25]` on the image line instead of inflating nearby branches.
-- Large libraries benefit from building a `.tree` once and reusing it until the folder structure changes; enkan automatically regenerates it if the pickle version does not match.
+- Large libraries benefit from building a `.tree` once and reusing it until the folder structure changes; enkan will try to repair older runtime indexes in memory before falling back to rebuilding from the sibling source file.
 
 Have fun!
