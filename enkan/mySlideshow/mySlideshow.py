@@ -22,9 +22,10 @@ from enkan.utils.Filters import Filters
 from enkan.utils.SelectionWeights import SelectionWeights
 from enkan.plugables.ImageProviders import ImageProviders
 from enkan.tree.tree_logic import (
-    apply_mode_and_recalculate,
+    SelectionScope,
+    apply_mode_and_recalculate_scope,
     build_tree,
-    extract_image_paths_and_weights_from_tree,
+    extract_selection_scope_from_tree,
 )
 from enkan.tree.diagnostics import print_tree
 from enkan.mySlideshow.Gui.Gui import Gui
@@ -55,6 +56,7 @@ class _ScopeState:
     selection_weights: SelectionWeights
     folder_memory: FolderSelectionMemory
     navigation_state: NavigationState
+    selection_scope: SelectionScope | None = None
     seen_folders: set[str] = field(default_factory=set)
 
 
@@ -65,6 +67,7 @@ class ImageSlideshow:
         tree: Tree,
         image_paths: list,
         selection_weights: SelectionWeights,
+        selection_scope: SelectionScope | None,
         defaults: Defaults,
         filters: Filters,
         interval: int | float | None = None,
@@ -74,6 +77,16 @@ class ImageSlideshow:
         self.image_paths: list = image_paths
         self.selection_weights: SelectionWeights = selection_weights.copy()
         self.original_selection_weights: SelectionWeights = selection_weights.copy()
+        self.selection_scope: SelectionScope = (
+            selection_scope.copy()
+            if selection_scope is not None
+            else SelectionScope.from_parts(
+                image_paths,
+                self.selection_weights.weights,
+                cum_weights=self.selection_weights.cum_weights,
+            )
+        )
+        self.original_selection_scope: SelectionScope = self.selection_scope.copy()
         self.folder_memory: FolderSelectionMemory = self._new_scope_memory()
         self.original_folder_memory: FolderSelectionMemory = self.folder_memory.copy()
         self.scope_seen_folders: set[str] = set()
@@ -221,6 +234,11 @@ class ImageSlideshow:
             selection_weights=self.selection_weights.copy(),
             folder_memory=self.folder_memory.copy(),
             navigation_state=self._navigation_state(),
+            selection_scope=(
+                self.selection_scope.copy()
+                if getattr(self, "selection_scope", None) is not None
+                else None
+            ),
             seen_folders=set(self.scope_seen_folders),
         )
 
@@ -241,6 +259,9 @@ class ImageSlideshow:
 
     def _apply_scope_state(self, scope_state: _ScopeState) -> None:
         self.selection_weights = scope_state.selection_weights.copy()
+        selection_scope = getattr(scope_state, "selection_scope", None)
+        if selection_scope is not None:
+            self.selection_scope = selection_scope.copy()
         self.folder_memory = scope_state.folder_memory.copy()
         self.scope_seen_folders = set(scope_state.seen_folders)
         self._apply_navigation_state(scope_state.navigation_state)
@@ -251,6 +272,8 @@ class ImageSlideshow:
             return
         self.original_image_paths = self.image_paths[:]
         self.original_selection_weights = self.selection_weights.copy()
+        if getattr(self, "selection_scope", None) is not None:
+            self.original_selection_scope = self.selection_scope.copy()
         self.original_folder_memory = self.folder_memory.copy()
         self.original_scope_seen_folders = set(self.scope_seen_folders)
         self.original_navigation_state = self._navigation_state()
@@ -281,13 +304,50 @@ class ImageSlideshow:
     def _scope_records_once_per_folder(self) -> bool:
         return self._navigation_state().scope_kind is not ScopeKind.ROOT
 
+    def _resolve_memory_key_for_scope(self, scope_path: str | None) -> str | None:
+        if not scope_path:
+            return None
+        tree = getattr(self, "original_tree", None)
+        if tree is None:
+            return scope_path
+        node = tree.find_node(scope_path, tree.node_lookup)
+        if node is None:
+            node = tree.find_node(scope_path, tree.path_lookup)
+        if node is not None:
+            return node.name
+        return scope_path
+
+    def _resolve_memory_key_for_image(
+        self,
+        image_path: str,
+        provider_pick_meta: dict[str, object] | None = None,
+    ) -> str | None:
+        if provider_pick_meta is not None:
+            memory_key = provider_pick_meta.get("memory_key")
+            if isinstance(memory_key, str) and memory_key:
+                return memory_key
+        providers = getattr(self, "providers", None)
+        if providers is None:
+            return os.path.dirname(image_path) or None
+        return providers.resolve_memory_key_for_image(
+            image_path,
+            selection_scope=getattr(self, "selection_scope", None),
+            tree=getattr(self, "original_tree", None),
+        )
+
     def _record_scope_entry(self, folder: str) -> None:
-        if not folder:
+        memory_key = self._resolve_memory_key_for_scope(folder)
+        if not memory_key:
             return
-        self.folder_memory.record_folder(folder)
+        self.folder_memory.record_folder(memory_key)
         self._sync_original_scope_state()
 
-    def _record_memory_for_view(self, image_path: str, record_history: bool) -> None:
+    def _record_memory_for_view(
+        self,
+        image_path: str,
+        record_history: bool,
+        provider_pick_meta: dict[str, object] | None = None,
+    ) -> None:
         if not record_history:
             return
 
@@ -305,16 +365,23 @@ class ImageSlideshow:
                 return
             self._last_burst_memory_token = burst_token
             burst_folder = getattr(self.manager.image_provider, "current_burst_folder", None)
-            self.folder_memory.record_folder(burst_folder or folder)
+            memory_key = self._resolve_memory_key_for_scope(burst_folder or folder)
+            if not memory_key:
+                return
+            self.folder_memory.record_folder(memory_key)
             self._sync_original_scope_state()
             return
 
-        if self._scope_records_once_per_folder():
-            if folder in self.scope_seen_folders:
-                return
-            self.scope_seen_folders.add(folder)
+        memory_key = self._resolve_memory_key_for_image(image_path, provider_pick_meta)
+        if not memory_key:
+            return
 
-        self.folder_memory.record_folder(folder)
+        if self._scope_records_once_per_folder():
+            if memory_key in self.scope_seen_folders:
+                return
+            self.scope_seen_folders.add(memory_key)
+
+        self.folder_memory.record_folder(memory_key)
         self._sync_original_scope_state()
 
     def show_image(self, image_path: str = None, record_history: bool = True) -> None:
@@ -336,9 +403,17 @@ class ImageSlideshow:
         if not image_path:
             logger.warning("No displayable media available.")
             return
+        provider_pick_meta = getattr(self.manager, "current_media_metadata", None)
 
         self.current_image_path: str = image_path
-        if image_path in self.image_paths:
+        provider_pick_index = None
+        if isinstance(provider_pick_meta, dict):
+            raw_pick_index = provider_pick_meta.get("index")
+            if isinstance(raw_pick_index, int):
+                provider_pick_index = raw_pick_index
+        if provider_pick_index is not None and 0 <= provider_pick_index < len(self.image_paths):
+            self.current_image_index = provider_pick_index
+        elif image_path in self.image_paths:
             self.current_image_index = self.image_paths.index(image_path)
         if not record_history and image_path == previous_image_path:
             self.current_provider_status_payload = previous_provider_status_payload
@@ -350,15 +425,17 @@ class ImageSlideshow:
                 self.providers.get_current_provider_status_payload(
                     image_paths=self.image_paths,
                     weights=self.selection_weights.weights,
+                    selection_scope=getattr(self, "selection_scope", None),
                     current_image_path=self.current_image_path,
                     target_image_path=image_path,
                     folder_memory=self.folder_memory,
+                    current_pick_meta=provider_pick_meta,
                     tree=self.original_tree,
                 )
             )
         else:
             self.current_provider_status_payload = None
-        self._record_memory_for_view(image_path, record_history)
+        self._record_memory_for_view(image_path, record_history, provider_pick_meta)
 
         if not utils.is_videofile(image_path):
             image = media_payload
@@ -431,6 +508,7 @@ class ImageSlideshow:
     def _provider_kwargs(self) -> dict[str, object]:
         return {
             **self.selection_weights.provider_kwargs(),
+            "selection_scope": getattr(self, "selection_scope", None),
             "folder_memory": self.folder_memory,
             "tree": self.original_tree,
         }
@@ -439,6 +517,7 @@ class ImageSlideshow:
         self,
         image_paths: list,
         selection_weights: SelectionWeights,
+        selection_scope: SelectionScope | None = None,
         record_initial_history: bool = False,
         preferred_index: int | None = None,
     ) -> None:
@@ -448,6 +527,16 @@ class ImageSlideshow:
         )
         self.image_paths = image_paths
         self.selection_weights = selection_weights.copy()
+        if selection_scope is not None:
+            self.selection_scope = selection_scope.copy()
+        elif getattr(self, "selection_scope", None) is not None:
+            self.selection_scope = self.selection_scope.copy()
+        else:
+            self.selection_scope = SelectionScope.from_parts(
+                image_paths,
+                self.selection_weights.weights,
+                cum_weights=self.selection_weights.cum_weights,
+            )
         self.number_of_images = len(image_paths)
         self.current_image_index = self.safe_current_image_index(
             image_paths,
@@ -558,8 +647,9 @@ class ImageSlideshow:
     ) -> None:
         """Set up for a new directory and create an updated slideshow."""
         if navigation_node:
-            new_image_paths, new_weights = extract_image_paths_and_weights_from_tree(
-                tree=self.original_tree, start_node=navigation_node
+            selection_scope = extract_selection_scope_from_tree(
+                tree=self.original_tree,
+                start_node=navigation_node,
             )
         elif os.path.isdir(new_path):
             parent_image_dirs = {
@@ -577,14 +667,19 @@ class ImageSlideshow:
                 tk_root=self.root,
                 tk_enabled=True,
             )
-            new_image_paths, new_weights = extract_image_paths_and_weights_from_tree(
+            selection_scope = extract_selection_scope_from_tree(
                 parent_tree
             )
         else:
             logger.debug("No valid directory found.")
+            return
         self.update_slide_show(
-            new_image_paths,
-            SelectionWeights.from_weights(new_weights),
+            selection_scope.image_paths,
+            SelectionWeights.from_parts(
+                selection_scope.weights,
+                selection_scope.cum_weights,
+            ),
+            selection_scope=selection_scope,
             record_initial_history=record_initial_history,
         )
 
@@ -608,21 +703,28 @@ class ImageSlideshow:
         )
 
     def _recalculate_slideshow(self, ignore_user: bool) -> None:
-        images, weights, cum_weights = apply_mode_and_recalculate(
-            self.original_tree, self.defaults, ignore_user_proportion=ignore_user
+        selection_scope = apply_mode_and_recalculate_scope(
+            self.original_tree,
+            self.defaults,
+            ignore_user_proportion=ignore_user,
         )
-        self.original_image_paths = images[:]
+        self.original_image_paths = selection_scope.image_paths[:]
         self.folder_memory = self._new_scope_memory()
         self.scope_seen_folders = set()
         self.original_selection_weights = SelectionWeights.from_parts(
-            weights,
-            cum_weights,
+            selection_scope.weights,
+            selection_scope.cum_weights,
         )
+        self.original_selection_scope = selection_scope.copy()
         self.original_folder_memory = self.folder_memory.copy()
         self.original_scope_seen_folders = set()
         self.update_slide_show(
-            images,
-            SelectionWeights.from_parts(weights, cum_weights),
+            selection_scope.image_paths,
+            SelectionWeights.from_parts(
+                selection_scope.weights,
+                selection_scope.cum_weights,
+            ),
+            selection_scope=selection_scope,
         )
         mode_dict = self.defaults.mode or {}
         if mode_dict:
@@ -758,6 +860,8 @@ class ImageSlideshow:
                     index = self.image_paths.index(deleted_path)
                     self.image_paths.pop(index)
                     self.selection_weights.remove_at(index)
+                    if getattr(self, "selection_scope", None) is not None:
+                        self.selection_scope.remove_at(index)
                     try:
                         self.manager.history_manager.remove(deleted_path)
                     except ValueError:
@@ -777,6 +881,7 @@ class ImageSlideshow:
                     self.update_slide_show(
                         image_paths=self.image_paths,
                         selection_weights=self.selection_weights,
+                        selection_scope=getattr(self, "selection_scope", None),
                         preferred_index=next_index,
                     )
                     self._sync_original_scope_state()
@@ -905,10 +1010,32 @@ class ImageSlideshow:
                     )
                 )
                 temp_image_paths: list[str] = utils.images_from_path(
-                    os.path.dirname(self.current_image_path),
+                    folder,
                     tree=self.original_tree,
                 )
                 temp_weights: list[int] = [1] * len(temp_image_paths)
+                folder_node = self.original_tree.find_node(
+                    folder,
+                    self.original_tree.path_lookup,
+                )
+                node_key = self._resolve_memory_key_for_scope(folder) or folder
+                node_level = folder_node.level if folder_node is not None else 1
+                ancestor_keys = None
+                if folder_node is not None:
+                    lineage: list[str] = []
+                    node_cursor = folder_node
+                    while node_cursor is not None:
+                        lineage.append(node_cursor.name)
+                        node_cursor = node_cursor.parent
+                    lineage.reverse()
+                    ancestor_keys = tuple(lineage)
+                selection_scope = SelectionScope.single_unit(
+                    node_key=node_key,
+                    image_paths=temp_image_paths,
+                    weights=temp_weights,
+                    node_level=node_level,
+                    ancestor_keys=ancestor_keys,
+                )
             case NavigationBasis.BRANCH:
                 node = self._current_branch_context_node(self.current_image_path)
                 if not node:
@@ -924,18 +1051,21 @@ class ImageSlideshow:
                         scope_state=self._capture_scope_state(),
                     )
                 )
-                temp_image_paths, temp_weights = (
-                    extract_image_paths_and_weights_from_tree(
-                        tree=self.original_tree, start_node=node
-                    )
+                selection_scope = extract_selection_scope_from_tree(
+                    tree=self.original_tree,
+                    start_node=node,
                 )
         self._set_scope_kind(ScopeKind.SUBFOLDER)
 
         self.folder_memory = self._new_scope_memory()
         self.scope_seen_folders = set()
         self.update_slide_show(
-            image_paths=temp_image_paths,
-            selection_weights=SelectionWeights.from_weights(temp_weights),
+            image_paths=selection_scope.image_paths,
+            selection_weights=SelectionWeights.from_parts(
+                selection_scope.weights,
+                selection_scope.cum_weights,
+            ),
+            selection_scope=selection_scope,
             record_initial_history=True,
         )
 
@@ -1142,6 +1272,8 @@ class ImageSlideshow:
         self.subFolderStack.clear()
         self.image_paths = self.original_image_paths[:]
         self.selection_weights = self.original_selection_weights.copy()
+        if getattr(self, "original_selection_scope", None) is not None:
+            self.selection_scope = self.original_selection_scope.copy()
         self.folder_memory = self.original_folder_memory.copy()
         self.scope_seen_folders = set(self.original_scope_seen_folders)
         self._last_burst_memory_token = None
@@ -1212,6 +1344,7 @@ class ImageSlideshow:
             or self.providers.get_current_provider_status_payload(
                 image_paths=self.image_paths,
                 weights=self.selection_weights.weights,
+                selection_scope=getattr(self, "selection_scope", None),
                 current_image_path=self.current_image_path,
                 folder_memory=self.folder_memory,
                 tree=self.original_tree,

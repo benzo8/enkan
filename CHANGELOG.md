@@ -4,6 +4,14 @@ This file summarizes user-facing and project-shaping changes across the practica
 
 It is intentionally concise. Detailed engineering-level change history remains in Git commit history.
 
+## 2.5.0-rc2
+
+- Reworked `controlled_random_weighted` (`CRW`) to build its runtime index from logical image-bearing tree nodes instead of scanning the flattened media list when the provider is activated.
+- Added a richer runtime selection model so providers can consume both the flattened media pool and node-level selection units without pushing CRW-specific logic back into the slideshow.
+- Changed CRW memory keys from raw filesystem folders to provider-neutral node identities, which keeps flattened nodes as one shared memory unit and preserves future provider extensibility.
+- Threaded provider pick metadata through the preload/cache path so runtime memory and status reporting stay aligned with what the viewer actually sees.
+- Improved stale `.tree` handling by wiring in-memory pickle repair back into the multi-source load path before falling back to rebuilding from source files.
+
 ## 2.4.9
 
 - Merged the long-running `dev` work into the first public `2.4` release line.

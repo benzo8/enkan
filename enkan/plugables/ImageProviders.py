@@ -5,8 +5,10 @@ import logging
 from dataclasses import dataclass
 from collections import deque
 from itertools import accumulate
+from typing import Any, Callable
 
 from enkan.cache.ImageCacheManager import ImageCacheManager
+from enkan.tree.selection_scope import SelectionScope, SelectionUnit
 from enkan.utils.utils import weighted_choice, images_from_path
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -18,10 +20,38 @@ class ProviderSpec:
     label: str
 
 
+@dataclass(frozen=True)
+class ControlledRandomIndex:
+    ordered_buckets: tuple[str, ...]
+    bucket_to_units: dict[str, tuple[SelectionUnit, ...]]
+    bucket_to_unit_cum_weights: dict[str, tuple[float, ...]]
+    bucket_to_memory_keys: dict[str, tuple[str, ...]]
+    bucket_base_totals: dict[str, float]
+    unit_to_bucket: dict[str, str]
+
+
+class _StatefulProviderIterator:
+    __slots__ = ("_next_func", "last_pick_meta")
+
+    def __init__(
+        self,
+        next_func: Callable[[], tuple[str, dict[str, Any] | None]],
+    ) -> None:
+        self._next_func = next_func
+        self.last_pick_meta: dict[str, Any] | None = None
+
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> str:
+        path, meta = self._next_func()
+        self.last_pick_meta = meta
+        return path
+
+
 class ImageProviders:
     def __init__(self):
         self.manager = None
-        # Provider registry: key → provider factory function
         self.providers = {
             "sequential": self.image_provider_sequential,
             "random": self.image_provider_random,
@@ -45,103 +75,205 @@ class ImageProviders:
         self.current_provider_display_mode_index = 0
         self.current_provider_settings: dict[str, float | int | str] = {}
         self.current_provider_setting_overrides: dict[str, float | int | str] = {}
+        self._controlled_random_index_cache: dict[
+            tuple[int, str, int],
+            ControlledRandomIndex,
+        ] = {}
 
-    def _controlled_random_bucket_for_folder(
+    def _controlled_random_ancestor_keys_for_node(self, node) -> tuple[str, ...]:
+        keys: list[str] = []
+        current = node
+        while current is not None:
+            keys.append(current.name)
+            current = current.parent
+        keys.reverse()
+        return tuple(keys)
+
+    def _controlled_random_fallback_selection_scope(
         self,
-        folder: str,
-        bucket_mode: str = "folder_bucket",
+        image_paths: list[str],
+        weights: list[float],
         tree=None,
-    ) -> str:
-        if tree is None:
-            return folder
-        node = tree.find_node(folder, tree.path_lookup)
-        if node is None:
-            return folder
-        return self._controlled_random_bucket_for_node(node, tree, bucket_mode)
+    ) -> SelectionScope:
+        if not image_paths:
+            return SelectionScope.from_parts([], [], [])
+
+        selection_units: list[SelectionUnit] = []
+        current_node_key: str | None = None
+        current_level = 1
+        current_ancestor_keys: tuple[str, ...] = ()
+        current_images: list[str] = []
+        current_weights: list[float] = []
+        current_start = 0
+
+        def flush_current() -> None:
+            nonlocal current_node_key
+            if current_node_key is None:
+                return
+            selection_units.append(
+                SelectionUnit(
+                    node_key=current_node_key,
+                    node_level=current_level,
+                    ancestor_keys=current_ancestor_keys or (current_node_key,),
+                    image_paths=list(current_images),
+                    weights=list(current_weights),
+                    cum_weights=list(accumulate(current_weights)),
+                    base_total=sum(current_weights),
+                    start_index=current_start,
+                )
+            )
+
+        for index, (path, weight) in enumerate(zip(image_paths, weights)):
+            node = tree.resolve_node_for_image(path) if tree is not None else None
+            if node is not None:
+                node_key = node.name
+                node_level = node.level
+                ancestor_keys = self._controlled_random_ancestor_keys_for_node(node)
+            else:
+                node_key = os.path.dirname(path) or path
+                node_level = max(1, len([part for part in node_key.split(os.path.sep) if part]))
+                ancestor_keys = (node_key,)
+
+            if current_node_key != node_key:
+                flush_current()
+                current_node_key = node_key
+                current_level = node_level
+                current_ancestor_keys = ancestor_keys
+                current_images = []
+                current_weights = []
+                current_start = index
+
+            current_images.append(path)
+            current_weights.append(weight)
+
+        flush_current()
+        return SelectionScope.from_parts(
+            image_paths,
+            weights,
+            selection_units,
+        )
+
+    def _selection_scope_for_provider(
+        self,
+        *,
+        image_paths: list[str],
+        weights: list[float],
+        selection_scope: SelectionScope | None = None,
+        tree=None,
+    ) -> SelectionScope:
+        if selection_scope is not None:
+            return selection_scope
+        return self._controlled_random_fallback_selection_scope(
+            image_paths=image_paths,
+            weights=weights,
+            tree=tree,
+        )
 
     def _controlled_random_mode_map(self, tree) -> dict[int, object]:
         if tree is None:
             return {}
         return getattr(tree, "defaults", None).mode or getattr(tree, "built_mode", None) or {}
 
-    def _controlled_random_target_level(self, node, tree, bucket_mode: str) -> int:
-        if bucket_mode != "balance_bucket":
-            return node.level
+    def _controlled_random_balance_level(self, tree) -> int:
         mode_map = self._controlled_random_mode_map(tree)
         if not mode_map:
-            return node.level
-        return min(node.level, max(mode_map.keys()))
+            return 0
+        return max(mode_map.keys())
 
-    def _controlled_random_bucket_for_node(self, node, tree, bucket_mode: str) -> str:
-        target_level = self._controlled_random_target_level(node, tree, bucket_mode)
-        bucket_node = node.ancestor_at_level(target_level) or node
-        return bucket_node.name
-
-    def _controlled_random_bucket_for_image(
+    def _controlled_random_bucket_for_unit(
         self,
-        image_path: str,
+        unit: SelectionUnit,
         *,
-        tree=None,
         bucket_mode: str = "folder_bucket",
+        balance_level: int = 0,
     ) -> str:
-        if tree is None:
-            return os.path.dirname(image_path)
-        node = tree.resolve_node_for_image(image_path)
-        if node is None:
-            return os.path.dirname(image_path)
-        return self._controlled_random_bucket_for_node(node, tree, bucket_mode)
+        if bucket_mode != "balance_bucket" or balance_level <= 0:
+            return unit.node_key
+        target_level = min(unit.node_level, balance_level)
+        return unit.ancestor_key_at_level(target_level)
 
-    def _controlled_random_bucket_maps(
+    def _controlled_random_index(
         self,
+        *,
         image_paths: list[str],
+        weights: list[float],
+        selection_scope: SelectionScope | None = None,
         bucket_mode: str = "folder_bucket",
         tree=None,
-    ) -> tuple[dict[str, str], dict[str, list[str]], dict[str, list[str]], list[str]]:
-        folder_to_bucket: dict[str, str] = {}
-        bucket_to_folders: dict[str, list[str]] = {}
-        bucket_to_paths: dict[str, list[str]] = {}
+    ) -> ControlledRandomIndex:
+        scope = self._selection_scope_for_provider(
+            image_paths=image_paths,
+            weights=weights,
+            selection_scope=selection_scope,
+            tree=tree,
+        )
+        balance_level = self._controlled_random_balance_level(tree)
+        cache_key = (id(scope), bucket_mode, balance_level)
+        cached = self._controlled_random_index_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         ordered_buckets: list[str] = []
+        bucket_to_units: dict[str, list[SelectionUnit]] = {}
+        bucket_to_memory_keys: dict[str, list[str]] = {}
+        bucket_base_totals: dict[str, float] = {}
+        unit_to_bucket: dict[str, str] = {}
 
-        for path in image_paths:
-            folder = os.path.dirname(path)
-            if not folder:
-                continue
-            bucket = self._controlled_random_bucket_for_image(
-                path,
-                tree=tree,
+        for unit in scope.selection_units:
+            bucket = self._controlled_random_bucket_for_unit(
+                unit,
                 bucket_mode=bucket_mode,
+                balance_level=balance_level,
             )
-            folder_to_bucket.setdefault(folder, bucket)
-            if bucket not in bucket_to_folders:
-                bucket_to_folders[bucket] = []
-                bucket_to_paths[bucket] = []
+            unit_to_bucket[unit.node_key] = bucket
+            if bucket not in bucket_to_units:
                 ordered_buckets.append(bucket)
-            if folder not in bucket_to_folders[bucket]:
-                bucket_to_folders[bucket].append(folder)
-            bucket_to_paths[bucket].append(path)
+                bucket_to_units[bucket] = []
+                bucket_to_memory_keys[bucket] = []
+                bucket_base_totals[bucket] = 0.0
+            bucket_to_units[bucket].append(unit)
+            bucket_to_memory_keys[bucket].append(unit.node_key)
+            bucket_base_totals[bucket] += unit.base_total
 
-        return folder_to_bucket, bucket_to_folders, bucket_to_paths, ordered_buckets
+        bucket_to_unit_cum_weights = {
+            bucket: tuple(accumulate(unit.base_total for unit in units))
+            for bucket, units in bucket_to_units.items()
+        }
+        index = ControlledRandomIndex(
+            ordered_buckets=tuple(ordered_buckets),
+            bucket_to_units={
+                bucket: tuple(units) for bucket, units in bucket_to_units.items()
+            },
+            bucket_to_unit_cum_weights=bucket_to_unit_cum_weights,
+            bucket_to_memory_keys={
+                bucket: tuple(memory_keys)
+                for bucket, memory_keys in bucket_to_memory_keys.items()
+            },
+            bucket_base_totals=bucket_base_totals,
+            unit_to_bucket=unit_to_bucket,
+        )
+        self._controlled_random_index_cache[cache_key] = index
+        return index
 
     def _controlled_random_bucket_memory_state(
         self,
         folder_memory,
         bucket_key: str,
-        bucket_folders: list[str],
+        bucket_memory_keys: tuple[str, ...],
         *,
-        tree=None,
-        bucket_mode: str = "folder_bucket",
+        unit_to_bucket: dict[str, str],
     ) -> tuple[bool, int, int]:
         if not hasattr(folder_memory, "last_seen_by_folder"):
-            folder = bucket_folders[0] if bucket_folders else ""
-            seen_before = folder_memory.has_seen(folder)
-            distance = folder_memory.distance_for(folder)
-            streak_len = folder_memory.streak_for(folder)
+            memory_key = bucket_memory_keys[0] if bucket_memory_keys else bucket_key
+            seen_before = folder_memory.has_seen(memory_key)
+            distance = folder_memory.distance_for(memory_key)
+            streak_len = folder_memory.streak_for(memory_key)
             return seen_before, distance, streak_len
 
         seen_steps = [
-            folder_memory.last_seen_by_folder[folder]
-            for folder in bucket_folders
-            if folder in folder_memory.last_seen_by_folder
+            folder_memory.last_seen_by_folder[memory_key]
+            for memory_key in bucket_memory_keys
+            if memory_key in folder_memory.last_seen_by_folder
         ]
         seen_before = bool(seen_steps)
         if not seen_before:
@@ -151,25 +283,87 @@ class ImageProviders:
         distance = projected_step - max(seen_steps)
         streak_len = 0
         if hasattr(folder_memory, "recent_folders"):
-            for folder in reversed(folder_memory.recent_folders):
-                resolved_bucket = self._controlled_random_bucket_for_folder(
-                    folder,
-                    bucket_mode=bucket_mode,
-                    tree=tree,
-                )
-                if resolved_bucket != bucket_key:
+            for memory_key in reversed(folder_memory.recent_folders):
+                if unit_to_bucket.get(memory_key) != bucket_key:
                     break
                 streak_len += 1
-        elif folder_memory.current_streak_folder in bucket_folders:
+        elif folder_memory.current_streak_folder in bucket_memory_keys:
             streak_len = folder_memory.current_streak_length
         return True, distance, streak_len
+
+    def _controlled_random_effects(
+        self,
+        *,
+        seen_before: bool,
+        distance: int,
+        streak_len: int,
+        one_bucket_only: bool,
+        gap_min: int,
+        gap_max: int,
+        alpha: float,
+        repeat_penalty: float,
+    ) -> tuple[int, float, float, float, float]:
+        if not seen_before:
+            distance = min(distance, gap_max)
+        clamped_distance = min(distance, gap_max)
+
+        if one_bucket_only:
+            folder_factor = 1.0
+        elif gap_min > 0 and distance < gap_min:
+            folder_factor = repeat_penalty + (
+                (1.0 - repeat_penalty) * (distance / gap_min)
+            )
+        else:
+            folder_factor = 1.0
+
+        extra = max(0.0, clamped_distance - 10)
+        boost = 1.0 + alpha * extra * extra
+        if one_bucket_only or not seen_before or streak_len <= 0:
+            streak_factor = 1.0
+        else:
+            streak_factor = max(0.25, 0.75 ** max(0, streak_len - 1))
+        combined = folder_factor * boost * streak_factor
+        return distance, folder_factor, boost, streak_factor, combined
+
+    def _pick_meta_for_index(
+        self,
+        selection_scope: SelectionScope | None,
+        index: int,
+    ) -> dict[str, Any] | None:
+        meta: dict[str, Any] = {"index": index}
+        if selection_scope is None:
+            return meta
+        memory_key = selection_scope.memory_key_for_index(index)
+        if memory_key:
+            meta["memory_key"] = memory_key
+        return meta
+
+    def resolve_memory_key_for_image(
+        self,
+        image_path: str,
+        *,
+        selection_scope: SelectionScope | None = None,
+        tree=None,
+    ) -> str:
+        node = tree.resolve_node_for_image(image_path) if tree is not None else None
+        if node is not None:
+            if selection_scope is None or node.name in selection_scope.unit_key_set():
+                return node.name
+        if selection_scope is not None:
+            unit_keys = selection_scope.unit_keys_for_image(image_path)
+            if len(unit_keys) == 1:
+                return unit_keys[0]
+            if unit_keys:
+                if node is not None and node.name in unit_keys:
+                    return node.name
+                return unit_keys[0]
+        return os.path.dirname(image_path)
 
     def register_provider(self, name, func):
         self.providers[name] = func
         self.provider_specs.setdefault(name, ProviderSpec(func.__name__, name[0:3].upper()))
 
     def select_manager(self, image_paths, provider_name="sequential", **kwargs):
-        # Look up provider by name
         provider_func = self.providers.get(provider_name)
         if not provider_func:
             raise ValueError(f"No such provider: {provider_name}")
@@ -180,7 +374,6 @@ class ImageProviders:
             provider_kwargs=kwargs,
         )
 
-        # Each provider factory should accept image_paths and kwargs
         image_provider = provider_func(image_paths, **kwargs)
         self.manager = ImageCacheManager(
             image_provider,
@@ -191,7 +384,7 @@ class ImageProviders:
         if not preserve_display_mode:
             self.current_provider_display_mode_index = 0
         return self.manager
-    
+
     def get_current_provider_name(self):
         return self.current_provider_name
 
@@ -235,6 +428,7 @@ class ImageProviders:
             return provider_kwargs
 
         weights = list(provider_kwargs.get("weights", []))
+        selection_scope = provider_kwargs.get("selection_scope")
         tree = provider_kwargs.get("tree")
         overrides: dict[str, float | int | str] = {}
         if provider_name == self.current_provider_name:
@@ -247,6 +441,7 @@ class ImageProviders:
         settings = self.get_controlled_random_settings(
             image_paths=image_paths,
             weights=weights,
+            selection_scope=selection_scope,
             gap_min=int(overrides.get("gap_min", 3)),
             repeat_penalty=float(overrides.get("repeat_penalty", 0.1)),
             bucket_mode=str(overrides.get("bucket_mode", "balance_bucket")),
@@ -321,17 +516,20 @@ class ImageProviders:
         *,
         image_paths: list[str],
         weights: list[float],
+        selection_scope: SelectionScope | None = None,
         gap_min: int = 3,
         repeat_penalty: float = 0.1,
         bucket_mode: str = "balance_bucket",
         tree=None,
     ) -> dict[str, float | int | str]:
-        _, bucket_to_folders, _, _ = self._controlled_random_bucket_maps(
-            image_paths,
+        index = self._controlled_random_index(
+            image_paths=image_paths,
+            weights=weights,
+            selection_scope=selection_scope,
             bucket_mode=bucket_mode,
             tree=tree,
         )
-        bucket_count = max(1, len(bucket_to_folders))
+        bucket_count = max(1, len(index.ordered_buckets))
         gap_min = max(1, int(gap_min))
         gap_max = max(gap_min + 1, min(80, round(bucket_count * 1.5)))
         alpha = max(0.0025, min(0.03, 0.12 / bucket_count))
@@ -348,66 +546,60 @@ class ImageProviders:
         *,
         image_paths: list[str],
         weights: list[float],
+        selection_scope: SelectionScope | None = None,
         current_image_path: str | None,
         folder_memory,
         settings: dict[str, float | int | str] | None = None,
         target_image_path: str | None = None,
+        current_pick_meta: dict[str, Any] | None = None,
         tree=None,
     ) -> dict[str, float | int | str] | None:
         provider_name = self.current_provider_name
         if provider_name != "controlled_random_weighted":
             return None
 
+        scope = self._selection_scope_for_provider(
+            image_paths=image_paths,
+            weights=weights,
+            selection_scope=selection_scope,
+            tree=tree,
+        )
         image_path = target_image_path or current_image_path
-        if not image_path or not image_paths:
+        if not image_path or not scope.image_paths:
             return None
-        folder = os.path.dirname(image_path)
-        if not folder:
-            return None
+
         bucket_mode = str(
             (settings or self.current_provider_settings or {}).get(
                 "bucket_mode",
                 "balance_bucket",
             )
         )
-        _, bucket_to_folders, _, _ = self._controlled_random_bucket_maps(
-            image_paths,
+        index = self._controlled_random_index(
+            image_paths=image_paths,
+            weights=weights,
+            selection_scope=scope,
             bucket_mode=bucket_mode,
             tree=tree,
         )
-        bucket = self._controlled_random_bucket_for_image(
-            image_path,
-            tree=tree,
-            bucket_mode=bucket_mode,
-        )
-        bucket_folders = bucket_to_folders.get(bucket, [folder])
-
-        folder_base_totals: dict[str, float] = {}
-        for path, weight in zip(image_paths, weights):
-            path_folder = os.path.dirname(path)
-            if not path_folder:
-                continue
-            folder_base_totals[path_folder] = folder_base_totals.get(
-                path_folder, 0.0
-            ) + weight
-        bucket_base_total = sum(
-            weight
-            for path, weight in zip(image_paths, weights)
-            if self._controlled_random_bucket_for_image(
-                path,
+        memory_key = (
+            str(current_pick_meta["memory_key"])
+            if current_pick_meta is not None and "memory_key" in current_pick_meta
+            else self.resolve_memory_key_for_image(
+                image_path,
+                selection_scope=scope,
                 tree=tree,
-                bucket_mode=bucket_mode,
             )
-            == bucket
         )
+        bucket = index.unit_to_bucket.get(memory_key, memory_key)
+        bucket_memory_keys = index.bucket_to_memory_keys.get(bucket, (memory_key,))
 
-        one_folder_only = len(bucket_to_folders) <= 1
         resolved_settings = (
             settings
             or self.current_provider_settings
             or self.get_controlled_random_settings(
                 image_paths=image_paths,
                 weights=weights,
+                selection_scope=scope,
                 bucket_mode=bucket_mode,
                 tree=tree,
             )
@@ -423,37 +615,30 @@ class ImageProviders:
         seen_before, distance, streak_len = self._controlled_random_bucket_memory_state(
             folder_memory,
             bucket,
-            bucket_folders,
-            tree=tree,
-            bucket_mode=bucket_mode,
+            bucket_memory_keys,
+            unit_to_bucket=index.unit_to_bucket,
         )
-        if not seen_before:
-            distance = min(distance, gap_max)
-        clamped_distance = min(distance, gap_max)
-
-        if one_folder_only:
-            folder_factor = 1.0
-        elif gap_min > 0 and distance < gap_min:
-            folder_factor = repeat_penalty + (
-                (1.0 - repeat_penalty) * (distance / gap_min)
+        one_bucket_only = len(index.ordered_buckets) <= 1
+        distance, folder_factor, boost, streak_factor, combined = (
+            self._controlled_random_effects(
+                seen_before=seen_before,
+                distance=distance,
+                streak_len=streak_len,
+                one_bucket_only=one_bucket_only,
+                gap_min=gap_min,
+                gap_max=gap_max,
+                alpha=alpha,
+                repeat_penalty=repeat_penalty,
             )
-        else:
-            folder_factor = 1.0
+        )
 
-        extra = max(0.0, clamped_distance - 10)
-        boost = 1.0 + alpha * extra * extra
-        if one_folder_only or not seen_before or streak_len <= 0:
-            streak_factor = 1.0
-        else:
-            streak_factor = max(0.25, 0.75 ** max(0, streak_len - 1))
-        combined = folder_factor * boost * streak_factor
-
-        base_total = bucket_base_total
+        base_total = index.bucket_base_totals.get(bucket, 0.0)
         effective_total = base_total * combined
         bias_pct = ((combined - 1.0) * 100.0) if base_total > 0 else 0.0
 
         return {
-            "folder": folder,
+            "folder": os.path.dirname(image_path),
+            "memory_key": memory_key,
             "bucket": bucket,
             "bucket_mode": bucket_mode,
             "age": distance,
@@ -467,41 +652,61 @@ class ImageProviders:
             "base_total": base_total,
             "effective_total": effective_total,
         }
-    
+
     def reset_manager(self, image_paths, provider_name=None, **kwargs):
-        """
-        Resets the current image manager with (potentially new) image_paths and provider.
-        If provider_name is not specified, uses the current one.
-        """
         if provider_name is None:
             provider_name = self.current_provider_name or "sequential"
         new_manager = self.select_manager(image_paths, provider_name, **kwargs)
         new_manager.reset()
         return new_manager
-    
-    def image_provider_sequential(self, image_paths, index=0, **kwargs):
-        try:
-            for path in image_paths[index:]:
-                yield path
-        except GeneratorExit:
-            logger.debug("Sequential image provider closed unexpectedly.")
-            return
 
-    def image_provider_random(self, image_paths, **kwargs):
-        try:
-            while True:
-                yield random.choice(image_paths)
-        except GeneratorExit:
-            logger.debug("Random image provider closed unexpectedly.")
-            return
+    def image_provider_sequential(
+        self,
+        image_paths,
+        index=0,
+        selection_scope: SelectionScope | None = None,
+        **kwargs,
+    ):
+        current_index = max(0, int(index or 0))
 
-    def image_provider_weighted(self, image_paths, cum_weights, **kwargs):
-        try:
-            while True:
-                yield weighted_choice(image_paths, cum_weights=cum_weights)
-        except GeneratorExit:
-            logger.debug("Weighted image provider closed unexpectedly.")
-            return
+        def next_item() -> tuple[str, dict[str, Any] | None]:
+            nonlocal current_index
+            if current_index >= len(image_paths):
+                raise StopIteration
+            path = image_paths[current_index]
+            meta = self._pick_meta_for_index(selection_scope, current_index)
+            current_index += 1
+            return path, meta
+
+        return _StatefulProviderIterator(next_item)
+
+    def image_provider_random(
+        self,
+        image_paths,
+        selection_scope: SelectionScope | None = None,
+        **kwargs,
+    ):
+        def next_item() -> tuple[str, dict[str, Any] | None]:
+            index = random.randrange(len(image_paths))
+            return image_paths[index], self._pick_meta_for_index(selection_scope, index)
+
+        return _StatefulProviderIterator(next_item)
+
+    def image_provider_weighted(
+        self,
+        image_paths,
+        cum_weights,
+        selection_scope: SelectionScope | None = None,
+        **kwargs,
+    ):
+        def next_item() -> tuple[str, dict[str, Any] | None]:
+            x = random.random() * cum_weights[-1]
+            index = bisect.bisect_left(cum_weights, x)
+            if index >= len(image_paths):
+                index = len(image_paths) - 1
+            return image_paths[index], self._pick_meta_for_index(selection_scope, index)
+
+        return _StatefulProviderIterator(next_item)
 
     def image_provider_controlled_random_weighted(
         self,
@@ -509,6 +714,7 @@ class ImageProviders:
         weights,
         cum_weights,
         folder_memory,
+        selection_scope: SelectionScope | None = None,
         gap_min=3,
         gap_max=None,
         alpha=None,
@@ -518,137 +724,143 @@ class ImageProviders:
         **kwargs,
     ):
         if not image_paths:
-            return iter(())
+            return _StatefulProviderIterator(
+                lambda: (_ for _ in ()).throw(StopIteration)
+            )
 
-        bucket_to_paths: dict[str, list[str]] = {}
-        bucket_to_image_cum_weights: dict[str, list[float]] = {}
-        bucket_base_totals: dict[str, float] = {}
-        folder_to_bucket, bucket_to_folders, _, ordered_buckets = (
-            self._controlled_random_bucket_maps(
-                image_paths,
-                bucket_mode=bucket_mode,
-                tree=tree,
-            )
+        scope = self._selection_scope_for_provider(
+            image_paths=image_paths,
+            weights=weights,
+            selection_scope=selection_scope,
+            tree=tree,
         )
-        for path, weight in zip(image_paths, weights):
-            bucket = self._controlled_random_bucket_for_image(
-                path,
-                tree=tree,
-                bucket_mode=bucket_mode,
-            )
-            if bucket not in bucket_to_paths:
-                bucket_to_paths[bucket] = []
-                bucket_to_image_cum_weights[bucket] = []
-                bucket_base_totals[bucket] = 0.0
-            bucket_to_paths[bucket].append(path)
-            bucket_base_totals[bucket] += weight
-            bucket_to_image_cum_weights[bucket].append(bucket_base_totals[bucket])
+        index = self._controlled_random_index(
+            image_paths=image_paths,
+            weights=weights,
+            selection_scope=scope,
+            bucket_mode=bucket_mode,
+            tree=tree,
+        )
+
         gap_min = max(0, int(gap_min))
         if gap_max is None:
-            gap_max = max(gap_min + 1, len(ordered_buckets))
+            gap_max = max(gap_min + 1, len(index.ordered_buckets))
         gap_max = max(gap_min, int(gap_max))
         if alpha is None:
             alpha = 0.01
         alpha = float(alpha)
         repeat_penalty = max(0.0, min(float(repeat_penalty), 1.0))
 
-        def _fallback_pick():
+        def fallback_pick() -> tuple[str, dict[str, Any] | None]:
             x = random.random() * cum_weights[-1]
-            idx = bisect.bisect_left(cum_weights, x)
-            if idx >= len(image_paths):
-                idx = len(image_paths) - 1
-            return image_paths[idx], idx
+            selected_index = bisect.bisect_left(cum_weights, x)
+            if selected_index >= len(image_paths):
+                selected_index = len(image_paths) - 1
+            return (
+                image_paths[selected_index],
+                self._pick_meta_for_index(scope, selected_index),
+            )
 
-        try:
-            while True:
-                one_folder_only = len(ordered_buckets) <= 1
-                bucket_weights: list[float] = []
-                bucket_factors: dict[str, float] = {}
-                for bucket in ordered_buckets:
-                    seen_before, distance, streak_len = (
-                        self._controlled_random_bucket_memory_state(
-                            folder_memory,
-                            bucket,
-                            bucket_to_folders[bucket],
-                            tree=tree,
-                            bucket_mode=bucket_mode,
-                        )
+        def next_item() -> tuple[str, dict[str, Any] | None]:
+            one_bucket_only = len(index.ordered_buckets) <= 1
+            bucket_weights: list[float] = []
+            for bucket in index.ordered_buckets:
+                seen_before, distance, streak_len = (
+                    self._controlled_random_bucket_memory_state(
+                        folder_memory,
+                        bucket,
+                        index.bucket_to_memory_keys[bucket],
+                        unit_to_bucket=index.unit_to_bucket,
                     )
-                    if not seen_before:
-                        distance = min(distance, gap_max)
-                    clamped_distance = min(distance, gap_max)
+                )
+                _, _, _, _, combined = self._controlled_random_effects(
+                    seen_before=seen_before,
+                    distance=distance,
+                    streak_len=streak_len,
+                    one_bucket_only=one_bucket_only,
+                    gap_min=gap_min,
+                    gap_max=gap_max,
+                    alpha=alpha,
+                    repeat_penalty=repeat_penalty,
+                )
+                bucket_weights.append(index.bucket_base_totals[bucket] * combined)
 
-                    if one_folder_only:
-                        folder_factor = 1.0
-                    elif gap_min > 0 and distance < gap_min:
-                        folder_factor = repeat_penalty + (
-                            (1.0 - repeat_penalty) * (distance / gap_min)
-                        )
-                    else:
-                        folder_factor = 1.0
+            if not any(bucket_weights):
+                return fallback_pick()
 
-                    extra = max(0.0, clamped_distance - 10)
-                    boost = 1.0 + alpha * extra * extra
-                    if one_folder_only or not seen_before or streak_len <= 0:
-                        streak_factor = 1.0
-                    else:
-                        streak_factor = max(0.25, 0.75 ** max(0, streak_len - 1))
-                    combined = folder_factor * boost * streak_factor
-                    bucket_factors[bucket] = combined
-                    bucket_weights.append(bucket_base_totals[bucket] * combined)
+            cum_eff = list(accumulate(bucket_weights))
+            if cum_eff[-1] <= 0.0:
+                return fallback_pick()
 
-                if not any(bucket_weights):
-                    path, idx = _fallback_pick()
-                else:
-                    cum_eff = list(accumulate(bucket_weights))
-                    if cum_eff[-1] <= 0.0:
-                        path, idx = _fallback_pick()
-                    else:
-                        x = random.random() * cum_eff[-1]
-                        bucket_idx = bisect.bisect_left(cum_eff, x)
-                        if bucket_idx >= len(ordered_buckets):
-                            bucket_idx = len(ordered_buckets) - 1
-                        bucket = ordered_buckets[bucket_idx]
-                        bucket_paths = bucket_to_paths[bucket]
-                        bucket_cum_weights = bucket_to_image_cum_weights[bucket]
-                        y = random.random() * bucket_cum_weights[-1]
-                        idx = bisect.bisect_left(bucket_cum_weights, y)
-                        if idx >= len(bucket_paths):
-                            idx = len(bucket_paths) - 1
-                        path = bucket_paths[idx]
+            x = random.random() * cum_eff[-1]
+            bucket_index = bisect.bisect_left(cum_eff, x)
+            if bucket_index >= len(index.ordered_buckets):
+                bucket_index = len(index.ordered_buckets) - 1
+            bucket = index.ordered_buckets[bucket_index]
+            bucket_units = index.bucket_to_units[bucket]
+            bucket_unit_cum_weights = index.bucket_to_unit_cum_weights[bucket]
+            y = random.random() * bucket_unit_cum_weights[-1]
+            unit_index = bisect.bisect_left(bucket_unit_cum_weights, y)
+            if unit_index >= len(bucket_units):
+                unit_index = len(bucket_units) - 1
+            unit = bucket_units[unit_index]
+            z = random.random() * unit.cum_weights[-1]
+            local_index = bisect.bisect_left(unit.cum_weights, z)
+            if local_index >= len(unit.image_paths):
+                local_index = len(unit.image_paths) - 1
+            global_index = unit.start_index + local_index
+            return (
+                unit.image_paths[local_index],
+                {
+                    "index": global_index,
+                    "memory_key": unit.node_key,
+                    "bucket": bucket,
+                },
+            )
 
-                yield path
-        except GeneratorExit:
-            logger.debug("Controlled-random weighted image provider closed unexpectedly.")
-            return
+        return _StatefulProviderIterator(next_item)
 
-    def image_provider_folder_burst(self, image_paths, cum_weights, burst_size=5, index=0, **kwargs):
-        import os
-    
+    def image_provider_folder_burst(
+        self,
+        image_paths,
+        cum_weights,
+        burst_size=5,
+        index=0,
+        **kwargs,
+    ):
         class _BurstIterator:
-            __slots__ = ("_gen", "reset_burst", "current_burst_folder", "current_burst_token")
+            __slots__ = (
+                "_gen",
+                "reset_burst",
+                "current_burst_folder",
+                "current_burst_token",
+                "last_pick_meta",
+            )
 
             def __init__(self, gen, reset_func):
                 self._gen = gen
                 self.reset_burst = reset_func
                 self.current_burst_folder = None
                 self.current_burst_token = None
-    
+                self.last_pick_meta = None
+
             def __iter__(self):
                 return self
-    
+
             def __next__(self):
-                return next(self._gen)
-    
+                path = next(self._gen)
+                self.last_pick_meta = None
+                return path
+
         if not image_paths:
             return _BurstIterator(iter(()), lambda: None)
-    
+
         burst_size = max(1, int(burst_size or 1))
         tree = kwargs.get("tree")
         filters = kwargs.get("filters")
         include_video = kwargs.get("include_video", False)
         ignored_files = kwargs.get("ignored_files")
-    
+
         burst_queue: deque[str] = deque()
         folder_cache: dict[str, list[str]] = {}
         next_seed = None
@@ -657,7 +869,7 @@ class ImageProviders:
         if isinstance(index, int) and 0 <= index < len(image_paths):
             next_seed = image_paths[index]
             drop_first_seed = True
-    
+
         def folder_images(image_path: str) -> list[str]:
             folder = os.path.dirname(image_path)
             cached = folder_cache.get(folder)
@@ -671,7 +883,7 @@ class ImageProviders:
                 )
                 folder_cache[folder] = cached or []
             return cached or []
-    
+
         def build_burst(seed_image: str, *, drop_seed: bool = False) -> list[str]:
             if not seed_image:
                 return []
@@ -684,35 +896,31 @@ class ImageProviders:
             needed = max(0, burst_size - len(burst))
             burst.extend(others[:needed])
             return burst
-    
+
         iterator = _BurstIterator(None, None)
 
         def burst_generator():
             nonlocal next_seed, drop_first_seed, burst_token
-            try:
-                while True:
-                    if not burst_queue:
-                        if next_seed is None:
-                            next_seed = weighted_choice(image_paths, cum_weights=cum_weights)
-                            drop_seed = False
-                        else:
-                            drop_seed = drop_first_seed
-                        burst_items = build_burst(next_seed, drop_seed=drop_seed)
-                        next_seed = None
-                        drop_first_seed = False
-                        if not burst_items:
-                            continue
-                        burst_token += 1
-                        iterator.current_burst_folder = os.path.dirname(
-                            burst_items[0] if burst_items else ""
-                        )
-                        iterator.current_burst_token = burst_token
-                        burst_queue.extend(burst_items)
-                    yield burst_queue.popleft()
-            except GeneratorExit:
-                logger.debug("Folder burst image provider closed unexpectedly.")
-                return
-    
+            while True:
+                if not burst_queue:
+                    if next_seed is None:
+                        next_seed = weighted_choice(image_paths, cum_weights=cum_weights)
+                        drop_seed = False
+                    else:
+                        drop_seed = drop_first_seed
+                    burst_items = build_burst(next_seed, drop_seed=drop_seed)
+                    next_seed = None
+                    drop_first_seed = False
+                    if not burst_items:
+                        continue
+                    burst_token += 1
+                    iterator.current_burst_folder = os.path.dirname(
+                        burst_items[0] if burst_items else ""
+                    )
+                    iterator.current_burst_token = burst_token
+                    burst_queue.extend(burst_items)
+                yield burst_queue.popleft()
+
         def reset_burst():
             nonlocal next_seed, drop_first_seed
             burst_queue.clear()
@@ -720,6 +928,7 @@ class ImageProviders:
             drop_first_seed = False
             iterator.current_burst_folder = None
             iterator.current_burst_token = None
+            iterator.last_pick_meta = None
 
         iterator._gen = burst_generator()
         iterator.reset_burst = reset_burst

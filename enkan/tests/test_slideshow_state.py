@@ -6,6 +6,7 @@ from enkan.mySlideshow.MediaFileOps import ExifWriteResult
 from enkan.mySlideshow.NavigationTypes import NavigationBasis, NavigationState, ScopeKind
 from enkan.mySlideshow.mySlideshow import ImageSlideshow
 from enkan.mySlideshow.ScopeStack import ScopeStack
+from enkan.tree.selection_scope import SelectionScope
 
 
 def test_safe_current_image_index_uses_current_path_when_present():
@@ -364,7 +365,7 @@ def test_subfolder_mode_on_in_root_branch_mode_uses_current_tree_node(monkeypatc
     slideshow._record_scope_entry = lambda path: recorded.append(path)
     slideshow._set_scope_kind = lambda kind: scope_kinds.append(kind)
     slideshow._new_scope_memory = lambda: "new-memory"
-    slideshow.update_slide_show = lambda image_paths, selection_weights, record_initial_history=False: updates.append(
+    slideshow.update_slide_show = lambda image_paths, selection_weights, record_initial_history=False, **kwargs: updates.append(
         (image_paths, selection_weights, record_initial_history)
     )
     slideshow.original_tree = SimpleNamespace(
@@ -376,8 +377,12 @@ def test_subfolder_mode_on_in_root_branch_mode_uses_current_tree_node(monkeypatc
     updates: list[tuple[object, object, bool]] = []
 
     monkeypatch.setattr(
-        "enkan.mySlideshow.mySlideshow.extract_image_paths_and_weights_from_tree",
-        lambda tree, start_node: (["root\\retrobride\\image.jpg"], [1])
+        "enkan.mySlideshow.mySlideshow.extract_selection_scope_from_tree",
+        lambda tree, start_node: SelectionScope.single_unit(
+            node_key=current_node.name,
+            image_paths=["root\\retrobride\\image.jpg"],
+            weights=[1],
+        ),
     )
 
     slideshow.subfolder_mode_on()
@@ -516,7 +521,7 @@ def test_show_image_allows_history_item_outside_current_scope():
         get_current_provider_name=lambda: "weighted",
         get_current_provider_display_mode=lambda: "off",
     )
-    slideshow._record_memory_for_view = lambda image_path, record_history: None
+    slideshow._record_memory_for_view = lambda image_path, record_history, provider_pick_meta=None: None
     slideshow.zoompan = SimpleNamespace(set_image=lambda image: None)
     slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
     slideshow.filename_label = SimpleNamespace(tkraise=lambda: None)
@@ -555,7 +560,7 @@ def test_show_image_preserves_provider_payload_on_same_image_redisplay():
     )
     slideshow.selection_weights = SimpleNamespace(weights=[1.0])
     slideshow.folder_memory = SimpleNamespace()
-    slideshow._record_memory_for_view = lambda image_path, record_history: None
+    slideshow._record_memory_for_view = lambda image_path, record_history, provider_pick_meta=None: None
     slideshow.zoompan = SimpleNamespace(set_image=lambda image: None)
     slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
     slideshow.filename_label = SimpleNamespace(tkraise=lambda: None)

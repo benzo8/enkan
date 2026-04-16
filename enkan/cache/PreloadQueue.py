@@ -9,6 +9,7 @@ from typing import Any
 class PreloadedMedia:
     path: str
     media: Any
+    meta: dict[str, Any] | None = None
 
 
 class PreloadQueue:
@@ -22,7 +23,7 @@ class PreloadQueue:
         self.lookup = set()  # For fast membership checks
         self.max_size = max_size
 
-    def push(self, path, media):
+    def push(self, path, media, meta=None):
         """
         Push a new preloaded media item to the bottom of the queue.
         If the queue is full, the oldest item is automatically dropped.
@@ -34,7 +35,7 @@ class PreloadQueue:
             oldest = self.queue.popleft()
             self.lookup.discard(oldest.path)
 
-        self.queue.append(PreloadedMedia(path=path, media=media))
+        self.queue.append(PreloadedMedia(path=path, media=media, meta=meta))
         self.lookup.add(path)
         return True
 

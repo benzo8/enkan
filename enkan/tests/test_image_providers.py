@@ -3,6 +3,7 @@ import random
 
 from enkan.plugables.FolderSelectionMemory import FolderSelectionMemory
 from enkan.plugables.ImageProviders import ImageProviders
+from enkan.tree.selection_scope import SelectionScope, SelectionUnit
 from enkan.tree.diagnostics import _resolve_test_provider
 
 
@@ -41,6 +42,31 @@ class _FakeTree:
     def find_node(self, name, lookup_dict=None):
         lookup = self.path_lookup if lookup_dict is None else lookup_dict
         return lookup.get(name)
+
+
+def _selection_scope_from_units(*units):
+    image_paths: list[str] = []
+    weights: list[float] = []
+    selection_units: list[SelectionUnit] = []
+
+    for node_key, node_level, ancestor_keys, unit_images, unit_weights in units:
+        start_index = len(image_paths)
+        image_paths.extend(unit_images)
+        weights.extend(unit_weights)
+        selection_units.append(
+            SelectionUnit(
+                node_key=node_key,
+                node_level=node_level,
+                ancestor_keys=ancestor_keys,
+                image_paths=list(unit_images),
+                weights=list(unit_weights),
+                cum_weights=[sum(unit_weights[:i + 1]) for i in range(len(unit_weights))],
+                base_total=sum(unit_weights),
+                start_index=start_index,
+            )
+        )
+
+    return SelectionScope.from_parts(image_paths, weights, selection_units)
 
 
 def test_controlled_random_weighted_registered():
@@ -290,3 +316,108 @@ def test_controlled_random_weighted_single_folder_ignores_streak_penalty():
     picks = [next(provider) for _ in range(5)]
 
     assert all(os.path.dirname(path) == "only" for path in picks)
+
+
+def test_controlled_random_settings_scale_with_selection_units_not_image_count():
+    providers = ImageProviders()
+    one_bucket_many_images = SelectionScope.single_unit(
+        node_key="root\\flat_site",
+        image_paths=[f"site\\img_{i}.jpg" for i in range(100)],
+        weights=[1.0] * 100,
+    )
+    ten_bucket_scope = _selection_scope_from_units(
+        *[
+            (
+                f"root\\bucket_{i}",
+                2,
+                ("root", f"root\\bucket_{i}"),
+                [f"bucket_{i}\\only.jpg"],
+                [1.0],
+            )
+            for i in range(10)
+        ]
+    )
+
+    one_bucket_settings = providers.get_controlled_random_settings(
+        image_paths=one_bucket_many_images.image_paths,
+        weights=one_bucket_many_images.weights,
+        selection_scope=one_bucket_many_images,
+        bucket_mode="folder_bucket",
+    )
+    ten_bucket_settings = providers.get_controlled_random_settings(
+        image_paths=ten_bucket_scope.image_paths,
+        weights=ten_bucket_scope.weights,
+        selection_scope=ten_bucket_scope,
+        bucket_mode="folder_bucket",
+    )
+
+    assert one_bucket_settings["gap_max"] < ten_bucket_settings["gap_max"]
+    assert one_bucket_settings["alpha"] > ten_bucket_settings["alpha"]
+
+
+def test_controlled_random_status_uses_flat_node_memory_key_for_images_from_different_folders():
+    providers = ImageProviders()
+    providers.current_provider_name = "controlled_random_weighted"
+    selection_scope = SelectionScope.single_unit(
+        node_key="root\\flat_site",
+        image_paths=[
+            os.path.join("site", "a", "one.jpg"),
+            os.path.join("site", "b", "two.jpg"),
+        ],
+        weights=[1.0, 1.0],
+    )
+    folder_memory = FolderSelectionMemory()
+    folder_memory.record_folder("root\\flat_site")
+
+    payload = providers.get_current_provider_status_payload(
+        image_paths=selection_scope.image_paths,
+        weights=selection_scope.weights,
+        selection_scope=selection_scope,
+        current_image_path=os.path.join("site", "b", "two.jpg"),
+        folder_memory=folder_memory,
+        settings={
+            "gap_min": 3,
+            "gap_max": 10,
+            "alpha": 0.01,
+            "repeat_penalty": 0.1,
+            "bucket_mode": "folder_bucket",
+        },
+    )
+
+    assert payload is not None
+    assert payload["memory_key"] == "root\\flat_site"
+    assert payload["seen_before"] is True
+
+
+def test_select_manager_uses_selection_scope_without_image_level_tree_resolution(monkeypatch):
+    providers = ImageProviders()
+    selection_scope = SelectionScope.single_unit(
+        node_key="root\\flat_site",
+        image_paths=[f"site\\img_{i}.jpg" for i in range(20)],
+        weights=[1.0] * 20,
+    )
+
+    class _NoResolveTree:
+        defaults = type("_Defaults", (), {"mode": {2: ("b", (0, 0))}})()
+        built_mode = {2: ("b", (0, 0))}
+
+        def resolve_node_for_image(self, image_path):
+            raise AssertionError("selection_scope should avoid image-level tree resolution")
+
+    monkeypatch.setattr(
+        "enkan.plugables.ImageProviders.ImageCacheManager",
+        lambda image_provider, current_image_index, background_preload=True: object(),
+    )
+
+    providers.select_manager(
+        selection_scope.image_paths,
+        provider_name="controlled_random_weighted",
+        weights=selection_scope.weights,
+        cum_weights=selection_scope.cum_weights,
+        folder_memory=FolderSelectionMemory(),
+        selection_scope=selection_scope,
+        tree=_NoResolveTree(),
+    )
+
+    settings = providers.get_current_provider_settings()
+    assert settings["bucket_mode"] == "balance_bucket"

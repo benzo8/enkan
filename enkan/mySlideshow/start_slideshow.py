@@ -4,6 +4,7 @@ from enkan.utils.Defaults import Defaults
 from enkan.utils.Filters import Filters
 from enkan.utils.SelectionWeights import SelectionWeights
 from enkan.tree.Tree import Tree
+from enkan.tree.tree_logic import SelectionScope
 from .mySlideshow import ImageSlideshow
 
 
@@ -12,6 +13,7 @@ def start_slideshow(
     tree: Tree, 
     all_image_paths: list,
     selection_weights: SelectionWeights,
+    selection_scope: SelectionScope | None,
     defaults: Defaults, 
     filters: Filters, 
     interval: int | float | None = None,
@@ -32,6 +34,7 @@ def start_slideshow(
         tree,
         all_image_paths,
         selection_weights,
+        selection_scope,
         defaults,
         filters,
         interval,

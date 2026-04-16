@@ -68,7 +68,7 @@ enkan currently ships with five runtime image providers:
 
 CRW is deliberately less statistically random than plain weighted selection so that it feels more random to a human viewer.
 
-It keeps the existing image and folder weightings, but adds bucket-level memory:
+It keeps the existing image and tree weightings, but adds bucket-level memory:
 
 - recently seen buckets are cooled off
 - buckets that have not been seen for a while are gradually boosted
@@ -76,10 +76,12 @@ It keeps the existing image and folder weightings, but adds bucket-level memory:
 
 The result is usually a slideshow that feels less clumpy than pure weighted random, while still respecting the underlying weighting rules.
 
-By default, CRW groups images by the active balanced branch bucket rather than the immediate filesystem folder. That means sibling folders inside the same balanced branch can share recency memory when the tree structure says they belong to the same weighted bucket. If you are already running CRW, pressing `D` toggles between:
+Internally, CRW now works from logical image-bearing tree nodes rather than rescanning every flattened image path when you switch into the provider. That keeps provider switching fast on large datasets, and it means a flattened node behaves as one shared memory unit rather than as many hidden filesystem folders.
+
+By default, CRW groups images by the active balanced branch bucket rather than the immediate image-bearing node. That means sibling folders inside the same balanced branch can share recency memory when the tree structure says they belong to the same weighted bucket. If you are already running CRW, pressing `D` toggles between:
 
 - `BB` - balanced-branch buckets
-- `FB` - raw folder buckets
+- `FB` - image-bearing node buckets
 
 Use `Shift-D` to cycle the current provider status overlay. CRW currently supports `off`, `friendly`, `useful`, and `debug`.
 

@@ -6,7 +6,9 @@ from itertools import accumulate
 
 # ——— Local ———
 from enkan.tree.Tree import Tree
-from enkan.tree.tree_logic import extract_image_paths_and_weights_from_tree
+from enkan.tree.tree_logic import (
+    extract_selection_scope_from_tree,
+)
 from enkan.utils.Defaults import Defaults, set_current_defaults
 from enkan.utils.Filters import Filters
 from enkan.utils.SelectionWeights import SelectionWeights
@@ -61,10 +63,12 @@ def main_with_args(args) -> None:
         logger.info("Tree written to %s", output_path)
         return
 
-    # Extract paths and weights from the tree
-    images, weights = (
-        extract_image_paths_and_weights_from_tree(tree, test_iterations=args.test)
-    ) 
+    selection_scope = extract_selection_scope_from_tree(
+        tree,
+        test_iterations=args.test,
+    )
+    images = selection_scope.image_paths
+    weights = selection_scope.weights
         
     if args.outputlist:
         from enkan.tree.tree_io import write_image_list
@@ -102,6 +106,7 @@ def main_with_args(args) -> None:
         tree,
         images,
         SelectionWeights.from_parts(weights, cum_weights),
+        selection_scope,
         defaults,
         filters,
         args.interval,
