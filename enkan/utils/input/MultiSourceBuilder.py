@@ -143,21 +143,11 @@ class MultiSourceBuilder:
         if len(sources) == 1:
             # builder_warnings already includes per-source warnings
             single_warnings = list(dict.fromkeys(builder_warnings))
-            # Apply target mode for single-source builds so weights/mode labels align.
-            if target_mode:
-                self.defaults.set_global_defaults(mode=target_mode)
-                try:
-                    apply_mode_and_recalculate(
-                        sources[0].tree,
-                        self.defaults,
-                        ignore_user_proportion=False,
-                    )
-                except ValueError as exc:
-                    msg = str(exc)
-                    single_warnings.append(msg)
-                    logger.warning(msg)
-                    raise
-            sources[0].tree.build_runtime_resolution_indexes()
+            self._finalize_tree(
+                sources[0].tree,
+                target_mode=target_mode,
+                warnings=single_warnings,
+            )
             return sources[0].tree, single_warnings
 
         # Stage 2: decide target mode and lowest rung
@@ -192,18 +182,11 @@ class MultiSourceBuilder:
             )
         result.warnings.extend(builder_warnings)
 
-        # Final harmonisation under target mode (if any)
-        if target_mode:
-            self.defaults.set_global_defaults(mode=target_mode)
-            try:
-                apply_mode_and_recalculate(result.tree, self.defaults, ignore_user_proportion=False)
-            except ValueError as exc:
-                msg = str(exc)
-                result.warnings.append(msg)
-                logger.warning(msg)
-                raise
-
-        result.tree.build_runtime_resolution_indexes()
+        self._finalize_tree(
+            result.tree,
+            target_mode=target_mode,
+            warnings=result.warnings,
+        )
 
         # Deduplicate warnings while preserving order
         deduped = list(dict.fromkeys(result.warnings))
@@ -287,6 +270,29 @@ class MultiSourceBuilder:
             warnings=warnings,
         )
         return loaded, (mode_map, lowest_rung)
+
+    def _finalize_tree(
+        self,
+        tree,
+        *,
+        target_mode: dict[int, object] | None,
+        warnings: List[str],
+    ) -> None:
+        if target_mode:
+            self.defaults.set_global_defaults(mode=target_mode)
+            try:
+                apply_mode_and_recalculate(
+                    tree,
+                    self.defaults,
+                    ignore_user_proportion=False,
+                )
+            except ValueError as exc:
+                msg = str(exc)
+                warnings.append(msg)
+                logger.warning(msg)
+                raise
+
+        tree.build_runtime_resolution_indexes()
 
     def _collect_tree_warnings(self, tree) -> List[str]:
         warnings: List[str] = []

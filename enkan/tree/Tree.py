@@ -53,13 +53,19 @@ class Tree:
         self._container_path_overrides: dict[str, TreeNode] = {}
 
     @staticmethod
-    def _is_specific_image_node(node: TreeNode) -> bool:
+    def specific_image_for_node(node: TreeNode) -> str | None:
         unique_images = {os.path.normpath(img) for img in getattr(node, "images", [])}
         if len(unique_images) != 1:
-            return False
+            return None
         only_image = next(iter(unique_images))
         expected_node_path = os.path.normpath(os.path.splitext(only_image)[0])
-        return os.path.normpath(node.path) == expected_node_path
+        if os.path.normpath(node.path) != expected_node_path:
+            return None
+        return only_image
+
+    @classmethod
+    def _is_specific_image_node(cls, node: TreeNode) -> bool:
+        return cls.specific_image_for_node(node) is not None
 
     def rebuild_indexes(self) -> None:
         if not hasattr(self, "root") or self.root is None:
@@ -75,9 +81,9 @@ class Tree:
             node.parent = parent
             self.node_lookup[node.name] = node
             self.path_lookup[node.path] = node
-            if self._is_specific_image_node(node):
-                only_image = next(iter(node.images))
-                self.virtual_image_lookup[only_image] = node
+            specific_image = self.specific_image_for_node(node)
+            if specific_image is not None:
+                self.virtual_image_lookup[specific_image] = node
             for child in getattr(node, "children", []):
                 visit(child, node)
 

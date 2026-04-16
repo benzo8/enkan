@@ -155,8 +155,8 @@ class TreeMerger:
         if hasattr(incoming, "video"):
             setattr(new_node, "video", getattr(incoming, "video", None))
         base.add_node(new_node, target_parent)
-        # carry over virtual_image_lookup mappings for new node
-        specific_image = self._specific_image_for_node(incoming)
+        # Carry over specific-image lookup mappings for new virtual nodes only.
+        specific_image = Tree.specific_image_for_node(incoming)
         if hasattr(base, "virtual_image_lookup") and specific_image is not None:
             base.virtual_image_lookup[specific_image] = new_node
         if incoming.images:
@@ -227,7 +227,7 @@ class TreeMerger:
         if not incoming.images:
             return False
 
-        specific_image = self._specific_image_for_node(incoming)
+        specific_image = Tree.specific_image_for_node(incoming)
         if specific_image is not None:
             kept = [img for img in target.images if os.path.normpath(img) != specific_image]
         else:
@@ -277,10 +277,10 @@ class TreeMerger:
 
     def _merge_virtual_images(self, target: TreeNode, incoming: TreeNode, base: Tree) -> bool:
         """
-        Ensure virtual_image_lookup entries from the incoming node exist on the base tree.
+        Ensure specific-image lookup entries from the incoming node exist on the base tree.
         """
         changed = False
-        specific_image = self._specific_image_for_node(incoming)
+        specific_image = Tree.specific_image_for_node(incoming)
         if (
             hasattr(base, "virtual_image_lookup")
             and specific_image is not None
@@ -327,7 +327,7 @@ class TreeMerger:
                 setattr(cloned, "video", getattr(node, "video", None))
             cloned.group = getattr(node, "group", None)
             shifted.add_node(cloned, parent_name)
-            specific_image = self._specific_image_for_node(cloned)
+            specific_image = Tree.specific_image_for_node(cloned)
             if hasattr(shifted, "virtual_image_lookup") and specific_image is not None:
                 shifted.virtual_image_lookup[specific_image] = cloned
         return shifted
@@ -340,22 +340,6 @@ class TreeMerger:
         norm_src = os.path.normpath(src_path)
         img_dir = os.path.normpath(os.path.dirname(image_path))
         return img_dir == norm_src or img_dir.startswith(norm_src + os.path.sep)
-
-    @staticmethod
-    def _specific_image_for_node(node: TreeNode) -> str | None:
-        """
-        Detect virtual nodes created for a single specific image.
-        These use the image stem as the node path and repeat the same image in
-        the node payload according to weighting.
-        """
-        unique_images = {os.path.normpath(img) for img in node.images}
-        if len(unique_images) != 1:
-            return None
-        only_image = next(iter(unique_images))
-        expected_node_path = os.path.normpath(os.path.splitext(only_image)[0])
-        if os.path.normpath(node.path) != expected_node_path:
-            return None
-        return only_image
 
     # ---------------------------- Graft alignment helpers ----------------------------
 
