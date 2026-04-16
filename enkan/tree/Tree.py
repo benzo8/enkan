@@ -38,6 +38,7 @@ class Tree:
             self.built_mode_string = None
         if not hasattr(self, "built_mode"):
             self.built_mode = None
+        self._init_runtime_indexes()
         # Ensure newer TreeNode fields exist after unpickling older trees
         for node in getattr(self, "node_lookup", {}).values():
             if not hasattr(node, "user_proportion"):
@@ -47,6 +48,9 @@ class Tree:
         if self.built_mode is not None and not self.built_mode_string:
             self.built_mode_string = serialise_mode(self.built_mode)
         # (Add future index repairs here)
+
+    def _init_runtime_indexes(self) -> None:
+        self._container_path_overrides: dict[str, TreeNode] = {}
 
     @staticmethod
     def _is_specific_image_node(node: TreeNode) -> bool:
@@ -79,8 +83,37 @@ class Tree:
 
         visit(self.root, None)
 
+    def build_runtime_resolution_indexes(self) -> None:
+        self._init_runtime_indexes()
+
+        path_nodes: dict[str, list[TreeNode]] = {}
+
+        for node in self.node_lookup.values():
+            norm_path = os.path.normpath(node.path)
+            path_nodes.setdefault(norm_path, []).append(node)
+
+        for node_path, nodes in path_nodes.items():
+            if len(nodes) <= 1:
+                continue
+            candidates = [
+                node
+                for node in nodes
+                if not self._is_specific_image_node(node) and getattr(node, "images", [])
+            ]
+            if not candidates:
+                continue
+            candidates.sort(
+                key=lambda node: (
+                    len(getattr(node, "images", [])),
+                    node.level,
+                ),
+                reverse=True,
+            )
+            self._container_path_overrides[node_path] = candidates[0]
+
     def __getstate__(self) -> dict[str, Any]:
         state: dict[str, Any] = self.__dict__.copy()
+        state.pop("_container_path_overrides", None)
         state["_pickle_version"] = self.PICKLE_VERSION
         return state
 
@@ -293,7 +326,20 @@ class Tree:
         node = self.virtual_image_lookup.get(image_path)
         if node is not None:
             return node
-        return self.find_node(os.path.dirname(image_path), self.path_lookup)
+        return self.resolve_container_node_for_image(image_path)
+
+    def resolve_container_node_for_image(self, image_path: str) -> TreeNode | None:
+        norm_image_path = os.path.normpath(image_path)
+        container_path = os.path.normpath(os.path.dirname(norm_image_path))
+        override = self._container_path_overrides.get(container_path)
+        if override is not None:
+            return override
+
+        container_node = self.find_node(container_path, self.path_lookup)
+        if container_node is not None and not self._is_specific_image_node(container_node):
+            return container_node
+
+        return None
 
     def get_nodes_at_level(self, target_level: int) -> list[TreeNode]:
         result: list[TreeNode] = []

@@ -44,8 +44,7 @@ def test_navigate_up_in_branch_mode_does_not_require_parent_scope_stack():
     slideshow.current_image_path = "root\\parent\\child\\image.jpg"
     slideshow.navigation_node = grandparent
     slideshow.original_tree = SimpleNamespace(
-        find_node=lambda path, lookup: child,
-        path_lookup={},
+        resolve_container_node_for_image=lambda path: child,
     )
     slideshow.folder_memory = SimpleNamespace()
     slideshow.scope_seen_folders = {"seen"}
@@ -77,6 +76,49 @@ def test_navigation_state_reports_basis_and_scope_kind():
     assert state.basis is NavigationBasis.BRANCH
     assert state.scope_kind is ScopeKind.PARENT
     assert state.branch_anchor == "root\\branch"
+
+
+def test_select_mode_enables_crw_when_not_active():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.current_image_index = 4
+    provider_calls: list[tuple[str, dict[str, object]]] = []
+    slideshow.set_provider = lambda name, **kwargs: provider_calls.append((name, kwargs))
+    slideshow.providers = SimpleNamespace(
+        get_current_provider_name=lambda: "weighted",
+        get_current_provider_settings=lambda: {},
+    )
+
+    slideshow.select_mode(SimpleNamespace(char="d"))
+
+    assert provider_calls == [("controlled_random_weighted", {"gap_min": 3})]
+
+
+def test_select_mode_toggles_crw_bucket_mode_when_active():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.current_image_index = 4
+    provider_calls: list[tuple[str, dict[str, object]]] = []
+    slideshow.set_provider = lambda name, **kwargs: provider_calls.append((name, kwargs))
+    slideshow.providers = SimpleNamespace(
+        get_current_provider_name=lambda: "controlled_random_weighted",
+        get_current_provider_settings=lambda: {
+            "gap_min": 7,
+            "repeat_penalty": 0.2,
+            "bucket_mode": "balance_bucket",
+        },
+    )
+
+    slideshow.select_mode(SimpleNamespace(char="d"))
+
+    assert provider_calls == [
+        (
+            "controlled_random_weighted",
+            {
+                "gap_min": 7,
+                "repeat_penalty": 0.2,
+                "bucket_mode": "folder_bucket",
+            },
+        )
+    ]
 
 
 def test_navigation_state_prefers_subfolder_scope_over_parent_flag():
@@ -173,6 +215,7 @@ def test_reset_parent_mode_restores_original_navigation_state():
 
 
 def test_toggle_navigation_mode_preserves_selected_basis_when_resetting_scope():
+    container_node = SimpleNamespace(name="root\\branch", parent=None)
     slideshow = ImageSlideshow.__new__(ImageSlideshow)
     slideshow.navigation_mode = "folder"
     slideshow.current_image_path = "root\\branch\\image.jpg"
@@ -191,7 +234,9 @@ def test_toggle_navigation_mode_preserves_selected_basis_when_resetting_scope():
     )
     slideshow.current_image_index = 0
     slideshow._last_burst_memory_token = None
-    slideshow.find_node_for_image = lambda path: SimpleNamespace(name="root\\branch", parent=None)
+    slideshow.original_tree = SimpleNamespace(
+        resolve_container_node_for_image=lambda path: container_node if path == "root\\branch\\image.jpg" else None,
+    )
     slideshow.update_slide_show = lambda image_paths, selection_weights: None
     slideshow.show_image = lambda image_path, record_history=False: None
     slideshow.update_filename_display = lambda: None
@@ -199,8 +244,128 @@ def test_toggle_navigation_mode_preserves_selected_basis_when_resetting_scope():
     slideshow.toggle_navigation_mode()
 
     assert slideshow.navigation_mode == "branch"
+    assert slideshow.navigation_node is None
     assert slideshow.parent_mode is False
     assert slideshow.subfolder_mode is False
+
+
+def test_find_container_node_for_image_ignores_virtual_image_lookup():
+    container_node = SimpleNamespace(name="root\\retrobride")
+    virtual_node = SimpleNamespace(name="root\\retrobride\\specific")
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.original_tree = SimpleNamespace(
+        virtual_image_lookup={"root\\retrobride\\image.jpg": virtual_node},
+        resolve_container_node_for_image=lambda path: container_node if path == "root\\retrobride\\image.jpg" else None,
+    )
+
+    node = slideshow.find_container_node_for_image("root\\retrobride\\image.jpg")
+
+    assert node is container_node
+
+
+def test_toggle_navigation_mode_uses_container_node_for_specific_image():
+    container_node = SimpleNamespace(name="root\\retrobride")
+    virtual_node = SimpleNamespace(name="root\\retrobride\\specific")
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.navigation_mode = "folder"
+    slideshow.current_image_path = "root\\retrobride\\image.jpg"
+    slideshow.parent_mode = False
+    slideshow.subfolder_mode = False
+    slideshow.navigation_node = None
+    slideshow.parentFolderStack = ScopeStack(5)
+    slideshow.subFolderStack = ScopeStack(1)
+    slideshow.original_image_paths = ["root\\retrobride\\image.jpg"]
+    slideshow.original_selection_weights = SimpleNamespace(copy=lambda: "sel")
+    slideshow.original_folder_memory = SimpleNamespace(copy=lambda: "mem")
+    slideshow.original_scope_seen_folders = set()
+    slideshow.original_navigation_state = NavigationState(
+        basis=NavigationBasis.FOLDER,
+        scope_kind=ScopeKind.ROOT,
+    )
+    slideshow.current_image_index = 0
+    slideshow._last_burst_memory_token = None
+    slideshow.original_tree = SimpleNamespace(
+        virtual_image_lookup={"root\\retrobride\\image.jpg": virtual_node},
+        resolve_container_node_for_image=lambda path: container_node if path == "root\\retrobride\\image.jpg" else None,
+    )
+    slideshow.update_slide_show = lambda image_paths, selection_weights: None
+    slideshow.show_image = lambda image_path, record_history=False: None
+    slideshow.update_filename_display = lambda: None
+
+    slideshow.toggle_navigation_mode()
+
+    assert slideshow.navigation_mode == "branch"
+    assert slideshow.navigation_node is None
+
+
+def test_status_label_path_uses_dynamic_container_node_in_root_branch_mode():
+    container_node = SimpleNamespace(name="root\\retrobride")
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.navigation_mode = "branch"
+    slideshow.parent_mode = False
+    slideshow.subfolder_mode = False
+    slideshow.current_image_path = "root\\retrobride\\image.jpg"
+    slideshow.navigation_node = None
+    slideshow.original_tree = SimpleNamespace(
+        resolve_container_node_for_image=lambda path: container_node if path == "root\\retrobride\\image.jpg" else None,
+    )
+
+    assert slideshow._status_label_path() == "root\\retrobride\\image.jpg"
+
+
+def test_current_branch_context_node_uses_current_image_container_even_in_scoped_branch_mode():
+    container_node = SimpleNamespace(name="root\\retrobride")
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.navigation_mode = "branch"
+    slideshow.parent_mode = True
+    slideshow.subfolder_mode = False
+    slideshow.navigation_node = SimpleNamespace(name="root\\wedding")
+    slideshow.current_image_path = "root\\retrobride\\image.jpg"
+    slideshow.original_tree = SimpleNamespace(
+        resolve_container_node_for_image=lambda path: container_node,
+    )
+
+    assert slideshow._current_branch_context_node() is container_node
+
+
+def test_subfolder_mode_on_in_root_branch_mode_uses_container_node(monkeypatch):
+    container_node = SimpleNamespace(name="root\\retrobride")
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.navigation_mode = "branch"
+    slideshow.parent_mode = False
+    slideshow.subfolder_mode = False
+    slideshow.navigation_node = None
+    slideshow.current_image_path = "root\\retrobride\\image.jpg"
+    slideshow.image_paths = ["root\\retrobride\\image.jpg"]
+    slideshow.subFolderStack = ScopeStack(1)
+    slideshow.selection_weights = SimpleNamespace(copy=lambda: "sel")
+    slideshow.folder_memory = SimpleNamespace(copy=lambda: "mem")
+    slideshow.scope_seen_folders = set()
+    slideshow._capture_scope_state = lambda: "scope"
+    slideshow._record_scope_entry = lambda path: recorded.append(path)
+    slideshow._set_scope_kind = lambda kind: scope_kinds.append(kind)
+    slideshow._new_scope_memory = lambda: "new-memory"
+    slideshow.update_slide_show = lambda image_paths, selection_weights, record_initial_history=False: updates.append(
+        (image_paths, selection_weights, record_initial_history)
+    )
+    slideshow.original_tree = SimpleNamespace(
+        resolve_container_node_for_image=lambda path: container_node,
+    )
+
+    recorded: list[str] = []
+    scope_kinds: list[ScopeKind] = []
+    updates: list[tuple[object, object, bool]] = []
+
+    monkeypatch.setattr(
+        "enkan.mySlideshow.mySlideshow.extract_image_paths_and_weights_from_tree",
+        lambda tree, start_node: (["root\\retrobride\\image.jpg"], [1])
+    )
+
+    slideshow.subfolder_mode_on()
+
+    assert recorded == ["root\\retrobride"]
+    assert scope_kinds == [ScopeKind.SUBFOLDER]
+    assert updates and updates[0][0] == ["root\\retrobride\\image.jpg"]
 
 
 def test_delete_image_uses_media_file_op_and_updates_state(monkeypatch):

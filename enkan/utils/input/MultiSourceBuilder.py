@@ -157,6 +157,7 @@ class MultiSourceBuilder:
                     single_warnings.append(msg)
                     logger.warning(msg)
                     raise
+            sources[0].tree.build_runtime_resolution_indexes()
             return sources[0].tree, single_warnings
 
         # Stage 2: decide target mode and lowest rung
@@ -201,6 +202,8 @@ class MultiSourceBuilder:
                 result.warnings.append(msg)
                 logger.warning(msg)
                 raise
+
+        result.tree.build_runtime_resolution_indexes()
 
         # Deduplicate warnings while preserving order
         deduped = list(dict.fromkeys(result.warnings))

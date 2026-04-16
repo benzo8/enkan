@@ -156,9 +156,9 @@ class TreeMerger:
             setattr(new_node, "video", getattr(incoming, "video", None))
         base.add_node(new_node, target_parent)
         # carry over virtual_image_lookup mappings for new node
-        if hasattr(base, "virtual_image_lookup") and hasattr(incoming, "images"):
-            for img in incoming.images:
-                base.virtual_image_lookup[img] = new_node
+        specific_image = self._specific_image_for_node(incoming)
+        if hasattr(base, "virtual_image_lookup") and specific_image is not None:
+            base.virtual_image_lookup[specific_image] = new_node
         if incoming.images:
             self.change_log.append((incoming.path, len(incoming.images), 0))
         # If grafting is needed, adjust leaf placement via Grafting
@@ -280,11 +280,14 @@ class TreeMerger:
         Ensure virtual_image_lookup entries from the incoming node exist on the base tree.
         """
         changed = False
-        if hasattr(base, "virtual_image_lookup") and incoming.images:
-            for img in incoming.images:
-                if img not in base.virtual_image_lookup:
-                    base.virtual_image_lookup[img] = target
-                    changed = True
+        specific_image = self._specific_image_for_node(incoming)
+        if (
+            hasattr(base, "virtual_image_lookup")
+            and specific_image is not None
+            and base.virtual_image_lookup.get(specific_image) is not target
+        ):
+            base.virtual_image_lookup[specific_image] = target
+            changed = True
         return changed
 
     def _shift_tree(self, tree: Tree, offset: int) -> Tree:
@@ -324,9 +327,9 @@ class TreeMerger:
                 setattr(cloned, "video", getattr(node, "video", None))
             cloned.group = getattr(node, "group", None)
             shifted.add_node(cloned, parent_name)
-            if hasattr(shifted, "virtual_image_lookup") and cloned.images:
-                for img in cloned.images:
-                    shifted.virtual_image_lookup[img] = cloned
+            specific_image = self._specific_image_for_node(cloned)
+            if hasattr(shifted, "virtual_image_lookup") and specific_image is not None:
+                shifted.virtual_image_lookup[specific_image] = cloned
         return shifted
 
     @staticmethod

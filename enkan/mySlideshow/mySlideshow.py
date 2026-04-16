@@ -520,14 +520,15 @@ class ImageSlideshow:
         self.update_filename_display()
 
     def find_node_for_image(self, image_path: str) -> TreeNode:
-        # First: specific image mapping
-        node: TreeNode = self.original_tree.virtual_image_lookup.get(image_path)
-        if node:
-            return node
-        # Fallback: directory-based
-        return self.original_tree.find_node(
-            os.path.dirname(image_path), self.original_tree.path_lookup
-        )
+        return self.original_tree.resolve_node_for_image(image_path)
+
+    def find_container_node_for_image(self, image_path: str) -> TreeNode | None:
+        return self.original_tree.resolve_container_node_for_image(image_path)
+
+    def _current_branch_context_node(self, image_path: str | None = None) -> TreeNode | None:
+        if self._navigation_basis() is not NavigationBasis.BRANCH:
+            return None
+        return self.find_container_node_for_image(image_path or self.current_image_path)
 
     def safe_current_image_index(
         self,
@@ -713,10 +714,26 @@ class ImageSlideshow:
             case "W":
                 self.set_provider("weighted")
             case "D":
-                self.set_provider(
-                    "controlled_random_weighted",
-                    gap_min=3,
-                )
+                if self.providers.get_current_provider_name() == "controlled_random_weighted":
+                    current_settings = self.providers.get_current_provider_settings()
+                    current_bucket_mode = str(current_settings.get("bucket_mode", "balance_bucket"))
+                    next_bucket_mode = (
+                        "folder_bucket"
+                        if current_bucket_mode == "balance_bucket"
+                        else "balance_bucket"
+                    )
+
+                    self.set_provider(
+                        "controlled_random_weighted",
+                        gap_min=int(current_settings.get("gap_min", 3)),
+                        repeat_penalty=float(current_settings.get("repeat_penalty", 0.1)),
+                        bucket_mode=next_bucket_mode,
+                    )
+                else:
+                    self.set_provider(
+                        "controlled_random_weighted",
+                        gap_min=3,
+                    )
             case "B":
                 self.set_provider(
                     "burst",
@@ -893,7 +910,7 @@ class ImageSlideshow:
                 )
                 temp_weights: list[int] = [1] * len(temp_image_paths)
             case NavigationBasis.BRANCH:
-                node: TreeNode = self.find_node_for_image(self.current_image_path)
+                node = self._current_branch_context_node(self.current_image_path)
                 if not node:
                     logger.debug(
                         "subfolder_mode_on: No valid node found for current image."
@@ -949,10 +966,8 @@ class ImageSlideshow:
                 self.navigation_node = None
                 self.navigation_mode = NavigationBasis.FOLDER.value
             case NavigationBasis.FOLDER:
-                self.navigation_node: TreeNode = self.find_node_for_image(
-                    self.current_image_path
-                )
-                if self.navigation_node:
+                if self.find_container_node_for_image(self.current_image_path):
+                    self.navigation_node = None
                     self.navigation_mode = NavigationBasis.BRANCH.value
                 else:
                     (
@@ -1013,9 +1028,7 @@ class ImageSlideshow:
             else:
                 logger.warning("No valid child directory found.")
         elif nav_state.is_branch:
-            current_path_node = self.original_tree.find_node(
-                current_path, self.original_tree.path_lookup
-            )
+            current_path_node = self._current_branch_context_node(self.current_image_path)
             path: list = []
             node: TreeNode = current_path_node
             while node and node != self.navigation_node:
@@ -1095,9 +1108,8 @@ class ImageSlideshow:
                     )
                 )
             case (NavigationBasis.BRANCH, ScopeKind.ROOT):
-                self.navigation_node = self.find_node_for_image(
-                    self.current_image_path
-                ).parent
+                current_node = self._current_branch_context_node(self.current_image_path)
+                self.navigation_node = current_node.parent if current_node else None
                 if self.navigation_node:
                     self._record_scope_entry(self.navigation_node.name)
             case (NavigationBasis.BRANCH, ScopeKind.PARENT):
@@ -1156,10 +1168,12 @@ class ImageSlideshow:
     def _status_label_path(self) -> str:
         label_path = self.current_image_path
         if self._navigation_state().is_branch:
-            label_path = os.path.join(
-                self.find_node_for_image(self.current_image_path).name,
-                os.path.basename(self.current_image_path),
-            )
+            branch_node = self._current_branch_context_node(self.current_image_path)
+            if branch_node:
+                label_path = os.path.join(
+                    branch_node.name,
+                    os.path.basename(self.current_image_path),
+                )
         return label_path
 
     def _status_fixed_path_and_colour(self) -> tuple[str | None, str | None]:
