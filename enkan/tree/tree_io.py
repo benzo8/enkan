@@ -10,7 +10,8 @@ logger = logging.getLogger(__name__)
 
 def load_tree_if_current(filename: str) -> Tree | None:
     """
-    Attempt to load a pickled Tree; return None if version missing/outdated.
+    Attempt to load a pickled Tree; repair stale index structures when possible,
+    and return None only when the tree cannot be repaired for runtime use.
     """
     from enkan.utils.progress import progress
 
@@ -26,17 +27,30 @@ def load_tree_if_current(filename: str) -> Tree | None:
             return None
     version_in_pickle = getattr(tree, "_pickle_version", None)
     if version_in_pickle is None or version_in_pickle < Tree.PICKLE_VERSION:
-        tree_filename = os.path.basename(filename)
-        txt_filename = os.path.splitext(tree_filename)[0] + ".txt"
-        logger.info(
-            "[tree] '%s' outdated (pickle_version=%d, required=%d).\n"
-            "Please rebuild with: enkan --input_file %s --outputtree",
-            tree_filename,
-            version_in_pickle,
-            Tree.PICKLE_VERSION,
-            txt_filename,
-        )
-        return None
+        try:
+            tree.rebuild_indexes()
+            tree._pickle_version = Tree.PICKLE_VERSION
+            logger.info(
+                "[tree] Repaired outdated tree '%s' in memory "
+                "(pickle_version=%s, required=%d).",
+                os.path.basename(filename),
+                version_in_pickle,
+                Tree.PICKLE_VERSION,
+            )
+        except Exception as exc:
+            tree_filename = os.path.basename(filename)
+            txt_filename = os.path.splitext(tree_filename)[0] + ".txt"
+            logger.info(
+                "[tree] '%s' outdated and could not be repaired in memory "
+                "(pickle_version=%s, required=%d, error=%s).\n"
+                "Please rebuild with: enkan --input_file %s --outputtree",
+                tree_filename,
+                version_in_pickle,
+                Tree.PICKLE_VERSION,
+                exc,
+                txt_filename,
+            )
+            return None
     return tree
 
 

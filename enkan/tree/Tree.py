@@ -30,6 +30,10 @@ class Tree:
         # Repair fields that may be missing when loading older .tree pickles.
         if not hasattr(self, "virtual_image_lookup"):
             self.virtual_image_lookup = {}
+        if not hasattr(self, "node_lookup"):
+            self.node_lookup = {}
+        if not hasattr(self, "path_lookup"):
+            self.path_lookup = {}
         if not hasattr(self, "built_mode_string"):
             self.built_mode_string = None
         if not hasattr(self, "built_mode"):
@@ -43,6 +47,37 @@ class Tree:
         if self.built_mode is not None and not self.built_mode_string:
             self.built_mode_string = serialise_mode(self.built_mode)
         # (Add future index repairs here)
+
+    @staticmethod
+    def _is_specific_image_node(node: TreeNode) -> bool:
+        unique_images = {os.path.normpath(img) for img in getattr(node, "images", [])}
+        if len(unique_images) != 1:
+            return False
+        only_image = next(iter(unique_images))
+        expected_node_path = os.path.normpath(os.path.splitext(only_image)[0])
+        return os.path.normpath(node.path) == expected_node_path
+
+    def rebuild_indexes(self) -> None:
+        if not hasattr(self, "root") or self.root is None:
+            raise ValueError("Tree has no root node to rebuild indexes from.")
+
+        self.node_lookup = {}
+        self.path_lookup = {}
+        self.virtual_image_lookup = {}
+
+        def visit(node: TreeNode, parent: TreeNode | None) -> None:
+            if not hasattr(node, "name") or not hasattr(node, "path"):
+                raise ValueError("Encountered node missing required name/path fields.")
+            node.parent = parent
+            self.node_lookup[node.name] = node
+            self.path_lookup[node.path] = node
+            if self._is_specific_image_node(node):
+                only_image = next(iter(node.images))
+                self.virtual_image_lookup[only_image] = node
+            for child in getattr(node, "children", []):
+                visit(child, node)
+
+        visit(self.root, None)
 
     def __getstate__(self) -> dict[str, Any]:
         state: dict[str, Any] = self.__dict__.copy()

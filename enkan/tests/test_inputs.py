@@ -304,7 +304,7 @@ def test_txt_with_nested_tree():
     assert os.path.normpath(dir1) in merged_tree.path_lookup
 
 
-def test_outdated_tree_falls_back_to_txt():
+def test_outdated_tree_loads_when_repair_succeeds():
     tmp = Path(_ensure_case_dir("outdated_tree_fallback"))
     defaults = _make_defaults(mode_str="b1")
     filters = Filters()
@@ -323,7 +323,53 @@ def test_outdated_tree_falls_back_to_txt():
     builder = MultiSourceBuilder(defaults, filters)
     merged_tree, warnings = builder.build([str(tree_path)])
 
-    assert warnings  # should warn about stale tree
+    assert warnings == []
+    assert os.path.normpath(dir1) in merged_tree.path_lookup
+
+
+def test_outdated_tree_repairs_missing_indexes_without_txt_fallback():
+    tmp = Path(_ensure_case_dir("outdated_tree_repair"))
+    defaults = _make_defaults(mode_str="b1")
+    filters = Filters()
+
+    dir1 = _create_dir_with_images(tmp, "base")
+    base_tree = _make_tree(defaults, filters, dir1, ["a.jpg"])
+    base_tree.built_mode = defaults.mode
+    delattr(base_tree, "path_lookup")
+    delattr(base_tree, "node_lookup")
+    delattr(base_tree, "virtual_image_lookup")
+
+    tree_path = tmp / "base.tree"
+    _write_tree_with_pickle_version(base_tree, str(tree_path), version=Tree.PICKLE_VERSION - 1)
+
+    builder = MultiSourceBuilder(defaults, filters)
+    loaded_tree, warnings = builder.build([str(tree_path)])
+
+    assert warnings == []
+    assert os.path.normpath(dir1) in loaded_tree.path_lookup
+    assert loaded_tree.node_lookup
+
+
+def test_outdated_tree_falls_back_to_txt_when_repair_fails():
+    tmp = Path(_ensure_case_dir("outdated_tree_repair_failure"))
+    defaults = _make_defaults(mode_str="b1")
+    filters = Filters()
+
+    dir1 = _create_dir_with_images(tmp, "base")
+    base_tree = _make_tree(defaults, filters, dir1, ["a.jpg"])
+    base_tree.built_mode = defaults.mode
+    base_tree.root = None
+
+    tree_path = tmp / "base.tree"
+    _write_tree_with_pickle_version(base_tree, str(tree_path), version=Tree.PICKLE_VERSION - 1)
+
+    txt_path = tmp / "base.txt"
+    txt_path.write_text(f"{dir1}\n", encoding="utf-8")
+
+    builder = MultiSourceBuilder(defaults, filters)
+    merged_tree, warnings = builder.build([str(tree_path)])
+
+    assert warnings
     assert os.path.normpath(dir1) in merged_tree.path_lookup
 
 
