@@ -12,7 +12,7 @@ from enkan.utils.Filters import Filters
 
 
 class Tree:
-    PICKLE_VERSION = 3
+    PICKLE_VERSION = 4
 
     def __init__(self, defaults: Defaults, filters: Filters) -> None:
         # Use string path, not int
@@ -51,6 +51,33 @@ class Tree:
 
     def _init_runtime_indexes(self) -> None:
         self._container_path_overrides: dict[str, TreeNode] = {}
+
+    def _best_path_lookup_candidate(self, path: str, *, exclude: TreeNode | None = None) -> TreeNode | None:
+        norm_path = os.path.normpath(path)
+        candidates = [
+            node
+            for node in self.node_lookup.values()
+            if node is not exclude and os.path.normpath(node.path) == norm_path
+        ]
+        if not candidates:
+            return None
+
+        image_bearing = [
+            node
+            for node in candidates
+            if not self._is_specific_image_node(node) and getattr(node, "images", [])
+        ]
+        if image_bearing:
+            candidates = image_bearing
+
+        candidates.sort(
+            key=lambda node: (
+                len(getattr(node, "images", [])),
+                node.level,
+            ),
+            reverse=True,
+        )
+        return candidates[0]
 
     @staticmethod
     def specific_image_for_node(node: TreeNode) -> str | None:
@@ -191,6 +218,15 @@ class Tree:
         if node.parent:
             node.parent.children = [c for c in node.parent.children if c is not node]
             node.parent = None
+
+    def prune_node_from_indexes(self, node: TreeNode) -> None:
+        self.node_lookup.pop(node.name, None)
+        if self.path_lookup.get(node.path) is node:
+            replacement = self._best_path_lookup_candidate(node.path, exclude=node)
+            if replacement is None:
+                self.path_lookup.pop(node.path, None)
+            else:
+                self.path_lookup[node.path] = replacement
 
     def add_node(self, new_node: TreeNode, parent_node_name: str) -> None:
         parent_node: Optional[TreeNode] = self.find_node(parent_node_name)

@@ -519,7 +519,7 @@ class ImageSlideshow:
         )
         self.update_filename_display()
 
-    def find_node_for_image(self, image_path: str) -> TreeNode:
+    def find_node_for_image(self, image_path: str) -> TreeNode | None:
         return self.original_tree.resolve_node_for_image(image_path)
 
     def find_container_node_for_image(self, image_path: str) -> TreeNode | None:
@@ -528,7 +528,7 @@ class ImageSlideshow:
     def _current_branch_context_node(self, image_path: str | None = None) -> TreeNode | None:
         if self._navigation_basis() is not NavigationBasis.BRANCH:
             return None
-        return self.find_container_node_for_image(image_path or self.current_image_path)
+        return self.find_node_for_image(image_path or self.current_image_path)
 
     def safe_current_image_index(
         self,
@@ -966,7 +966,7 @@ class ImageSlideshow:
                 self.navigation_node = None
                 self.navigation_mode = NavigationBasis.FOLDER.value
             case NavigationBasis.FOLDER:
-                if self.find_container_node_for_image(self.current_image_path):
+                if self.find_node_for_image(self.current_image_path):
                     self.navigation_node = None
                     self.navigation_mode = NavigationBasis.BRANCH.value
                 else:

@@ -10,8 +10,8 @@ logger = logging.getLogger(__name__)
 
 def load_tree_if_current(filename: str) -> Tree | None:
     """
-    Attempt to load a pickled Tree; repair stale index structures when possible,
-    and return None only when the tree cannot be repaired for runtime use.
+    Attempt to load a pickled Tree, rebuild derived indexes in memory, and
+    return None only when the tree cannot be prepared for runtime use.
     """
     from enkan.utils.progress import progress
 
@@ -26,31 +26,33 @@ def load_tree_if_current(filename: str) -> Tree | None:
             logger.warning("[tree] Failed to load '%s': %s.", filename, e)
             return None
     version_in_pickle = getattr(tree, "_pickle_version", None)
+    try:
+        tree.rebuild_indexes()
+        tree.build_runtime_resolution_indexes()
+        tree._pickle_version = Tree.PICKLE_VERSION
+    except Exception as exc:
+        tree_filename = os.path.basename(filename)
+        txt_filename = os.path.splitext(tree_filename)[0] + ".txt"
+        logger.info(
+            "[tree] '%s' could not be prepared for runtime use "
+            "(pickle_version=%s, required=%d, error=%s).\n"
+            "Please rebuild with: enkan --input_file %s --outputtree",
+            tree_filename,
+            version_in_pickle,
+            Tree.PICKLE_VERSION,
+            exc,
+            txt_filename,
+        )
+        return None
+
     if version_in_pickle is None or version_in_pickle < Tree.PICKLE_VERSION:
-        try:
-            tree.rebuild_indexes()
-            tree._pickle_version = Tree.PICKLE_VERSION
-            logger.info(
-                "[tree] Repaired outdated tree '%s' in memory "
-                "(pickle_version=%s, required=%d).",
-                os.path.basename(filename),
-                version_in_pickle,
-                Tree.PICKLE_VERSION,
-            )
-        except Exception as exc:
-            tree_filename = os.path.basename(filename)
-            txt_filename = os.path.splitext(tree_filename)[0] + ".txt"
-            logger.info(
-                "[tree] '%s' outdated and could not be repaired in memory "
-                "(pickle_version=%s, required=%d, error=%s).\n"
-                "Please rebuild with: enkan --input_file %s --outputtree",
-                tree_filename,
-                version_in_pickle,
-                Tree.PICKLE_VERSION,
-                exc,
-                txt_filename,
-            )
-            return None
+        logger.info(
+            "[tree] Repaired outdated tree '%s' in memory "
+            "(pickle_version=%s, required=%d).",
+            os.path.basename(filename),
+            version_in_pickle,
+            Tree.PICKLE_VERSION,
+        )
     return tree
 
 
