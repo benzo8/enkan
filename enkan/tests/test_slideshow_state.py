@@ -577,3 +577,66 @@ def test_show_image_preserves_provider_payload_on_same_image_redisplay():
     slideshow.show_image("scope\\one.jpg", record_history=False)
 
     assert slideshow.current_provider_status_payload == {"kept": True}
+
+
+def test_record_memory_for_weighted_view_syncs_memory_only():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.parent_mode = False
+    slideshow.subfolder_mode = False
+    slideshow.scope_seen_folders = set()
+    slideshow.providers = SimpleNamespace(get_current_provider_name=lambda: "weighted")
+    slideshow.folder_memory = SimpleNamespace(record_folder=lambda key: recorded.append(key))
+    slideshow._resolve_memory_key_for_image = lambda image_path, provider_pick_meta=None: "root\\folder"
+    slideshow._scope_records_once_per_folder = lambda: False
+    slideshow._sync_original_scope_memory = lambda: sync_calls.append("memory")
+    slideshow._sync_original_scope_state = lambda: (_ for _ in ()).throw(
+        AssertionError("full structural sync should not run for a weighted view record")
+    )
+
+    recorded: list[str] = []
+    sync_calls: list[str] = []
+
+    slideshow._record_memory_for_view("folder\\image.jpg", record_history=True)
+
+    assert recorded == ["root\\folder"]
+    assert sync_calls == ["memory"]
+
+
+def test_show_image_displays_before_recording_memory():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.image_paths = ["scope\\one.jpg"]
+    slideshow.current_image_index = 0
+    slideshow.current_image_path = None
+    slideshow.current_provider_status_payload = None
+    slideshow.current_exif_orientation = 1
+    slideshow.rotation_angle = 0
+    slideshow.video_muted = False
+    slideshow.screen_width = 100
+    slideshow.screen_height = 100
+    slideshow._release_video_resources = lambda: None
+    slideshow.providers = SimpleNamespace(
+        get_current_provider_name=lambda: "weighted",
+        get_current_provider_display_mode=lambda: "off",
+    )
+    slideshow.zoompan = SimpleNamespace(set_image=lambda image: order.append("display"))
+    slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
+    slideshow.filename_label = SimpleNamespace(tkraise=lambda: order.append("filename-raise"))
+    slideshow.mode_label = SimpleNamespace(tkraise=lambda: order.append("mode-raise"))
+    slideshow.update_filename_display = lambda: order.append("status")
+    slideshow.root = SimpleNamespace(after=lambda *args, **kwargs: None)
+    slideshow.manager = SimpleNamespace(
+        current_media_metadata={"index": 0, "memory_key": "root\\scope"},
+        get_next=lambda image_path=None, record_history=True: (
+            "scope\\one.jpg",
+            Image.new("RGB", (1, 1)),
+        ),
+    )
+    slideshow._record_memory_for_view = (
+        lambda image_path, record_history, provider_pick_meta=None: order.append("memory")
+    )
+
+    order: list[str] = []
+
+    slideshow.show_image()
+
+    assert order == ["display", "filename-raise", "mode-raise", "status", "memory"]

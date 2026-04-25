@@ -267,16 +267,24 @@ class ImageSlideshow:
         self._apply_navigation_state(scope_state.navigation_state)
         self._last_burst_memory_token = None
 
-    def _sync_original_scope_state(self) -> None:
+    def _sync_original_scope_structure(self) -> None:
         if self.parent_mode or self.subfolder_mode:
             return
         self.original_image_paths = self.image_paths[:]
         self.original_selection_weights = self.selection_weights.copy()
         if getattr(self, "selection_scope", None) is not None:
             self.original_selection_scope = self.selection_scope.copy()
+        self.original_navigation_state = self._navigation_state()
+
+    def _sync_original_scope_memory(self) -> None:
+        if self.parent_mode or self.subfolder_mode:
+            return
         self.original_folder_memory = self.folder_memory.copy()
         self.original_scope_seen_folders = set(self.scope_seen_folders)
-        self.original_navigation_state = self._navigation_state()
+
+    def _sync_original_scope_state(self) -> None:
+        self._sync_original_scope_structure()
+        self._sync_original_scope_memory()
 
     def _navigation_basis(self) -> NavigationBasis:
         return NavigationBasis(getattr(self, "navigation_mode", "folder"))
@@ -340,7 +348,7 @@ class ImageSlideshow:
         if not memory_key:
             return
         self.folder_memory.record_folder(memory_key)
-        self._sync_original_scope_state()
+        self._sync_original_scope_memory()
 
     def _record_memory_for_view(
         self,
@@ -369,7 +377,7 @@ class ImageSlideshow:
             if not memory_key:
                 return
             self.folder_memory.record_folder(memory_key)
-            self._sync_original_scope_state()
+            self._sync_original_scope_memory()
             return
 
         memory_key = self._resolve_memory_key_for_image(image_path, provider_pick_meta)
@@ -382,7 +390,7 @@ class ImageSlideshow:
             self.scope_seen_folders.add(memory_key)
 
         self.folder_memory.record_folder(memory_key)
-        self._sync_original_scope_state()
+        self._sync_original_scope_memory()
 
     def show_image(self, image_path: str = None, record_history: bool = True) -> None:
         # Stop existing video playback and clean up resources
@@ -435,8 +443,6 @@ class ImageSlideshow:
             )
         else:
             self.current_provider_status_payload = None
-        self._record_memory_for_view(image_path, record_history, provider_pick_meta)
-
         if not utils.is_videofile(image_path):
             image = media_payload
             self.current_vlc_media = None
@@ -498,6 +504,7 @@ class ImageSlideshow:
         self.filename_label.tkraise()
         self.mode_label.tkraise()
         self.update_filename_display()
+        self._record_memory_for_view(image_path, record_history, provider_pick_meta)
 
     def next_image(self, event=None) -> None:
         if self.rotation_angle != 0:
@@ -988,7 +995,7 @@ class ImageSlideshow:
         self.scope_seen_folders.clear()
         self._last_burst_memory_token = None
         self.manager.refresh_provider()
-        self._sync_original_scope_state()
+        self._sync_original_scope_memory()
         logger.debug("Folder selection memory cleared for current scope.")
 
     def toggle_filename_display(self, event=None) -> None:
