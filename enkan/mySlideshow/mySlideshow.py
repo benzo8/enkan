@@ -274,6 +274,11 @@ class ImageSlideshow:
         self.original_selection_weights = self.selection_weights.copy()
         if getattr(self, "selection_scope", None) is not None:
             self.original_selection_scope = self.selection_scope.copy()
+        self._sync_original_navigation_state()
+
+    def _sync_original_navigation_state(self) -> None:
+        if self.parent_mode or self.subfolder_mode:
+            return
         self.original_navigation_state = self._navigation_state()
 
     def _sync_original_scope_memory(self) -> None:
@@ -1286,6 +1291,7 @@ class ImageSlideshow:
         self._last_burst_memory_token = None
         if preserve_navigation_state:
             self._set_scope_kind(ScopeKind.ROOT)
+            self._sync_original_navigation_state()
         else:
             self._apply_navigation_state(self.original_navigation_state)
         self.update_slide_show(self.image_paths, self.selection_weights)

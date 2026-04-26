@@ -250,6 +250,8 @@ def test_toggle_navigation_mode_preserves_selected_basis_when_resetting_scope():
     assert slideshow.navigation_node is None
     assert slideshow.parent_mode is False
     assert slideshow.subfolder_mode is False
+    assert slideshow.original_navigation_state.basis is NavigationBasis.BRANCH
+    assert slideshow.original_navigation_state.scope_kind is ScopeKind.ROOT
 
 
 def test_find_container_node_for_image_ignores_virtual_image_lookup():
@@ -300,6 +302,55 @@ def test_toggle_navigation_mode_allows_branch_mode_for_specific_image():
 
     assert slideshow.navigation_mode == "branch"
     assert slideshow.navigation_node is None
+    assert slideshow.original_navigation_state.basis is NavigationBasis.BRANCH
+    assert slideshow.original_navigation_state.scope_kind is ScopeKind.ROOT
+
+
+def test_reset_parent_mode_preserves_branch_basis_after_navigation_toggle():
+    container_node = SimpleNamespace(
+        name="root\\branch",
+        parent=SimpleNamespace(name="root"),
+    )
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.navigation_mode = "folder"
+    slideshow.current_image_path = "root\\branch\\image.jpg"
+    slideshow.parent_mode = False
+    slideshow.subfolder_mode = False
+    slideshow.navigation_node = None
+    slideshow.parentFolderStack = ScopeStack(5)
+    slideshow.subFolderStack = ScopeStack(1)
+    slideshow.original_image_paths = ["root\\branch\\image.jpg"]
+    slideshow.original_selection_weights = SimpleNamespace(copy=lambda: "sel")
+    slideshow.original_folder_memory = SimpleNamespace(copy=lambda: "mem")
+    slideshow.original_scope_seen_folders = set()
+    slideshow.original_navigation_state = NavigationState(
+        basis=NavigationBasis.FOLDER,
+        scope_kind=ScopeKind.ROOT,
+    )
+    slideshow.current_image_index = 0
+    slideshow._last_burst_memory_token = None
+    slideshow.original_tree = SimpleNamespace(
+        find_node=lambda path, lookup: SimpleNamespace(name=path),
+        node_lookup={},
+        resolve_node_for_image=(
+            lambda path: container_node if path == "root\\branch\\image.jpg" else None
+        ),
+        resolve_container_node_for_image=(
+            lambda path: container_node if path == "root\\branch\\image.jpg" else None
+        ),
+    )
+    slideshow.update_slide_show = lambda image_paths, selection_weights: None
+    slideshow.show_image = lambda image_path, record_history=False: None
+    slideshow.update_filename_display = lambda: None
+
+    slideshow.toggle_navigation_mode()
+    slideshow.parent_mode = True
+    slideshow.navigation_node = container_node.parent
+    slideshow.reset_parent_mode()
+
+    assert slideshow.navigation_mode == "branch"
+    assert slideshow.parent_mode is False
+    assert slideshow.subfolder_mode is False
 
 
 def test_status_label_path_uses_exact_virtual_node_in_root_branch_mode():
