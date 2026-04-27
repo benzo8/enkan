@@ -85,7 +85,7 @@ class Grafting:
                 parent = node.parent
                 if parent:
                     parent.children = [c for c in parent.children if c is not node]
-                t.node_lookup.pop(node.name, None)
+                t.prune_node_from_indexes(node)
                 node = parent
             else:
                 break

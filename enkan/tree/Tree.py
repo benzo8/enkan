@@ -12,7 +12,7 @@ from enkan.utils.Filters import Filters
 
 
 class Tree:
-    PICKLE_VERSION = 3
+    PICKLE_VERSION = 4
 
     def __init__(self, defaults: Defaults, filters: Filters) -> None:
         # Use string path, not int
@@ -30,10 +30,15 @@ class Tree:
         # Repair fields that may be missing when loading older .tree pickles.
         if not hasattr(self, "virtual_image_lookup"):
             self.virtual_image_lookup = {}
+        if not hasattr(self, "node_lookup"):
+            self.node_lookup = {}
+        if not hasattr(self, "path_lookup"):
+            self.path_lookup = {}
         if not hasattr(self, "built_mode_string"):
             self.built_mode_string = None
         if not hasattr(self, "built_mode"):
             self.built_mode = None
+        self._init_runtime_indexes()
         # Ensure newer TreeNode fields exist after unpickling older trees
         for node in getattr(self, "node_lookup", {}).values():
             if not hasattr(node, "user_proportion"):
@@ -44,8 +49,104 @@ class Tree:
             self.built_mode_string = serialise_mode(self.built_mode)
         # (Add future index repairs here)
 
+    def _init_runtime_indexes(self) -> None:
+        self._container_path_overrides: dict[str, TreeNode] = {}
+
+    def _best_path_lookup_candidate(self, path: str, *, exclude: TreeNode | None = None) -> TreeNode | None:
+        norm_path = os.path.normpath(path)
+        candidates = [
+            node
+            for node in self.node_lookup.values()
+            if node is not exclude and os.path.normpath(node.path) == norm_path
+        ]
+        if not candidates:
+            return None
+
+        image_bearing = [
+            node
+            for node in candidates
+            if not self._is_specific_image_node(node) and getattr(node, "images", [])
+        ]
+        if image_bearing:
+            candidates = image_bearing
+
+        candidates.sort(
+            key=lambda node: (
+                len(getattr(node, "images", [])),
+                node.level,
+            ),
+            reverse=True,
+        )
+        return candidates[0]
+
+    @staticmethod
+    def specific_image_for_node(node: TreeNode) -> str | None:
+        unique_images = {os.path.normpath(img) for img in getattr(node, "images", [])}
+        if len(unique_images) != 1:
+            return None
+        only_image = next(iter(unique_images))
+        expected_node_path = os.path.normpath(os.path.splitext(only_image)[0])
+        if os.path.normpath(node.path) != expected_node_path:
+            return None
+        return only_image
+
+    @classmethod
+    def _is_specific_image_node(cls, node: TreeNode) -> bool:
+        return cls.specific_image_for_node(node) is not None
+
+    def rebuild_indexes(self) -> None:
+        if not hasattr(self, "root") or self.root is None:
+            raise ValueError("Tree has no root node to rebuild indexes from.")
+
+        self.node_lookup = {}
+        self.path_lookup = {}
+        self.virtual_image_lookup = {}
+
+        def visit(node: TreeNode, parent: TreeNode | None) -> None:
+            if not hasattr(node, "name") or not hasattr(node, "path"):
+                raise ValueError("Encountered node missing required name/path fields.")
+            node.parent = parent
+            self.node_lookup[node.name] = node
+            self.path_lookup[node.path] = node
+            specific_image = self.specific_image_for_node(node)
+            if specific_image is not None:
+                self.virtual_image_lookup[specific_image] = node
+            for child in getattr(node, "children", []):
+                visit(child, node)
+
+        visit(self.root, None)
+
+    def build_runtime_resolution_indexes(self) -> None:
+        self._init_runtime_indexes()
+
+        path_nodes: dict[str, list[TreeNode]] = {}
+
+        for node in self.node_lookup.values():
+            norm_path = os.path.normpath(node.path)
+            path_nodes.setdefault(norm_path, []).append(node)
+
+        for node_path, nodes in path_nodes.items():
+            if len(nodes) <= 1:
+                continue
+            candidates = [
+                node
+                for node in nodes
+                if not self._is_specific_image_node(node) and getattr(node, "images", [])
+            ]
+            if not candidates:
+                continue
+            candidates.sort(
+                key=lambda node: (
+                    len(getattr(node, "images", [])),
+                    node.level,
+                ),
+                reverse=True,
+            )
+            self._container_path_overrides[node_path] = candidates[0]
+
     def __getstate__(self) -> dict[str, Any]:
         state: dict[str, Any] = self.__dict__.copy()
+        state.pop("_container_path_overrides", None)
         state["_pickle_version"] = self.PICKLE_VERSION
         return state
 
@@ -117,6 +218,15 @@ class Tree:
         if node.parent:
             node.parent.children = [c for c in node.parent.children if c is not node]
             node.parent = None
+
+    def prune_node_from_indexes(self, node: TreeNode) -> None:
+        self.node_lookup.pop(node.name, None)
+        if self.path_lookup.get(node.path) is node:
+            replacement = self._best_path_lookup_candidate(node.path, exclude=node)
+            if replacement is None:
+                self.path_lookup.pop(node.path, None)
+            else:
+                self.path_lookup[node.path] = replacement
 
     def add_node(self, new_node: TreeNode, parent_node_name: str) -> None:
         parent_node: Optional[TreeNode] = self.find_node(parent_node_name)
@@ -253,6 +363,25 @@ class Tree:
         if lookup_dict is None:
             lookup_dict = self.node_lookup
         return lookup_dict.get(name)
+
+    def resolve_node_for_image(self, image_path: str) -> TreeNode | None:
+        node = self.virtual_image_lookup.get(image_path)
+        if node is not None:
+            return node
+        return self.resolve_container_node_for_image(image_path)
+
+    def resolve_container_node_for_image(self, image_path: str) -> TreeNode | None:
+        norm_image_path = os.path.normpath(image_path)
+        container_path = os.path.normpath(os.path.dirname(norm_image_path))
+        override = self._container_path_overrides.get(container_path)
+        if override is not None:
+            return override
+
+        container_node = self.find_node(container_path, self.path_lookup)
+        if container_node is not None and not self._is_specific_image_node(container_node):
+            return container_node
+
+        return None
 
     def get_nodes_at_level(self, target_level: int) -> list[TreeNode]:
         result: list[TreeNode] = []

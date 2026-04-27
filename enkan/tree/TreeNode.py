@@ -85,3 +85,11 @@ class TreeNode:
         for child in self.children:
             result.extend(child.get_nodes_at_level(target_level))
         return result
+
+    def ancestor_at_level(self, target_level: int) -> Optional["TreeNode"]:
+        if target_level < 1 or target_level > self.level:
+            return None
+        current: Optional["TreeNode"] = self
+        while current is not None and current.level > target_level:
+            current = current.parent
+        return current

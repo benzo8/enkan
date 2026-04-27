@@ -30,12 +30,18 @@ class HistoryManager:
         Remove a path from history, adjusting current_index if needed.
         If the current item is removed, current_index is moved to the previous item.
         """
-        try:
-            idx = self.history.index(path)
-        except ValueError:
-            return  # Path not in history
+        idx = None
+        for i, item in enumerate(self.history):
+            if item == path:
+                idx = i
+                break
 
-        self.history.remove(path)
+        if idx is None:
+            return
+
+        history_list = list(self.history)
+        del history_list[idx]
+        self.history = deque(history_list, maxlen=self.max_length)
 
         # Adjust current_index
         if idx < self.current_index:

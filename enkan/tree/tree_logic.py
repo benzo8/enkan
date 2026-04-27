@@ -7,6 +7,7 @@ from .Tree import Tree
 from .TreeBuilderTXT import TreeBuilderTXT
 from .TreeBuilderLST import TreeBuilderLST
 from .TreeNode import TreeNode
+from .selection_scope import SelectionScope, SelectionUnit
 from .diagnostics import report_branch_weight_sums
 from enkan.utils.Defaults import Defaults, resolve_mode, ModeMap
 from enkan.utils.Filters import Filters
@@ -14,6 +15,16 @@ from enkan.constants import TOTAL_WEIGHT
 from enkan.utils.logging import HURT_LEVEL
 
 logger: logging.Logger = logging.getLogger(__name__)
+
+
+def _ancestor_keys_for_node(node: TreeNode) -> tuple[str, ...]:
+    keys: list[str] = []
+    current: TreeNode | None = node
+    while current is not None:
+        keys.append(current.name)
+        current = current.parent
+    keys.reverse()
+    return tuple(keys)
 
 
 def build_tree(
@@ -276,15 +287,15 @@ def calculate_weights(tree: Tree, ignore_user_proportion: bool = False) -> None:
         report_branch_weight_sums(starting_nodes)
 
 
-def extract_image_paths_and_weights_from_tree(
+def extract_selection_scope_from_tree(
     tree: Tree, start_node: TreeNode = None, test_iterations: int = None
-) -> tuple[list[str], list[float]]:
+) -> SelectionScope:
     """
-    Recursively extract all image file paths and their associated normalized weights from the tree.
+    Recursively extract image paths, weights, and node-level selection units from the tree.
 
-    This function traverses the tree starting from the root node, collecting all image paths and
-    calculating a normalized weight for each image based on the node's weight and the number of images
-    in the node. If test_iterations is provided, the image name is used instead of the full path for testing.
+    Each image-bearing tree node becomes one SelectionUnit. The flattened image_paths/weights lists
+    are preserved for the existing providers, while selection_units give CRW a node-level view of
+    the same scope without re-scanning every image path later.
 
     Args:
         tree (Tree): The tree from which to extract image paths and weights.
@@ -293,12 +304,11 @@ def extract_image_paths_and_weights_from_tree(
             (useful for testing distributions). Defaults to None.
 
     Returns:
-        tuple[list[str], list[float]]: A tuple containing:
-            - all_images (list of str): List of image file paths (or node names if test_iterations is set).
-            - weights (list of float): List of normalized weights corresponding to each image.
+        SelectionScope: Flattened image/weight arrays plus node-level selection units.
     """
     all_images: List[str] = []
     weights: List[float] = []
+    selection_units: List[SelectionUnit] = []
     unweighted_image_nodes: List[TreeNode] = []
 
     # Helper function to recursively gather data
@@ -312,13 +322,31 @@ def extract_image_paths_and_weights_from_tree(
                 for child in node.children:
                     traverse_node(child)
                 return
+            start_index = len(all_images)
             normalised_weight = node.weight / (
                 num_images if node.is_percentage else node.weight_modifier
             )
+            unit_images: list[str] = []
+            unit_weights: list[float] = []
             target_value = node.name if test_iterations is not None else None
             for img in node.images:
-                all_images.append(target_value or img)
+                resolved_value = target_value or img
+                all_images.append(resolved_value)
                 weights.append(normalised_weight)
+                unit_images.append(resolved_value)
+                unit_weights.append(normalised_weight)
+            selection_units.append(
+                SelectionUnit(
+                    node_key=node.name,
+                    node_level=node.level,
+                    ancestor_keys=_ancestor_keys_for_node(node),
+                    image_paths=unit_images,
+                    weights=unit_weights,
+                    cum_weights=list(accumulate(unit_weights)),
+                    base_total=sum(unit_weights),
+                    start_index=start_index,
+                )
+            )
         for child in node.children:
             traverse_node(child)
 
@@ -339,7 +367,38 @@ def extract_image_paths_and_weights_from_tree(
             f"Examples: {sample}"
         )
 
-    return all_images, weights
+    return SelectionScope.from_parts(
+        all_images,
+        weights,
+        selection_units,
+    )
+
+
+def extract_image_paths_and_weights_from_tree(
+    tree: Tree, start_node: TreeNode = None, test_iterations: int = None
+) -> tuple[list[str], list[float]]:
+    selection_scope = extract_selection_scope_from_tree(
+        tree,
+        start_node=start_node,
+        test_iterations=test_iterations,
+    )
+    return selection_scope.image_paths, selection_scope.weights
+
+
+def apply_mode_and_recalculate_scope(
+    tree: Tree, defaults: Defaults, ignore_user_proportion: bool = False
+) -> SelectionScope:
+    """
+    Apply the current defaults.mode to the tree, recalculate weights, and return
+    a full SelectionScope for downstream runtime consumers.
+    """
+    tree.defaults = defaults
+    clear_weights(tree)
+    calculate_weights(tree, ignore_user_proportion=ignore_user_proportion)
+    selection_scope = extract_selection_scope_from_tree(tree)
+    if not selection_scope.image_paths:
+        raise ValueError("Recalculation produced no images.")
+    return selection_scope
 
 
 def apply_mode_and_recalculate(
@@ -349,12 +408,13 @@ def apply_mode_and_recalculate(
     Apply the current defaults.mode to the tree, recalculate weights, and return
     images/weights/cumulative weights for downstream consumers.
     """
-    # Ensure the tree sees the latest defaults (mode may have just changed)
-    tree.defaults = defaults
-    clear_weights(tree)
-    calculate_weights(tree, ignore_user_proportion=ignore_user_proportion)
-    images, weights = extract_image_paths_and_weights_from_tree(tree)
-    if not images:
-        raise ValueError("Recalculation produced no images.")
-    cum_weights = list(accumulate(weights))
-    return images, weights, cum_weights
+    selection_scope = apply_mode_and_recalculate_scope(
+        tree,
+        defaults,
+        ignore_user_proportion=ignore_user_proportion,
+    )
+    return (
+        selection_scope.image_paths,
+        selection_scope.weights,
+        selection_scope.cum_weights,
+    )

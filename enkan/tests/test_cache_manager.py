@@ -152,3 +152,18 @@ def test_cache_manager_returns_none_for_invalid_explicit_path(monkeypatch):
     assert image_path is None
     assert image_obj is None
     assert "missing.jpg" not in manager.lru_cache
+
+
+def test_cache_manager_skips_missing_image_when_loader_raises(monkeypatch):
+    monkeypatch.setattr(
+        ImageLoaders,
+        "load_image",
+        lambda self, path, *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError(path)),
+    )
+    manager = ImageCacheManager(iter(()), 0, background_preload=False)
+
+    image_path, image_obj = manager.get_next("missing.jpg", record_history=False)
+
+    assert image_path is None
+    assert image_obj is None
+    assert "missing.jpg" not in manager.lru_cache

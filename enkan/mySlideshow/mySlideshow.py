@@ -22,29 +22,41 @@ from enkan.utils.Filters import Filters
 from enkan.utils.SelectionWeights import SelectionWeights
 from enkan.plugables.ImageProviders import ImageProviders
 from enkan.tree.tree_logic import (
-    apply_mode_and_recalculate,
+    SelectionScope,
+    apply_mode_and_recalculate_scope,
     build_tree,
-    extract_image_paths_and_weights_from_tree,
+    extract_selection_scope_from_tree,
 )
 from enkan.tree.diagnostics import print_tree
 from enkan.mySlideshow.Gui.Gui import Gui
+from enkan.mySlideshow.MediaFileOps import (
+    ORIENTATION_TO_CW,
+    delete_media_file,
+    write_exif_orientation,
+)
+from enkan.mySlideshow.NavigationTypes import (
+    NavigationBasis,
+    NavigationState,
+    ScopeKind,
+)
+from enkan.mySlideshow.StatusBar import (
+    StatusBarContext,
+    build_filename_display,
+    build_mode_text,
+)
 from enkan.mySlideshow.ScopeStack import ScopeStack, ScopeStackEntry
 from enkan.mySlideshow.ZoomPan import ZoomPan
 
 # Configure logging
 logger: logging.Logger = logging.getLogger("enkan.ui")
 
-ORIENTATION_TO_CW: dict[int, int] = {1: 0, 3: 180, 6: 90, 8: 270}
-CW_TO_ORIENTATION: dict[int, int] = {
-    value: key for key, value in ORIENTATION_TO_CW.items()
-}
-CRW_DISPLAY_MODES = ("off", "friendly", "useful", "debug")
-
 
 @dataclass
 class _ScopeState:
     selection_weights: SelectionWeights
     folder_memory: FolderSelectionMemory
+    navigation_state: NavigationState
+    selection_scope: SelectionScope | None = None
     seen_folders: set[str] = field(default_factory=set)
 
 
@@ -55,6 +67,7 @@ class ImageSlideshow:
         tree: Tree,
         image_paths: list,
         selection_weights: SelectionWeights,
+        selection_scope: SelectionScope | None,
         defaults: Defaults,
         filters: Filters,
         interval: int | float | None = None,
@@ -64,10 +77,24 @@ class ImageSlideshow:
         self.image_paths: list = image_paths
         self.selection_weights: SelectionWeights = selection_weights.copy()
         self.original_selection_weights: SelectionWeights = selection_weights.copy()
+        self.selection_scope: SelectionScope = (
+            selection_scope.copy()
+            if selection_scope is not None
+            else SelectionScope.from_parts(
+                image_paths,
+                self.selection_weights.weights,
+                cum_weights=self.selection_weights.cum_weights,
+            )
+        )
+        self.original_selection_scope: SelectionScope = self.selection_scope.copy()
         self.folder_memory: FolderSelectionMemory = self._new_scope_memory()
         self.original_folder_memory: FolderSelectionMemory = self.folder_memory.copy()
         self.scope_seen_folders: set[str] = set()
         self.original_scope_seen_folders: set[str] = set()
+        self.original_navigation_state = NavigationState(
+            basis=NavigationBasis.FOLDER,
+            scope_kind=ScopeKind.ROOT,
+        )
         self.original_image_paths: list = image_paths
         self.number_of_images: int = len(image_paths)
         self.current_image_index = 0
@@ -81,16 +108,7 @@ class ImageSlideshow:
         self.navigation_node = None
         self.show_filename = False
         self._last_burst_memory_token = None
-        self.crw_display_mode_index = 0
-        self.current_crw_metrics = None
-        self.folder_base_totals: dict[str, float] = {}
-        self.one_folder_only = False
-        self.controlled_random_settings = {
-            "gap_min": 3,
-            "gap_max": 80,
-            "alpha": 0.01,
-            "repeat_penalty": 0.1,
-        }
+        self.current_provider_status_payload = None
 
         self.screen_width: int = root.winfo_screenwidth()
         self.screen_height: int = root.winfo_screenheight()
@@ -158,7 +176,7 @@ class ImageSlideshow:
         self.root.bind("<s>", self.toggle_subfolder_mode)
         self.root.bind("<Control-b>", self.reset_burst_cycle)
         self.root.bind("<Control-d>", self.clear_memory)
-        self.root.bind("<D>", self.toggle_crw_display_mode)
+        self.root.bind("<D>", self.toggle_provider_display_mode)
         self.root.bind("<a>", self.toggle_auto_advance)
         self.root.bind("<Control-Shift-M>", self.open_mode_dialog)
         self.root.bind("<Control-Shift-T>", self.print_tree_to_console)
@@ -179,8 +197,6 @@ class ImageSlideshow:
         # Instantiate Classes
         self.gui = Gui(use_customtkinter=True)
         self.providers = ImageProviders()
-        self._rebuild_folder_weight_cache()
-        self._recalculate_controlled_random_settings()
         
         if self.defaults.is_random:
             self.set_provider("random")
@@ -217,41 +233,134 @@ class ImageSlideshow:
         return _ScopeState(
             selection_weights=self.selection_weights.copy(),
             folder_memory=self.folder_memory.copy(),
+            navigation_state=self._navigation_state(),
+            selection_scope=(
+                self.selection_scope.copy()
+                if getattr(self, "selection_scope", None) is not None
+                else None
+            ),
             seen_folders=set(self.scope_seen_folders),
+        )
+
+    def _navigation_node_from_anchor(self, branch_anchor: str | None) -> TreeNode | None:
+        if not branch_anchor:
+            return None
+        if not getattr(self, "original_tree", None):
+            return None
+        return self.original_tree.find_node(branch_anchor, self.original_tree.node_lookup)
+
+    def _apply_navigation_state(self, navigation_state: NavigationState) -> None:
+        self.navigation_mode = navigation_state.basis.value
+        self.parent_mode = navigation_state.is_parent
+        self.subfolder_mode = navigation_state.is_subfolder
+        self.navigation_node = self._navigation_node_from_anchor(
+            navigation_state.branch_anchor
         )
 
     def _apply_scope_state(self, scope_state: _ScopeState) -> None:
         self.selection_weights = scope_state.selection_weights.copy()
+        selection_scope = getattr(scope_state, "selection_scope", None)
+        if selection_scope is not None:
+            self.selection_scope = selection_scope.copy()
         self.folder_memory = scope_state.folder_memory.copy()
         self.scope_seen_folders = set(scope_state.seen_folders)
+        self._apply_navigation_state(scope_state.navigation_state)
         self._last_burst_memory_token = None
 
-    def _sync_original_scope_state(self) -> None:
+    def _sync_original_scope_structure(self) -> None:
         if self.parent_mode or self.subfolder_mode:
             return
         self.original_image_paths = self.image_paths[:]
         self.original_selection_weights = self.selection_weights.copy()
+        if getattr(self, "selection_scope", None) is not None:
+            self.original_selection_scope = self.selection_scope.copy()
+        self._sync_original_navigation_state()
+
+    def _sync_original_navigation_state(self) -> None:
+        if self.parent_mode or self.subfolder_mode:
+            return
+        self.original_navigation_state = self._navigation_state()
+
+    def _sync_original_scope_memory(self) -> None:
+        if self.parent_mode or self.subfolder_mode:
+            return
         self.original_folder_memory = self.folder_memory.copy()
         self.original_scope_seen_folders = set(self.scope_seen_folders)
 
+    def _sync_original_scope_state(self) -> None:
+        self._sync_original_scope_structure()
+        self._sync_original_scope_memory()
+
+    def _navigation_basis(self) -> NavigationBasis:
+        return NavigationBasis(getattr(self, "navigation_mode", "folder"))
+
+    def _scope_kind(self) -> ScopeKind:
+        if getattr(self, "subfolder_mode", False):
+            return ScopeKind.SUBFOLDER
+        if getattr(self, "parent_mode", False):
+            return ScopeKind.PARENT
+        return ScopeKind.ROOT
+
+    def _navigation_state(self) -> NavigationState:
+        return NavigationState(
+            basis=self._navigation_basis(),
+            scope_kind=self._scope_kind(),
+            branch_anchor=(
+                self.navigation_node.name if getattr(self, "navigation_node", None) else None
+            ),
+        )
+
+    def _set_scope_kind(self, scope_kind: ScopeKind) -> None:
+        self.parent_mode = scope_kind is ScopeKind.PARENT
+        self.subfolder_mode = scope_kind is ScopeKind.SUBFOLDER
+
     def _scope_records_once_per_folder(self) -> bool:
-        return self.subfolder_mode or self.parent_mode
+        return self._navigation_state().scope_kind is not ScopeKind.ROOT
+
+    def _resolve_memory_key_for_scope(self, scope_path: str | None) -> str | None:
+        if not scope_path:
+            return None
+        tree = getattr(self, "original_tree", None)
+        if tree is None:
+            return scope_path
+        node = tree.find_node(scope_path, tree.node_lookup)
+        if node is None:
+            node = tree.find_node(scope_path, tree.path_lookup)
+        if node is not None:
+            return node.name
+        return scope_path
+
+    def _resolve_memory_key_for_image(
+        self,
+        image_path: str,
+        provider_pick_meta: dict[str, object] | None = None,
+    ) -> str | None:
+        if provider_pick_meta is not None:
+            memory_key = provider_pick_meta.get("memory_key")
+            if isinstance(memory_key, str) and memory_key:
+                return memory_key
+        providers = getattr(self, "providers", None)
+        if providers is None:
+            return os.path.dirname(image_path) or None
+        return providers.resolve_memory_key_for_image(
+            image_path,
+            selection_scope=getattr(self, "selection_scope", None),
+            tree=getattr(self, "original_tree", None),
+        )
 
     def _record_scope_entry(self, folder: str) -> None:
-        if not folder:
+        memory_key = self._resolve_memory_key_for_scope(folder)
+        if not memory_key:
             return
-        self.folder_memory.record_folder(folder)
-        self._sync_original_scope_state()
+        self.folder_memory.record_folder(memory_key)
+        self._sync_original_scope_memory()
 
-    def _crw_folder_metrics_for_path(self, image_path: str) -> dict[str, float | int | str] | None:
-        if self.providers.get_current_provider_name() != "controlled_random_weighted":
-            return None
-        folder = os.path.dirname(image_path)
-        if not folder:
-            return None
-        return self._crw_folder_metrics(folder=folder)
-
-    def _record_memory_for_view(self, image_path: str, record_history: bool) -> None:
+    def _record_memory_for_view(
+        self,
+        image_path: str,
+        record_history: bool,
+        provider_pick_meta: dict[str, object] | None = None,
+    ) -> None:
         if not record_history:
             return
 
@@ -269,17 +378,24 @@ class ImageSlideshow:
                 return
             self._last_burst_memory_token = burst_token
             burst_folder = getattr(self.manager.image_provider, "current_burst_folder", None)
-            self.folder_memory.record_folder(burst_folder or folder)
-            self._sync_original_scope_state()
+            memory_key = self._resolve_memory_key_for_scope(burst_folder or folder)
+            if not memory_key:
+                return
+            self.folder_memory.record_folder(memory_key)
+            self._sync_original_scope_memory()
+            return
+
+        memory_key = self._resolve_memory_key_for_image(image_path, provider_pick_meta)
+        if not memory_key:
             return
 
         if self._scope_records_once_per_folder():
-            if folder in self.scope_seen_folders:
+            if memory_key in self.scope_seen_folders:
                 return
-            self.scope_seen_folders.add(folder)
+            self.scope_seen_folders.add(memory_key)
 
-        self.folder_memory.record_folder(folder)
-        self._sync_original_scope_state()
+        self.folder_memory.record_folder(memory_key)
+        self._sync_original_scope_memory()
 
     def show_image(self, image_path: str = None, record_history: bool = True) -> None:
         # Stop existing video playback and clean up resources
@@ -287,24 +403,51 @@ class ImageSlideshow:
         if hasattr(self, "video_frame"):
             self.video_frame.place_forget()
 
+        previous_image_path = getattr(self, "current_image_path", None)
+        previous_provider_status_payload = getattr(
+            self,
+            "current_provider_status_payload",
+            None,
+        )
+
         image_path, media_payload = self.manager.get_next(
             image_path, record_history=record_history
         )
         if not image_path:
             logger.warning("No displayable media available.")
             return
+        provider_pick_meta = getattr(self.manager, "current_media_metadata", None)
 
         self.current_image_path: str = image_path
-        self.current_image_index = self.image_paths.index(image_path)
-        if (
+        provider_pick_index = None
+        if isinstance(provider_pick_meta, dict):
+            raw_pick_index = provider_pick_meta.get("index")
+            if isinstance(raw_pick_index, int):
+                provider_pick_index = raw_pick_index
+        if provider_pick_index is not None and 0 <= provider_pick_index < len(self.image_paths):
+            self.current_image_index = provider_pick_index
+        elif image_path in self.image_paths:
+            self.current_image_index = self.image_paths.index(image_path)
+        if not record_history and image_path == previous_image_path:
+            self.current_provider_status_payload = previous_provider_status_payload
+        elif (
             self.providers.get_current_provider_name() == "controlled_random_weighted"
-            and self._current_crw_display_mode() != "off"
+            and self.providers.get_current_provider_display_mode() != "off"
         ):
-            self.current_crw_metrics = self._crw_folder_metrics_for_path(image_path)
+            self.current_provider_status_payload = (
+                self.providers.get_current_provider_status_payload(
+                    image_paths=self.image_paths,
+                    weights=self.selection_weights.weights,
+                    selection_scope=getattr(self, "selection_scope", None),
+                    current_image_path=self.current_image_path,
+                    target_image_path=image_path,
+                    folder_memory=self.folder_memory,
+                    current_pick_meta=provider_pick_meta,
+                    tree=self.original_tree,
+                )
+            )
         else:
-            self.current_crw_metrics = None
-        self._record_memory_for_view(image_path, record_history)
-
+            self.current_provider_status_payload = None
         if not utils.is_videofile(image_path):
             image = media_payload
             self.current_vlc_media = None
@@ -366,6 +509,7 @@ class ImageSlideshow:
         self.filename_label.tkraise()
         self.mode_label.tkraise()
         self.update_filename_display()
+        self._record_memory_for_view(image_path, record_history, provider_pick_meta)
 
     def next_image(self, event=None) -> None:
         if self.rotation_angle != 0:
@@ -376,154 +520,16 @@ class ImageSlideshow:
     def _provider_kwargs(self) -> dict[str, object]:
         return {
             **self.selection_weights.provider_kwargs(),
+            "selection_scope": getattr(self, "selection_scope", None),
             "folder_memory": self.folder_memory,
+            "tree": self.original_tree,
         }
-
-    def _rebuild_folder_weight_cache(self) -> None:
-        folder_base_totals: dict[str, float] = {}
-        for path, weight in zip(self.image_paths, self.selection_weights.weights):
-            folder = os.path.dirname(path)
-            if not folder:
-                continue
-            folder_base_totals[folder] = folder_base_totals.get(folder, 0.0) + weight
-        self.folder_base_totals = folder_base_totals
-        self.one_folder_only = len(folder_base_totals) <= 1
-
-    def _controlled_random_folder_count(self) -> int:
-        return max(1, len(self.folder_base_totals))
-
-    def _recalculate_controlled_random_settings(self) -> None:
-        folder_count = self._controlled_random_folder_count()
-        gap_min = max(1, int(self.controlled_random_settings["gap_min"]))
-        gap_max = max(gap_min + 1, min(80, round(folder_count * 1.5)))
-        alpha = max(0.0025, min(0.03, 0.12 / folder_count))
-        self.controlled_random_settings["gap_max"] = gap_max
-        self.controlled_random_settings["alpha"] = alpha
-
-    def _provider_display_name(self) -> str:
-        provider_name = self.providers.get_current_provider_name()
-        labels = {
-            "random": "RND",
-            "weighted": "WGT",
-            "controlled_random_weighted": "CRW",
-            "sequential": "SEQ",
-            "burst": "BUR",
-        }
-        return labels.get(provider_name, provider_name[0:3].upper())
-
-    def _current_crw_display_mode(self) -> str:
-        return CRW_DISPLAY_MODES[self.crw_display_mode_index]
-
-    def _crw_folder_metrics(self, folder: str | None = None) -> dict[str, float | int | str] | None:
-        if self.providers.get_current_provider_name() != "controlled_random_weighted":
-            return None
-        if folder is None:
-            if not self.current_image_path:
-                return None
-            folder = os.path.dirname(self.current_image_path)
-        if not folder or not self.image_paths:
-            return None
-
-        seen_before = self.folder_memory.has_seen(folder)
-        distance = self.folder_memory.distance_for(folder)
-        gap_min = max(0, int(self.controlled_random_settings["gap_min"]))
-        gap_max = max(gap_min, int(self.controlled_random_settings["gap_max"]))
-        alpha = float(self.controlled_random_settings["alpha"])
-        repeat_penalty = max(
-            0.0,
-            min(float(self.controlled_random_settings["repeat_penalty"]), 1.0),
-        )
-        if not seen_before:
-            distance = min(distance, gap_max)
-        clamped_distance = min(distance, gap_max)
-        one_folder_only = self.one_folder_only
-        streak_len = self.folder_memory.streak_for(folder)
-
-        if one_folder_only:
-            folder_factor = 1.0
-        elif gap_min > 0 and distance < gap_min:
-            folder_factor = repeat_penalty + (
-                (1.0 - repeat_penalty) * (distance / gap_min)
-            )
-        else:
-            folder_factor = 1.0
-
-        extra = max(0.0, clamped_distance - 10)
-        boost = 1.0 + alpha * extra * extra
-        if one_folder_only or not seen_before or streak_len <= 0:
-            streak_factor = 1.0
-        else:
-            streak_factor = max(0.25, 0.75 ** max(0, streak_len - 1))
-        combined = folder_factor * boost * streak_factor
-
-        base_total = self.folder_base_totals.get(folder, 0.0)
-        effective_total = base_total * combined
-
-        bias_pct = ((combined - 1.0) * 100.0) if base_total > 0 else 0.0
-        return {
-            "folder": folder,
-            "age": distance,
-            "seen_before": seen_before,
-            "streak_len": streak_len,
-            "folder_factor": folder_factor,
-            "boost": boost,
-            "streak_factor": streak_factor,
-            "combined": combined,
-            "bias_pct": bias_pct,
-            "base_total": base_total,
-            "effective_total": effective_total,
-        }
-
-    def _crw_status_text(self) -> str:
-        mode = self._current_crw_display_mode()
-        if mode == "off":
-            return ""
-
-        metrics = self.current_crw_metrics or self._crw_folder_metrics()
-        if metrics is None:
-            return ""
-
-        age = int(metrics["age"])
-        seen_before = bool(metrics["seen_before"])
-        streak_len = int(metrics["streak_len"])
-        bias_pct = float(metrics["bias_pct"])
-        folder_factor = float(metrics["folder_factor"])
-        boost = float(metrics["boost"])
-        streak_factor = float(metrics["streak_factor"])
-        combined = float(metrics["combined"])
-
-        if mode == "friendly":
-            if not seen_before:
-                return "NEW"
-            if combined >= 1.75:
-                label = "DUE"
-            elif combined >= 1.15:
-                label = "WARM"
-            elif folder_factor < 0.75:
-                label = "COOLING"
-            else:
-                label = "NEUTRAL"
-            return label
-
-        if mode == "useful":
-            if not seen_before:
-                return f"NEW S{streak_len} B{bias_pct:+.0f}%"
-            return f"A{age} S{streak_len} B{bias_pct:+.0f}%"
-
-        if not seen_before:
-            return (
-                f"NEW S{streak_len} F{folder_factor:.2f} U{boost:.2f} T{streak_factor:.2f} "
-                f"X{combined:.2f} B{bias_pct:+.0f}%"
-            )
-        return (
-            f"A{age} S{streak_len} F{folder_factor:.2f} U{boost:.2f} T{streak_factor:.2f} "
-            f"X{combined:.2f} B{bias_pct:+.0f}%"
-        )
 
     def update_slide_show(
         self,
         image_paths: list,
         selection_weights: SelectionWeights,
+        selection_scope: SelectionScope | None = None,
         record_initial_history: bool = False,
         preferred_index: int | None = None,
     ) -> None:
@@ -533,8 +539,16 @@ class ImageSlideshow:
         )
         self.image_paths = image_paths
         self.selection_weights = selection_weights.copy()
-        self._rebuild_folder_weight_cache()
-        self._recalculate_controlled_random_settings()
+        if selection_scope is not None:
+            self.selection_scope = selection_scope.copy()
+        elif getattr(self, "selection_scope", None) is not None:
+            self.selection_scope = self.selection_scope.copy()
+        else:
+            self.selection_scope = SelectionScope.from_parts(
+                image_paths,
+                self.selection_weights.weights,
+                cum_weights=self.selection_weights.cum_weights,
+            )
         self.number_of_images = len(image_paths)
         self.current_image_index = self.safe_current_image_index(
             image_paths,
@@ -552,12 +566,13 @@ class ImageSlideshow:
         )
         self.manager.restore_history(history_snapshot)
         self._last_burst_memory_token = None
+        self.current_provider_status_payload = None
         self.show_image(
             self.image_paths[self.current_image_index],
             record_history=record_initial_history,
         )
 
-    # --- Utility Methods ---
+    # --- Provider and Display Pipeline ---
 
     def _check_video_ended(self) -> None:
         if not self.video_player:
@@ -573,19 +588,15 @@ class ImageSlideshow:
 
         self.root.after(500, self._check_video_ended)
 
-        # --- Dynamic mode adjustment ---
+    # --- Provider Selection and Mode Recalculation ---
 
     def set_provider(self, provider_name: str, **provider_kwargs) -> None:
         # Easily switch to any provider by name/key
-        self.current_provider: str = provider_name
         history_snapshot = (
             self.manager.history_snapshot() if getattr(self, "manager", None) else None
         )
         if provider_name == "controlled_random_weighted":
-            self._recalculate_controlled_random_settings()
-            for key in self.controlled_random_settings:
-                if key in provider_kwargs:
-                    self.controlled_random_settings[key] = provider_kwargs[key]
+            provider_kwargs.setdefault("gap_min", 3)
         provider_kwargs = {
             **self._provider_kwargs(),
             **provider_kwargs,
@@ -601,25 +612,24 @@ class ImageSlideshow:
         self._last_burst_memory_token = None
         self.update_filename_display()
 
-    def toggle_crw_display_mode(self, event=None) -> None:
-        self.crw_display_mode_index = (
-            self.crw_display_mode_index + 1
-        ) % len(CRW_DISPLAY_MODES)
+    def toggle_provider_display_mode(self, event=None) -> None:
+        current_mode = self.providers.cycle_current_provider_display_mode()
         logger.debug(
-            "Controlled-random display mode set to %s.",
-            self._current_crw_display_mode(),
+            "Provider display mode set to %s.",
+            current_mode,
         )
         self.update_filename_display()
 
-    def find_node_for_image(self, image_path: str) -> TreeNode:
-        # First: specific image mapping
-        node: TreeNode = self.original_tree.virtual_image_lookup.get(image_path)
-        if node:
-            return node
-        # Fallback: directory-based
-        return self.original_tree.find_node(
-            os.path.dirname(image_path), self.original_tree.path_lookup
-        )
+    def find_node_for_image(self, image_path: str) -> TreeNode | None:
+        return self.original_tree.resolve_node_for_image(image_path)
+
+    def find_container_node_for_image(self, image_path: str) -> TreeNode | None:
+        return self.original_tree.resolve_container_node_for_image(image_path)
+
+    def _current_branch_context_node(self, image_path: str | None = None) -> TreeNode | None:
+        if self._navigation_basis() is not NavigationBasis.BRANCH:
+            return None
+        return self.find_node_for_image(image_path or self.current_image_path)
 
     def safe_current_image_index(
         self,
@@ -649,8 +659,9 @@ class ImageSlideshow:
     ) -> None:
         """Set up for a new directory and create an updated slideshow."""
         if navigation_node:
-            new_image_paths, new_weights = extract_image_paths_and_weights_from_tree(
-                tree=self.original_tree, start_node=navigation_node
+            selection_scope = extract_selection_scope_from_tree(
+                tree=self.original_tree,
+                start_node=navigation_node,
             )
         elif os.path.isdir(new_path):
             parent_image_dirs = {
@@ -668,18 +679,23 @@ class ImageSlideshow:
                 tk_root=self.root,
                 tk_enabled=True,
             )
-            new_image_paths, new_weights = extract_image_paths_and_weights_from_tree(
+            selection_scope = extract_selection_scope_from_tree(
                 parent_tree
             )
         else:
             logger.debug("No valid directory found.")
+            return
         self.update_slide_show(
-            new_image_paths,
-            SelectionWeights.from_weights(new_weights),
+            selection_scope.image_paths,
+            SelectionWeights.from_parts(
+                selection_scope.weights,
+                selection_scope.cum_weights,
+            ),
+            selection_scope=selection_scope,
             record_initial_history=record_initial_history,
         )
 
-    # --- Dynamic Mode Methods ---
+    # --- Dynamic Mode Adjustment ---
 
     def _handle_mode_apply(self, mode_str: str, ignore_user: bool) -> Optional[str]:
         mode_dict = parse_mode_string(mode_str)
@@ -699,21 +715,28 @@ class ImageSlideshow:
         )
 
     def _recalculate_slideshow(self, ignore_user: bool) -> None:
-        images, weights, cum_weights = apply_mode_and_recalculate(
-            self.original_tree, self.defaults, ignore_user_proportion=ignore_user
+        selection_scope = apply_mode_and_recalculate_scope(
+            self.original_tree,
+            self.defaults,
+            ignore_user_proportion=ignore_user,
         )
-        self.original_image_paths = images[:]
+        self.original_image_paths = selection_scope.image_paths[:]
         self.folder_memory = self._new_scope_memory()
         self.scope_seen_folders = set()
         self.original_selection_weights = SelectionWeights.from_parts(
-            weights,
-            cum_weights,
+            selection_scope.weights,
+            selection_scope.cum_weights,
         )
+        self.original_selection_scope = selection_scope.copy()
         self.original_folder_memory = self.folder_memory.copy()
         self.original_scope_seen_folders = set()
         self.update_slide_show(
-            images,
-            SelectionWeights.from_parts(weights, cum_weights),
+            selection_scope.image_paths,
+            SelectionWeights.from_parts(
+                selection_scope.weights,
+                selection_scope.cum_weights,
+            ),
+            selection_scope=selection_scope,
         )
         mode_dict = self.defaults.mode or {}
         if mode_dict:
@@ -785,7 +808,7 @@ class ImageSlideshow:
         if getattr(self, "auto_advance_running", False):
             self._schedule_next_image()
 
-    # -- Keyboard Hooks ---
+    # --- UI Messaging and User Actions ---
 
     def _confirm_action(self, title: str, message: str) -> bool:
         return bool(self.gui.messagebox(title=title, message=message, type_="yesno"))
@@ -796,63 +819,42 @@ class ImageSlideshow:
     def _show_warning(self, title: str, message: str) -> None:
         self.gui.messagebox(title, message, icon="warning")
 
-    def _write_exif_orientation(self, image_path: str) -> int | None:
-        from PIL import Image
-
-        orientation_tag: int = 0x0112
-        rotation_cw: int = (-self.rotation_angle) % 360
-        if rotation_cw % 90 != 0:
-            logger.error(
-                "EXIF update aborted: rotation %s deg is not a multiple of 90 for %s.",
-                self.rotation_angle,
-                image_path,
-            )
-            return None
-
-        with Image.open(image_path) as img:
-            exif = img.getexif()
-            if exif is None:
-                if hasattr(Image, "Exif"):
-                    exif = Image.Exif()
-                else:
-                    logger.warning(
-                        "EXIF update skipped for %s: Pillow build lacks Exif support.",
-                        image_path,
+    def select_mode(self, event=None) -> None:
+        match event.char.upper():
+            case "C":
+                self.set_provider("random")
+            case "L":
+                self.set_provider("sequential", index=self.current_image_index + 1)
+            case "W":
+                self.set_provider("weighted")
+            case "D":
+                if self.providers.get_current_provider_name() == "controlled_random_weighted":
+                    current_settings = self.providers.get_current_provider_settings()
+                    current_bucket_mode = str(current_settings.get("bucket_mode", "balance_bucket"))
+                    next_bucket_mode = (
+                        "folder_bucket"
+                        if current_bucket_mode == "balance_bucket"
+                        else "balance_bucket"
                     )
-                    return None
-            if not hasattr(exif, "tobytes"):
-                logger.warning(
-                    "EXIF update skipped for %s: Pillow Exif object has no tobytes().",
-                    image_path,
-                )
-                return None
-            current_orientation: int = exif.get(orientation_tag, 1)
-            base_cw: int = ORIENTATION_TO_CW.get(current_orientation, 0)
-            new_cw: int = (base_cw + rotation_cw) % 360
-            new_orientation: int = CW_TO_ORIENTATION.get(new_cw, 1)
-            exif[orientation_tag] = new_orientation
-            exif_bytes = exif.tobytes() if hasattr(exif, "tobytes") else None
-            save_kwargs = {"exif": exif_bytes} if exif_bytes else {}
-            try:
-                img.save(image_path, **save_kwargs)
-            except PermissionError as err:
-                logger.warning(
-                    "EXIF update failed (permission) for %s: %s", image_path, err
-                )
-                self._show_warning(
-                    "Permission Denied",
-                    "Could not save the updated rotation because access was denied.",
-                )
-                return None
-            except OSError as err:
-                logger.warning("EXIF update failed for %s: %s", image_path, err)
-                self._show_warning(
-                    "Save Failed",
-                    "Could not write the updated rotation to this file.",
-                )
-                return None
 
-        return new_orientation
+                    self.set_provider(
+                        "controlled_random_weighted",
+                        gap_min=int(current_settings.get("gap_min", 3)),
+                        repeat_penalty=float(current_settings.get("repeat_penalty", 0.1)),
+                        bucket_mode=next_bucket_mode,
+                    )
+                    self.update_filename_display()
+                else:
+                    self.set_provider(
+                        "controlled_random_weighted",
+                        gap_min=3,
+                    )
+            case "B":
+                self.set_provider(
+                    "burst",
+                    burst_size=5,
+                    index=self.current_image_index,
+                )
 
     def delete_image(self, event=None) -> None:
         if self.current_image_path:
@@ -867,11 +869,19 @@ class ImageSlideshow:
                     self.video_frame.place_forget()
                 try:
                     deleted_path = self.current_image_path
-                    os.remove(deleted_path)
+                    delete_media_file(deleted_path)
                     index = self.image_paths.index(deleted_path)
                     self.image_paths.pop(index)
                     self.selection_weights.remove_at(index)
-                    self.manager.history_manager.remove(deleted_path)
+                    if getattr(self, "selection_scope", None) is not None:
+                        self.selection_scope.remove_at(index)
+                    try:
+                        self.manager.history_manager.remove(deleted_path)
+                    except ValueError:
+                        logger.debug(
+                            "Deleted path was not present in history: %s",
+                            deleted_path,
+                        )
                     if not self.image_paths:
                         self.current_image_path = None
                         self.current_image_index = 0
@@ -884,6 +894,7 @@ class ImageSlideshow:
                     self.update_slide_show(
                         image_paths=self.image_paths,
                         selection_weights=self.selection_weights,
+                        selection_scope=getattr(self, "selection_scope", None),
                         preferred_index=next_index,
                     )
                     self._sync_original_scope_state()
@@ -933,10 +944,15 @@ class ImageSlideshow:
             "Apply the current rotation to this image's EXIF orientation?",
         )
         if not confirm:
-                    return
+            return
         try:
-            new_orientation: int = self._write_exif_orientation(self.current_image_path)
-            if new_orientation is None:
+            outcome = write_exif_orientation(
+                self.current_image_path,
+                self.rotation_angle,
+            )
+            if outcome.warning_title and outcome.warning_message:
+                self._show_warning(outcome.warning_title, outcome.warning_message)
+            if outcome.new_orientation is None:
                 return
         except Exception as exc:
             logger.error(
@@ -951,8 +967,19 @@ class ImageSlideshow:
 
         self.manager.invalidate(self.current_image_path)
         self.rotation_angle = 0
-        self.current_exif_orientation = new_orientation
+        self.current_exif_orientation = outcome.new_orientation
         self.show_image(self.current_image_path, record_history=False)
+
+    def rotate_image(self, event=None) -> None:
+        self.rotation_angle = (self.rotation_angle - 90) % 360
+        self.show_image(self.current_image_path, record_history=False)
+
+    def toggle_mute(self, event=None) -> None:
+        if hasattr(self, "video_player") and self.video_player:
+            current_mute: bool = self.video_player.audio_get_mute()
+            new_mute: bool = not current_mute
+            self.video_player.audio_set_mute(new_mute)
+            self.video_muted = new_mute
 
     def print_tree_to_console(self, event=None) -> None:
         print_tree(self.defaults, self.original_tree.root, max_depth=9999)
@@ -974,12 +1001,18 @@ class ImageSlideshow:
         self.scope_seen_folders.clear()
         self._last_burst_memory_token = None
         self.manager.refresh_provider()
-        self._sync_original_scope_state()
+        self._sync_original_scope_memory()
         logger.debug("Folder selection memory cleared for current scope.")
 
+    def toggle_filename_display(self, event=None) -> None:
+        self.show_filename: bool = not self.show_filename
+        self.update_filename_display()
+
+    # --- Scope Navigation ---
+
     def subfolder_mode_on(self) -> None:
-        match self.navigation_mode:
-            case "folder":
+        match self._navigation_basis():
+            case NavigationBasis.FOLDER:
                 folder: str = os.path.dirname(self.current_image_path)
                 self._record_scope_entry(folder)
                 self.subFolderStack.push(
@@ -990,13 +1023,34 @@ class ImageSlideshow:
                     )
                 )
                 temp_image_paths: list[str] = utils.images_from_path(
-                    os.path.dirname(self.current_image_path),
+                    folder,
                     tree=self.original_tree,
                 )
                 temp_weights: list[int] = [1] * len(temp_image_paths)
-                self.subfolder_mode = True
-            case "branch":
-                node: TreeNode = self.find_node_for_image(self.current_image_path)
+                folder_node = self.original_tree.find_node(
+                    folder,
+                    self.original_tree.path_lookup,
+                )
+                node_key = self._resolve_memory_key_for_scope(folder) or folder
+                node_level = folder_node.level if folder_node is not None else 1
+                ancestor_keys = None
+                if folder_node is not None:
+                    lineage: list[str] = []
+                    node_cursor = folder_node
+                    while node_cursor is not None:
+                        lineage.append(node_cursor.name)
+                        node_cursor = node_cursor.parent
+                    lineage.reverse()
+                    ancestor_keys = tuple(lineage)
+                selection_scope = SelectionScope.single_unit(
+                    node_key=node_key,
+                    image_paths=temp_image_paths,
+                    weights=temp_weights,
+                    node_level=node_level,
+                    ancestor_keys=ancestor_keys,
+                )
+            case NavigationBasis.BRANCH:
+                node = self._current_branch_context_node(self.current_image_path)
                 if not node:
                     logger.debug(
                         "subfolder_mode_on: No valid node found for current image."
@@ -1010,18 +1064,21 @@ class ImageSlideshow:
                         scope_state=self._capture_scope_state(),
                     )
                 )
-                temp_image_paths, temp_weights = (
-                    extract_image_paths_and_weights_from_tree(
-                        tree=self.original_tree, start_node=node
-                    )
+                selection_scope = extract_selection_scope_from_tree(
+                    tree=self.original_tree,
+                    start_node=node,
                 )
-                self.subfolder_mode = True
+        self._set_scope_kind(ScopeKind.SUBFOLDER)
 
         self.folder_memory = self._new_scope_memory()
         self.scope_seen_folders = set()
         self.update_slide_show(
-            image_paths=temp_image_paths,
-            selection_weights=SelectionWeights.from_weights(temp_weights),
+            image_paths=selection_scope.image_paths,
+            selection_weights=SelectionWeights.from_parts(
+                selection_scope.weights,
+                selection_scope.cum_weights,
+            ),
+            selection_scope=selection_scope,
             record_initial_history=True,
         )
 
@@ -1032,40 +1089,12 @@ class ImageSlideshow:
             return
         self.image_paths = scope_entry.image_paths
         self.number_of_images = len(self.image_paths)
-        self.subfolder_mode = False
         self._apply_scope_state(scope_entry.scope_state)
         self.update_slide_show(
             image_paths=self.image_paths,
             selection_weights=self.selection_weights,
             record_initial_history=True,
         )
-
-    def select_mode(self, event=None) -> None:
-        match event.char.upper():
-            case "C":
-                self.set_provider("random")
-            case "L":
-                self.set_provider("sequential", index=self.current_image_index + 1)
-            case "W":
-                self.set_provider("weighted")
-            case "D":
-                self.set_provider(
-                    "controlled_random_weighted",
-                    gap_min=3,
-                )
-            case "B":
-                self.set_provider(
-                    "burst",
-                    burst_size=5,
-                    index=self.current_image_index,
-                )
-
-    def toggle_mute(self, event=None) -> None:
-        if hasattr(self, "video_player") and self.video_player:
-            current_mute: bool = self.video_player.audio_get_mute()
-            new_mute: bool = not current_mute
-            self.video_player.audio_set_mute(new_mute)
-            self.video_muted = new_mute
 
     def toggle_subfolder_mode(self, event=None) -> None:
         if not self.subfolder_mode:
@@ -1075,16 +1104,14 @@ class ImageSlideshow:
         self.show_image(self.current_image_path, record_history=False)
 
     def toggle_navigation_mode(self, event=None) -> None:
-        match self.navigation_mode:
-            case "branch":
+        match self._navigation_basis():
+            case NavigationBasis.BRANCH:
                 self.navigation_node = None
-                self.navigation_mode = "folder"
-            case "folder":
-                self.navigation_node: TreeNode = self.find_node_for_image(
-                    self.current_image_path
-                )
-                if self.navigation_node:
-                    self.navigation_mode = "branch"
+                self.navigation_mode = NavigationBasis.FOLDER.value
+            case NavigationBasis.FOLDER:
+                if self.find_node_for_image(self.current_image_path):
+                    self.navigation_node = None
+                    self.navigation_mode = NavigationBasis.BRANCH.value
                 else:
                     (
                         logger.warning(
@@ -1093,14 +1120,14 @@ class ImageSlideshow:
                         ),
                     )
                     return
-        self.reset_parent_mode()
+        self.reset_parent_mode(preserve_navigation_state=True)
         self.update_filename_display()
 
     # -- Parent Mode Navigation ---
 
     def follow_branch_up(self, event=None) -> None:
         if self.subfolder_mode:
-            self.subfolder_mode = False
+            self._set_scope_kind(ScopeKind.ROOT)
             self.show_image(self.current_image_path, record_history=False)
             return
         self.navigate_up()
@@ -1112,8 +1139,9 @@ class ImageSlideshow:
 
         current_path: str = os.path.dirname(self.current_image_path)
         child_path = None
+        nav_state = self._navigation_state()
 
-        if self.navigation_mode == "folder":
+        if nav_state.is_folder:
             current_entry = self.parentFolderStack.peek()
             if current_entry is None or current_entry.path is None:
                 logger.warning("Cannot navigate up - parent scope stack is empty.")
@@ -1142,10 +1170,8 @@ class ImageSlideshow:
                     )
             else:
                 logger.warning("No valid child directory found.")
-        elif self.navigation_mode == "branch":
-            current_path_node = self.original_tree.find_node(
-                current_path, self.original_tree.path_lookup
-            )
+        elif nav_state.is_branch:
+            current_path_node = self._current_branch_context_node(self.current_image_path)
             path: list = []
             node: TreeNode = current_path_node
             while node and node != self.navigation_node:
@@ -1180,9 +1206,10 @@ class ImageSlideshow:
 
     def navigate_down(self) -> None:
         parent_path = None
+        nav_state = self._navigation_state()
 
-        match (self.navigation_mode, self.parent_mode):
-            case ("folder", False):
+        match (nav_state.basis, nav_state.scope_kind):
+            case (NavigationBasis.FOLDER, ScopeKind.ROOT):
                 current_path: str = os.path.dirname(self.current_image_path)
                 current_path_level: int = utils.level_of(current_path)
                 for i in range(current_path_level - 1, 1, -1):
@@ -1200,7 +1227,7 @@ class ImageSlideshow:
                         scope_state=self._capture_scope_state(),
                     )
                 )
-            case ("folder", True):
+            case (NavigationBasis.FOLDER, ScopeKind.PARENT):
                 previous_entry = self.parentFolderStack.peek()
                 if previous_entry is None or previous_entry.path is None:
                     logger.warning(
@@ -1223,18 +1250,17 @@ class ImageSlideshow:
                         scope_state=self._capture_scope_state(),
                     )
                 )
-            case ("branch", False):
-                self.navigation_node = self.find_node_for_image(
-                    self.current_image_path
-                ).parent
+            case (NavigationBasis.BRANCH, ScopeKind.ROOT):
+                current_node = self._current_branch_context_node(self.current_image_path)
+                self.navigation_node = current_node.parent if current_node else None
                 if self.navigation_node:
                     self._record_scope_entry(self.navigation_node.name)
-            case ("branch", True):
+            case (NavigationBasis.BRANCH, ScopeKind.PARENT):
                 self.navigation_node = self.navigation_node.parent
                 if self.navigation_node:
                     self._record_scope_entry(self.navigation_node.name)
 
-        self.parent_mode = True
+        self._set_scope_kind(ScopeKind.PARENT)
         self.folder_memory = self._new_scope_memory()
         self.scope_seen_folders = set()
         self.traverse_directory(
@@ -1254,21 +1280,26 @@ class ImageSlideshow:
         self._apply_scope_state(scope_entry.scope_state)
         self.update_slide_show(scope_entry.image_paths, self.selection_weights)
 
-    def reset_parent_mode(self, event=None) -> None:
-        self.parent_mode = False
-        self.subfolder_mode = False
+    def reset_parent_mode(self, event=None, preserve_navigation_state: bool = False) -> None:
         self.parentFolderStack.clear()
         self.subFolderStack.clear()
         self.image_paths = self.original_image_paths[:]
         self.selection_weights = self.original_selection_weights.copy()
+        if getattr(self, "original_selection_scope", None) is not None:
+            self.selection_scope = self.original_selection_scope.copy()
         self.folder_memory = self.original_folder_memory.copy()
         self.scope_seen_folders = set(self.original_scope_seen_folders)
         self._last_burst_memory_token = None
+        if preserve_navigation_state:
+            self._set_scope_kind(ScopeKind.ROOT)
+            self._sync_original_navigation_state()
+        else:
+            self._apply_navigation_state(self.original_navigation_state)
         self.update_slide_show(self.image_paths, self.selection_weights)
         self.show_image(self.image_paths[self.current_image_index], record_history=False)
         logger.debug("Parent mode reset and modes updated.")
 
-    # --- Filename and Mode Display Methods ---
+    # --- Status-Bar Display ---
 
     def _format_rotation_display(self) -> str:
         exif_angle: int = ORIENTATION_TO_CW.get(self.current_exif_orientation, 0)
@@ -1280,9 +1311,83 @@ class ImageSlideshow:
             return f"{exif_angle}° [EXIF]"
         return "0°"
 
-    def toggle_filename_display(self, event=None) -> None:
-        self.show_filename: bool = not self.show_filename
-        self.update_filename_display()
+    def _status_label_path(self) -> str:
+        label_path = self.current_image_path
+        if self._navigation_state().is_branch:
+            branch_node = self._current_branch_context_node(self.current_image_path)
+            if branch_node:
+                label_path = os.path.join(
+                    branch_node.name,
+                    os.path.basename(self.current_image_path),
+                )
+        return label_path
+
+    def _status_fixed_path_and_colour(self) -> tuple[str | None, str | None]:
+        fixed_path = None
+        fixed_colour = None
+        nav_state = self._navigation_state()
+
+        match (nav_state.basis, nav_state.scope_kind):
+            case (NavigationBasis.FOLDER, ScopeKind.PARENT):
+                parent_entry = self.parentFolderStack.peek()
+                fixed_path = parent_entry.path if parent_entry else None
+                fixed_colour = "gold"
+            case (NavigationBasis.FOLDER, ScopeKind.SUBFOLDER):
+                subfolder_entry = self.subFolderStack.peek()
+                fixed_path = subfolder_entry.path if subfolder_entry else None
+                fixed_colour = "tomato"
+            case (NavigationBasis.BRANCH, ScopeKind.PARENT):
+                fixed_path = nav_state.branch_anchor
+                fixed_colour = "lightgreen"
+            case (NavigationBasis.BRANCH, ScopeKind.SUBFOLDER):
+                subfolder_entry = self.subFolderStack.peek()
+                if subfolder_entry is None or subfolder_entry.path is None:
+                    fixed_path = None
+                else:
+                    fixed_path = self.original_tree.find_node(
+                        subfolder_entry.path, self.original_tree.node_lookup
+                    ).name
+                fixed_colour = "tomato"
+
+        return fixed_path, fixed_colour
+
+    def _status_context(self) -> StatusBarContext:
+        fixed_path, fixed_colour = self._status_fixed_path_and_colour()
+        provider_status_payload = (
+            self.current_provider_status_payload
+            or self.providers.get_current_provider_status_payload(
+                image_paths=self.image_paths,
+                weights=self.selection_weights.weights,
+                selection_scope=getattr(self, "selection_scope", None),
+                current_image_path=self.current_image_path,
+                folder_memory=self.folder_memory,
+                tree=self.original_tree,
+            )
+        )
+        return StatusBarContext(
+            label_path=self._status_label_path(),
+            fixed_path=fixed_path,
+            fixed_colour=fixed_colour,
+            rotation_text=self._format_rotation_display(),
+            zoom_percent=(
+                self.zoompan.get_zoom_percent()
+                if hasattr(self, "zoompan") and self.zoompan
+                else 100
+            ),
+            current_image_path=self.current_image_path,
+            image_paths=self.image_paths,
+            current_image_index=self.current_image_index,
+            provider_enabled=bool(self.mode),
+            provider_label=self.providers.get_current_provider_label(),
+            provider_status_text=self.providers.get_current_provider_status(
+                display_mode=self.providers.get_current_provider_display_mode(),
+                status_payload=provider_status_payload,
+            ),
+            subfolder_mode=self.subfolder_mode,
+            parent_mode=self.parent_mode,
+            auto_advance_running=bool(getattr(self, "auto_advance_running", False)),
+            auto_advance_interval=getattr(self, "auto_advance_interval", None),
+        )
 
     def update_filename_display(self) -> None:
         if self.show_filename:
@@ -1291,106 +1396,27 @@ class ImageSlideshow:
                 self.mode_label.place_forget()
                 self.root.update_idletasks()
                 return
-            fixed_colour = None
-            fixed_path = None
+
+            status_context = self._status_context()
+            filename_display = build_filename_display(status_context)
+            mode_text = build_mode_text(status_context)
+
             self.filename_label.config(state=tk.NORMAL)
             self.filename_label.delete("1.0", tk.END)
-            label_path: str = self.current_image_path
-            if self.navigation_mode == "branch":
-                label_path = os.path.join(
-                    self.find_node_for_image(self.current_image_path).name,
-                    os.path.basename(self.current_image_path),
-                )
+            for segment in filename_display.segments:
+                self.filename_label.insert(tk.END, segment.text, segment.tag)
 
-            match (self.navigation_mode, self.parent_mode, self.subfolder_mode):
-                case ("folder", True, False):
-                    parent_entry = self.parentFolderStack.peek()
-                    fixed_path = parent_entry.path if parent_entry else None
-                    fixed_colour = "gold"
-                case ("folder", _, True):
-                    subfolder_entry = self.subFolderStack.peek()
-                    fixed_path = subfolder_entry.path if subfolder_entry else None
-                    fixed_colour = "tomato"
-                case ("branch", True, False):
-                    fixed_path = self.navigation_node.name
-                    fixed_colour = "lightgreen"
-                case ("branch", _, True):
-                    subfolder_entry = self.subFolderStack.peek()
-                    if subfolder_entry is None or subfolder_entry.path is None:
-                        fixed_path = None
-                    else:
-                        fixed_path = self.original_tree.find_node(
-                            subfolder_entry.path, self.original_tree.node_lookup
-                        ).name
-                    fixed_colour = "tomato"
-
-            if fixed_colour and fixed_path:
-                if label_path.startswith(fixed_path):
-                    fixed_portion: str = fixed_path
-                    remaining_portion: str = label_path[len(fixed_path) :]
-                else:
-                    fixed_portion = ""
-                    remaining_portion = label_path
-
-                self.filename_label.insert(tk.END, fixed_portion, "fixed")
-                self.filename_label.insert(tk.END, remaining_portion, "normal")
-            else:
-                self.filename_label.insert(tk.END, label_path, "normal")
-                fixed_colour = "white"
-
-            rotation_text: str = self._format_rotation_display()
-            zoom_percent: int = (
-                self.zoompan.get_zoom_percent()
-                if hasattr(self, "zoompan") and self.zoompan
-                else 100
+            self.filename_label.tag_configure(
+                "fixed", foreground=filename_display.fixed_colour
             )
-            meta_text: str = f" ({rotation_text}, {zoom_percent}%)"
-            self.filename_label.insert(tk.END, meta_text, "meta")
-
-            self.filename_label.tag_configure("fixed", foreground=fixed_colour)
             self.filename_label.tag_configure("normal", foreground="white")
             self.filename_label.tag_configure("meta", foreground="white")
             self.filename_label.place(x=0, y=0)
-            full_label_text: str = self.filename_label.get("1.0", "end-1c")
-            self.filename_label.config(
-                height=1, width=len(full_label_text) + 10, bg="black"
-            )
+            self.filename_label.config(height=1, width=filename_display.width, bg="black")
             self.filename_label.config(state=tk.DISABLED)
 
-            provider_label: str = self._provider_display_name() if self.mode else "-"
-            scope_parts: list[str] = []
-            if self.subfolder_mode:
-                scope_parts.append("SUB")
-            if self.parent_mode:
-                scope_parts.append("PAR")
-
-            count = len(self.image_paths)
-            if self.current_image_path in self.image_paths:
-                idx = self.image_paths.index(self.current_image_path) + 1
-            else:
-                idx = max(1, min(self.current_image_index + 1, count))
-            count_text = f"({idx}/{count})"
-            crw_text = self._crw_status_text()
-
-            mode_parts = [count_text]
-            if crw_text:
-                mode_parts.append(crw_text)
-            if scope_parts:
-                mode_parts.append(" ".join(scope_parts))
-            mode_parts.append(provider_label)
-            mode_text = " ".join(mode_parts)
-
-            display_text: str = mode_text
-            if (
-                hasattr(self, "auto_advance_running")
-                and self.auto_advance_running
-                and hasattr(self, "auto_advance_interval")
-                and self.auto_advance_interval > 0
-            ):
-                display_text = f"AUTO ({self.auto_advance_interval}ms)   {mode_text}"
-
             self.mode_label.config(
-                text=display_text,
+                text=mode_text,
                 fg="white",
             )
             self.mode_label.place(x=self.root.winfo_screenwidth(), y=0, anchor="ne")
@@ -1398,12 +1424,6 @@ class ImageSlideshow:
             self.filename_label.place_forget()
             self.mode_label.place_forget()
         self.root.update_idletasks()
-
-    # --- Image Manipulation Methods ---
-
-    def rotate_image(self, event=None) -> None:
-        self.rotation_angle = (self.rotation_angle - 90) % 360
-        self.show_image(self.current_image_path, record_history=False)
 
     # --- Exit Method ---
 

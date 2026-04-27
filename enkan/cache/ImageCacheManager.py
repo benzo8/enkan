@@ -29,6 +29,7 @@ class ImageCacheManager:
         self.image_loader = ImageLoaders()
         self.current_image_index = current_image_index
         self.background_preload = background_preload
+        self.current_media_metadata = None
 
         self._lock = threading.RLock()
         self._queue_state = threading.Condition(self._lock)
@@ -52,6 +53,9 @@ class ImageCacheManager:
         with self._provider_lock:
             return next(self.image_provider)
 
+    def _provider_pick_meta(self) -> dict[str, object] | None:
+        return getattr(self.image_provider, "last_pick_meta", None)
+
     def _preload_refill(self) -> None:
         """Fill preload queue fully."""
         try:
@@ -67,6 +71,7 @@ class ImageCacheManager:
 
                 if image_path is None:
                     break
+                provider_meta = self._provider_pick_meta()
 
                 with self._queue_state:
                     if image_path in self.preload_queue or image_path == self._inflight_path:
@@ -82,7 +87,7 @@ class ImageCacheManager:
                         logger.debug("Skipping invalid preload candidate: %s", image_path)
                         self._queue_state.notify_all()
                         continue
-                    self.preload_queue.push(image_path, media)
+                    self.preload_queue.push(image_path, media, meta=provider_meta)
                     self._queue_state.notify_all()
                     logger.debug("Preloaded: %s", image_path)
         finally:
@@ -132,7 +137,17 @@ class ImageCacheManager:
                 self.lru_cache.put(image_path, media)
             return media
 
-        image_obj: Image.Image | None = self.image_loader.load_image(image_path)
+        try:
+            image_obj: Image.Image | None = self.image_loader.load_image(image_path)
+        except FileNotFoundError:
+            logger.info("Image path missing during load: %s", image_path)
+            return None
+        except PermissionError:
+            logger.info("Image path unavailable during load: %s", image_path)
+            return None
+        except OSError as exc:
+            logger.info("Image load OS error for %s: %s", image_path, exc)
+            return None
         if image_obj is not None:
             with self._queue_state:
                 if image_path in self.lru_cache:
@@ -175,6 +190,8 @@ class ImageCacheManager:
         """
         media_obj: Image.Image | CachedVideoData | None = None
         source: str = None
+        provider_meta: dict[str, object] | None = None
+        self.current_media_metadata = None
 
         # Step 1: Pop from preload if no explicit path is given
         if image_path is None:
@@ -186,13 +203,16 @@ class ImageCacheManager:
                 if popped:
                     image_path = popped.path
                     media_obj = popped.media
+                    provider_meta = popped.meta
                     source = "PreloadQueue"
                     break
                 try:
                     image_path = self._provider_next()
                 except StopIteration:
                     logger.debug("No image provided (empty provider).")
+                    self.current_media_metadata = None
                     return None, None
+                provider_meta = self._provider_pick_meta()
                 media = self._load_media(image_path)
                 if media is None:
                     logger.debug("Skipping invalid media from provider: %s", image_path)
@@ -207,8 +227,10 @@ class ImageCacheManager:
             media = self._load_media(image_path)
             if media is None:
                 logger.debug("Requested media is no longer valid: %s", image_path)
+                self.current_media_metadata = None
                 return None, None
             media_obj = media
+            provider_meta = None
             source = "LRUCache" if cached else "Disk"
 
         # Step 2: Conditionally update history
@@ -222,6 +244,7 @@ class ImageCacheManager:
             self._preload_refill()
 
         # Step 4: Debug output
+        self.current_media_metadata = provider_meta
         logger.debug("Loaded: %s (from %s)", image_path, source)
 
         return image_path, media_obj

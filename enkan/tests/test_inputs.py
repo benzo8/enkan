@@ -10,6 +10,8 @@ import pytest
 from enkan.utils.Defaults import Defaults, resolve_mode
 from enkan.utils.Filters import Filters
 from enkan.tree.Tree import Tree
+from enkan.tree.TreeNode import TreeNode
+from enkan.tree.Grafting import Grafting
 from enkan.tree.tree_logic import apply_mode_and_recalculate
 from enkan.tree.tree_logic import calculate_weights
 from enkan.tree.tree_logic import extract_image_paths_and_weights_from_tree
@@ -304,7 +306,7 @@ def test_txt_with_nested_tree():
     assert os.path.normpath(dir1) in merged_tree.path_lookup
 
 
-def test_outdated_tree_falls_back_to_txt():
+def test_outdated_tree_loads_when_repair_succeeds():
     tmp = Path(_ensure_case_dir("outdated_tree_fallback"))
     defaults = _make_defaults(mode_str="b1")
     filters = Filters()
@@ -323,8 +325,262 @@ def test_outdated_tree_falls_back_to_txt():
     builder = MultiSourceBuilder(defaults, filters)
     merged_tree, warnings = builder.build([str(tree_path)])
 
-    assert warnings  # should warn about stale tree
+    assert warnings == []
     assert os.path.normpath(dir1) in merged_tree.path_lookup
+
+
+def test_outdated_tree_repairs_missing_indexes_without_txt_fallback():
+    tmp = Path(_ensure_case_dir("outdated_tree_repair"))
+    defaults = _make_defaults(mode_str="b1")
+    filters = Filters()
+
+    dir1 = _create_dir_with_images(tmp, "base")
+    base_tree = _make_tree(defaults, filters, dir1, ["a.jpg"])
+    base_tree.built_mode = defaults.mode
+    delattr(base_tree, "path_lookup")
+    delattr(base_tree, "node_lookup")
+    delattr(base_tree, "virtual_image_lookup")
+
+    tree_path = tmp / "base.tree"
+    _write_tree_with_pickle_version(base_tree, str(tree_path), version=Tree.PICKLE_VERSION - 1)
+
+    builder = MultiSourceBuilder(defaults, filters)
+    loaded_tree, warnings = builder.build([str(tree_path)])
+
+    assert warnings == []
+    assert os.path.normpath(dir1) in loaded_tree.path_lookup
+    assert loaded_tree.node_lookup
+
+
+def test_current_tree_repairs_missing_indexes_on_load():
+    tmp = Path(_ensure_case_dir("current_tree_repair"))
+    defaults = _make_defaults(mode_str="b1")
+    filters = Filters()
+
+    dir1 = _create_dir_with_images(tmp, "base")
+    base_tree = _make_tree(defaults, filters, dir1, ["a.jpg"])
+    base_tree.built_mode = defaults.mode
+    delattr(base_tree, "path_lookup")
+    delattr(base_tree, "node_lookup")
+    delattr(base_tree, "virtual_image_lookup")
+
+    tree_path = tmp / "base.tree"
+    _write_tree_with_pickle_version(base_tree, str(tree_path), version=Tree.PICKLE_VERSION)
+
+    builder = MultiSourceBuilder(defaults, filters)
+    loaded_tree, warnings = builder.build([str(tree_path)])
+
+    assert warnings == []
+    assert os.path.normpath(dir1) in loaded_tree.path_lookup
+    assert loaded_tree.node_lookup
+
+
+def test_outdated_tree_falls_back_to_txt_when_repair_fails():
+    tmp = Path(_ensure_case_dir("outdated_tree_repair_failure"))
+    defaults = _make_defaults(mode_str="b1")
+    filters = Filters()
+
+    dir1 = _create_dir_with_images(tmp, "base")
+    base_tree = _make_tree(defaults, filters, dir1, ["a.jpg"])
+    base_tree.built_mode = defaults.mode
+    base_tree.root = None
+
+    tree_path = tmp / "base.tree"
+    _write_tree_with_pickle_version(base_tree, str(tree_path), version=Tree.PICKLE_VERSION - 1)
+
+    txt_path = tmp / "base.txt"
+    txt_path.write_text(f"{dir1}\n", encoding="utf-8")
+
+    builder = MultiSourceBuilder(defaults, filters)
+    merged_tree, warnings = builder.build([str(tree_path)])
+
+    assert warnings
+    assert os.path.normpath(dir1) in merged_tree.path_lookup
+
+
+def test_resolve_container_node_for_image_prefers_image_bearing_node_on_ambiguous_path():
+    defaults = _make_defaults(mode_str="b1")
+    filters = Filters()
+    tree = Tree(defaults, filters)
+
+    folder_path = os.path.normpath(r"C:\images\retrobride")
+    image_path = os.path.normpath(r"C:\images\retrobride\picked.jpg")
+    tree.ensure_parent_exists(r"root\wedding_1\wedding_2")
+    tree.ensure_parent_exists(r"root\imagesftp\dresses")
+
+    image_bearing = TreeNode(
+        name=r"root\wedding_1\wedding_2\retrobride",
+        path=folder_path,
+        images=[image_path],
+        parent=None,
+    )
+    structural_shadow = TreeNode(
+        name=r"root\imagesftp\dresses\retrobride",
+        path=folder_path,
+        images=[],
+        parent=None,
+    )
+    tree.add_node(image_bearing, r"root\wedding_1\wedding_2")
+    tree.add_node(structural_shadow, r"root\imagesftp\dresses")
+    tree.build_runtime_resolution_indexes()
+
+    container = tree.resolve_container_node_for_image(image_path)
+
+    assert container is image_bearing
+
+
+def test_tree_state_excludes_runtime_container_path_overrides():
+    defaults = _make_defaults(mode_str="b1")
+    filters = Filters()
+    tree = Tree(defaults, filters)
+
+    folder_path = os.path.normpath(r"C:\images\retrobride")
+    image_path = os.path.normpath(r"C:\images\retrobride\picked.jpg")
+    tree.create_node(
+        folder_path,
+        {
+            "weight_modifier": 100,
+            "is_percentage": True,
+            "proportion": 100,
+            "mode_modifier": None,
+            "images": [image_path],
+        },
+    )
+
+    tree.build_runtime_resolution_indexes()
+    assert tree.resolve_container_node_for_image(image_path) is tree.path_lookup[folder_path]
+
+    state = tree.__getstate__()
+
+    assert "_container_path_overrides" not in state
+
+
+def test_resolve_node_for_image_uses_container_override_for_non_specific_images():
+    defaults = _make_defaults(mode_str="b1")
+    filters = Filters()
+    tree = Tree(defaults, filters)
+
+    folder_path = os.path.normpath(r"C:\images\retrobride")
+    image_path = os.path.normpath(r"C:\images\retrobride\r1.jpg")
+    tree.ensure_parent_exists(r"root\wedding_1\wedding_2")
+    tree.ensure_parent_exists(r"root\imagesftp\dresses")
+
+    image_bearing = TreeNode(
+        name=r"root\wedding_1\wedding_2\retrobride",
+        path=folder_path,
+        images=[image_path],
+        parent=None,
+    )
+    structural_shadow = TreeNode(
+        name=r"root\imagesftp\dresses\retrobride",
+        path=folder_path,
+        images=[],
+        parent=None,
+    )
+    tree.add_node(image_bearing, r"root\wedding_1\wedding_2")
+    tree.add_node(structural_shadow, r"root\imagesftp\dresses")
+    tree.build_runtime_resolution_indexes()
+
+    assert tree.resolve_node_for_image(image_path) is image_bearing
+
+
+def test_grafting_prunes_stale_path_lookup_entries_for_specific_image_shadows():
+    defaults = _make_defaults(mode_str="b1")
+    filters = Filters()
+    tree = Tree(defaults, filters)
+
+    folder_path = os.path.normpath(r"C:\images\retrobride")
+    generic_image = os.path.join(folder_path, "generic.jpg")
+    specific_image = os.path.join(folder_path, "picked.jpg")
+    specific_node_path = os.path.splitext(specific_image)[0]
+
+    tree.ensure_parent_exists(r"root\wedding_1\wedding_2")
+    visible_branch = TreeNode(
+        name=r"root\wedding_1\wedding_2\retrobride",
+        path=folder_path,
+        images=[generic_image],
+        parent=None,
+    )
+    tree.add_node(visible_branch, r"root\wedding_1\wedding_2")
+
+    tree.create_node(
+        specific_node_path,
+        {
+            "weight_modifier": 150,
+            "is_percentage": False,
+            "proportion": None,
+            "mode_modifier": None,
+            "images": [specific_image, specific_image],
+        },
+    )
+    tree.virtual_image_lookup[specific_image] = tree.path_lookup[specific_node_path]
+    Grafting(tree).handle_grafting(specific_node_path, 5, "picture")
+    tree.build_runtime_resolution_indexes()
+
+    assert r"root\images\retrobride" not in tree.node_lookup
+    assert tree.find_node(folder_path, tree.path_lookup) is visible_branch
+    assert tree.resolve_container_node_for_image(generic_image) is visible_branch
+
+
+def test_tree_merger_keeps_virtual_image_lookup_specific_only():
+    defaults = _make_defaults(mode_str="b1")
+    filters = Filters()
+    base_tree = Tree(defaults, filters)
+    incoming_tree = Tree(defaults, filters)
+
+    folder_path = os.path.normpath(r"C:\images\retrobride")
+    image_path = os.path.normpath(r"C:\images\retrobride\picked.jpg")
+    virtual_path = os.path.splitext(image_path)[0]
+
+    base_tree.create_node(
+        folder_path,
+        {
+            "weight_modifier": 100,
+            "is_percentage": True,
+            "proportion": 100,
+            "mode_modifier": None,
+            "images": [image_path],
+        },
+    )
+    incoming_tree.create_node(
+        virtual_path,
+        {
+            "weight_modifier": 500,
+            "is_percentage": True,
+            "proportion": None,
+            "mode_modifier": None,
+            "images": [image_path, image_path],
+        },
+    )
+    incoming_tree.virtual_image_lookup[image_path] = incoming_tree.path_lookup[virtual_path]
+
+    merger = TreeMerger(target_lowest_rung=None)
+    result = merger.merge(
+        [
+            LoadedSource(
+                source_path="base.tree",
+                kind=SourceKind.TREE,
+                order_index=0,
+                tree=base_tree,
+                mode=None,
+                mode_string=None,
+                lowest_rung=None,
+                warnings=[],
+            ),
+            LoadedSource(
+                source_path="incoming.tree",
+                kind=SourceKind.TREE,
+                order_index=1,
+                tree=incoming_tree,
+                mode=None,
+                mode_string=None,
+                lowest_rung=None,
+                warnings=[],
+            ),
+        ]
+    )
+
+    assert result.tree.virtual_image_lookup[image_path].path == virtual_path
 
 
 def test_group_aware_grafting_via_msb():
