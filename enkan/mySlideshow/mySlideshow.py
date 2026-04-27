@@ -843,6 +843,7 @@ class ImageSlideshow:
                         repeat_penalty=float(current_settings.get("repeat_penalty", 0.1)),
                         bucket_mode=next_bucket_mode,
                     )
+                    self.update_filename_display()
                 else:
                     self.set_provider(
                         "controlled_random_weighted",

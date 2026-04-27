@@ -100,6 +100,8 @@ def test_select_mode_toggles_crw_bucket_mode_when_active():
     slideshow.current_image_index = 4
     provider_calls: list[tuple[str, dict[str, object]]] = []
     slideshow.set_provider = lambda name, **kwargs: provider_calls.append((name, kwargs))
+    display_updates: list[str] = []
+    slideshow.update_filename_display = lambda: display_updates.append("updated")
     slideshow.providers = SimpleNamespace(
         get_current_provider_name=lambda: "controlled_random_weighted",
         get_current_provider_settings=lambda: {
@@ -121,6 +123,7 @@ def test_select_mode_toggles_crw_bucket_mode_when_active():
             },
         )
     ]
+    assert display_updates == ["updated"]
 
 
 def test_navigation_state_prefers_subfolder_scope_over_parent_flag():
