@@ -4,6 +4,15 @@ This file summarizes user-facing and project-shaping changes across the practica
 
 It is intentionally concise. Detailed engineering-level change history remains in Git commit history.
 
+## 2.5.0
+
+- Reworked `controlled_random_weighted` (`CRW`) around logical image-bearing tree nodes and balanced-branch buckets, making provider activation fast on very large shows while preserving tree-derived weights.
+- Added runtime provider metadata and selection scopes so cache preloading, CRW memory, and status overlays stay aligned with the media actually shown.
+- Improved slideshow advance responsiveness by avoiding full root-scope snapshot copies on every weighted image advance.
+- Preserved Branch/Folder navigation correctly when leaving Parent Mode after changing navigation basis.
+- Improved stale `.tree` handling by repairing runtime indexes in memory before falling back to rebuilding from source files.
+- Continued the 2.5 engineering refactor by extracting media file operations, status-bar formatting, explicit navigation types, and scope state helpers out of the slideshow monolith.
+
 ## 2.5.0-rc2
 
 - Reworked `controlled_random_weighted` (`CRW`) to build its runtime index from logical image-bearing tree nodes instead of scanning the flattened media list when the provider is activated.
