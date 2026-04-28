@@ -4,6 +4,12 @@ This file summarizes user-facing and project-shaping changes across the practica
 
 It is intentionally concise. Detailed engineering-level change history remains in Git commit history.
 
+## 2.5.1
+
+- Fixed VLC hanging the UI during video transitions: teardown now runs on a background thread, rapid navigation requests are debounced, and a new `VideoPlaybackController` module owns the full VLC lifecycle.
+- Fixed `WGT` (and any provider with repeated picks) showing a near-uniform distribution instead of the configured weights: the preload queue was silently dropping duplicate path picks, dragging high-weight single items back toward 50/50.
+- Fixed a trailing-slash directory input (e.g. `I:\folder\`) creating a spurious self-child node, adding an unwanted extra level to the tree.
+
 ## 2.5.0
 
 - Reworked `controlled_random_weighted` (`CRW`) around logical image-bearing tree nodes and balanced-branch buckets, making provider activation fast on very large shows while preserving tree-derived weights.

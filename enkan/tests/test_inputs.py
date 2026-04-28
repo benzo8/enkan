@@ -141,6 +141,25 @@ def test_multisource_txt_txt_merges_directories():
     assert len(images) == 2
 
 
+def test_txt_directory_with_trailing_slash_does_not_create_self_child_node():
+    tmp = Path(_ensure_case_dir("txt_trailing_slash"))
+    source_dir = _create_dir_with_images(str(tmp), "scarlett", count=2)
+    txt = tmp / "input.txt"
+    txt.write_text(f"{source_dir}{os.path.sep}\n", encoding="utf-8")
+
+    defaults = _make_defaults(mode_str="b1")
+    filters = Filters()
+    builder = MultiSourceBuilder(defaults, filters)
+
+    tree, warnings = builder.build([str(txt)])
+
+    assert warnings == []
+    assert tree is not None
+    node = tree.path_lookup[os.path.normpath(source_dir)]
+    assert node.images
+    assert all(child.name != node.name for child in node.children)
+
+
 def test_multisource_tree_and_txt_merge():
     tmp = Path(_ensure_case_dir("tree_txt"))
 

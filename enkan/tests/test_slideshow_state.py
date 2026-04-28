@@ -1,11 +1,14 @@
 from types import SimpleNamespace
+import logging
 
 from PIL import Image
 
+from enkan.cache.CachedVideoData import CachedVideoData
 from enkan.mySlideshow.MediaFileOps import ExifWriteResult
 from enkan.mySlideshow.NavigationTypes import NavigationBasis, NavigationState, ScopeKind
 from enkan.mySlideshow.mySlideshow import ImageSlideshow
 from enkan.mySlideshow.ScopeStack import ScopeStack
+from enkan.mySlideshow.VideoPlaybackController import VideoPlaybackController
 from enkan.tree.selection_scope import SelectionScope
 
 
@@ -694,3 +697,163 @@ def test_show_image_displays_before_recording_memory():
     slideshow.show_image()
 
     assert order == ["display", "filename-raise", "mode-raise", "status", "memory"]
+
+
+def test_show_image_debounces_rapid_video_start_requests(monkeypatch):
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.image_paths = ["videos\\one.mp4", "videos\\two.mp4"]
+    slideshow.current_image_index = 0
+    slideshow.current_image_path = None
+    slideshow.current_provider_status_payload = None
+    slideshow.current_exif_orientation = 1
+    slideshow.rotation_angle = 0
+    slideshow.video_muted = False
+    slideshow.screen_width = 100
+    slideshow.screen_height = 100
+    slideshow.selection_weights = SimpleNamespace(weights=[1.0, 1.0])
+    slideshow.folder_memory = SimpleNamespace()
+    slideshow.original_tree = None
+    slideshow.providers = SimpleNamespace(
+        get_current_provider_name=lambda: "weighted",
+        get_current_provider_display_mode=lambda: "off",
+    )
+    slideshow.zoompan = SimpleNamespace(orig_image=None)
+    slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
+    slideshow.filename_label = SimpleNamespace(tkraise=lambda: None)
+    slideshow.mode_label = SimpleNamespace(tkraise=lambda: None)
+    slideshow.update_filename_display = lambda: None
+    slideshow._record_memory_for_view = lambda image_path, record_history, provider_pick_meta=None: None
+
+    scheduled = {}
+    cancelled: list[str] = []
+    after_counter = {"value": 0}
+
+    def after(delay, callback):
+        after_counter["value"] += 1
+        ident = f"after-{after_counter['value']}"
+        scheduled[ident] = callback
+        return ident
+
+    def after_cancel(ident):
+        cancelled.append(ident)
+        scheduled.pop(ident, None)
+
+    slideshow.root = SimpleNamespace(after=after, after_cancel=after_cancel)
+    slideshow.video_controller = VideoPlaybackController(
+        root=slideshow.root,
+        screen_width=100,
+        screen_height=100,
+        logger=logging.getLogger("test"),
+        debounce_ms=150,
+    )
+
+    payloads = {
+        "videos\\one.mp4": CachedVideoData(path="videos\\one.mp4", data=b"one"),
+        "videos\\two.mp4": CachedVideoData(path="videos\\two.mp4", data=b"two"),
+    }
+    requested_paths: list[str] = []
+    slideshow.manager = SimpleNamespace(
+        current_media_metadata=None,
+        get_next=lambda image_path=None, record_history=True: (
+            image_path,
+            payloads[image_path],
+        ),
+    )
+
+    monkeypatch.setattr("enkan.mySlideshow.mySlideshow.utils.is_videofile", lambda path: True)
+
+    def fake_start_video_playback(request_id, image_path, media_payload, muted, on_video_started=None):
+        requested_paths.append(image_path)
+
+    slideshow.video_controller._start_video_playback = fake_start_video_playback
+
+    slideshow.show_image("videos\\one.mp4")
+    slideshow.show_image("videos\\two.mp4")
+
+    assert cancelled == ["after-1"]
+    assert list(scheduled) == ["after-2"]
+
+    scheduled["after-2"]()
+
+    assert requested_paths == ["videos\\two.mp4"]
+
+
+def test_release_video_resources_offloads_cleanup_to_background_thread(monkeypatch):
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.root = SimpleNamespace(after_cancel=lambda _: None)
+    slideshow.video_controller = VideoPlaybackController(
+        root=slideshow.root,
+        screen_width=100,
+        screen_height=100,
+        logger=logging.getLogger("test"),
+        debounce_ms=150,
+    )
+
+    events: list[str] = []
+
+    class _Player:
+        def stop(self):
+            events.append("stop")
+
+        def release(self):
+            events.append("player-release")
+
+    class _Media:
+        def release(self):
+            events.append("media-release")
+
+    started_targets: list[tuple[object, tuple]] = []
+
+    class _FakeThread:
+        def __init__(self, target, args=(), daemon=None):
+            self.target = target
+            self.args = args
+
+        def start(self):
+            started_targets.append((self.target, self.args))
+
+    monkeypatch.setattr(
+        "enkan.mySlideshow.VideoPlaybackController.threading.Thread",
+        _FakeThread,
+    )
+
+    slideshow.video_controller.video_player = _Player()
+    slideshow.video_controller.current_vlc_media = _Media()
+    slideshow.video_controller.current_video_payload = object()
+
+    slideshow._release_video_resources(async_cleanup=True)
+
+    assert slideshow.video_controller.video_player is None
+    assert slideshow.video_controller.current_vlc_media is None
+    assert slideshow.video_controller.current_video_payload is None
+    assert events == []
+    assert len(started_targets) == 1
+
+    cleanup_target, cleanup_args = started_targets[0]
+    cleanup_target(*cleanup_args)
+
+    assert events == ["stop", "player-release", "media-release"]
+
+
+def test_start_video_playback_defers_while_cleanup_active():
+    controller = VideoPlaybackController(
+        root=SimpleNamespace(after=lambda *_: None),
+        screen_width=100,
+        screen_height=100,
+        logger=logging.getLogger("test"),
+        debounce_ms=150,
+    )
+    controller._video_start_request_id = 2
+    controller._pending_video_start_id = None
+    controller._video_cleanup_done.clear()
+
+    scheduled: list[tuple[int, object]] = []
+    controller.root = SimpleNamespace(
+        after=lambda delay, callback: scheduled.append((delay, callback)) or "after-1"
+    )
+
+    controller._start_video_playback(2, "videos\\one.mp4", None, False, None)
+
+    assert controller._pending_video_start_id == "after-1"
+    assert len(scheduled) == 1
+    assert scheduled[0][0] == 30
