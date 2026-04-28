@@ -35,7 +35,6 @@ class ImageCacheManager:
         self._queue_state = threading.Condition(self._lock)
         self._refill_thread = None
         self._refill_active = False
-        self._inflight_path = None
         self._provider_lock = threading.Lock()
 
         # Initial preload (async if background=True)
@@ -73,16 +72,9 @@ class ImageCacheManager:
                     break
                 provider_meta = self._provider_pick_meta()
 
-                with self._queue_state:
-                    if image_path in self.preload_queue or image_path == self._inflight_path:
-                        continue
-                    self._inflight_path = image_path
-
                 media = self._load_media(image_path)
 
                 with self._queue_state:
-                    if self._inflight_path == image_path:
-                        self._inflight_path = None
                     if media is None:
                         logger.debug("Skipping invalid preload candidate: %s", image_path)
                         self._queue_state.notify_all()
@@ -281,7 +273,6 @@ class ImageCacheManager:
         with self._queue_state:
             self.lru_cache.clear()
             self.preload_queue.clear()
-            self._inflight_path = None
             self._queue_state.notify_all()
         self.history_manager.clear()
         logger.debug("Cache, preload queue, and history cleared.")
@@ -300,7 +291,6 @@ class ImageCacheManager:
             reset_callable()
         with self._queue_state:
             self.preload_queue.clear()
-            self._inflight_path = None
             self._queue_state.notify_all()
         if self.background_preload:
             self._background_refill()
@@ -313,7 +303,6 @@ class ImageCacheManager:
         """Discard queued provider output and refill using the current provider state."""
         with self._queue_state:
             self.preload_queue.clear()
-            self._inflight_path = None
             self._queue_state.notify_all()
         if self.background_preload:
             self._background_refill()

@@ -21,6 +21,16 @@ def test_preload_queue_uses_typed_items():
     assert item.media == "payload"
 
 
+def test_preload_queue_allows_duplicate_paths():
+    queue = PreloadQueue(3)
+
+    assert queue.push("dup.jpg", "one") is True
+    assert queue.push("dup.jpg", "two") is True
+
+    items = queue.items()
+    assert [item.path for item in items] == ["dup.jpg", "dup.jpg"]
+
+
 def test_cache_manager_skips_invalid_provider_media(monkeypatch):
     valid_image = Image.new("RGB", (1, 1))
 
@@ -38,6 +48,19 @@ def test_cache_manager_skips_invalid_provider_media(monkeypatch):
     assert image_obj == valid_image
     assert "bad.jpg" not in manager.lru_cache
     assert "good.jpg" in manager.lru_cache
+
+
+def test_cache_manager_preload_refill_preserves_duplicate_provider_picks(monkeypatch):
+    monkeypatch.setattr(ImageCacheManager, "_load_media", lambda self, path: f"media:{path}")
+    manager = ImageCacheManager(
+        iter(["dup.jpg", "dup.jpg", "other.jpg"]),
+        0,
+        background_preload=False,
+    )
+
+    queued = manager.preload_queue.items()
+
+    assert [item.path for item in queued] == ["dup.jpg", "dup.jpg", "other.jpg"]
 
 
 def test_cache_manager_preloads_and_caches_videos(tmp_path: Path):

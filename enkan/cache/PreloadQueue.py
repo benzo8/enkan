@@ -20,7 +20,6 @@ class PreloadQueue:
 
     def __init__(self, max_size: int):
         self.queue = deque(maxlen=max_size)
-        self.lookup = set()  # For fast membership checks
         self.max_size = max_size
 
     def push(self, path, media, meta=None):
@@ -28,15 +27,7 @@ class PreloadQueue:
         Push a new preloaded media item to the bottom of the queue.
         If the queue is full, the oldest item is automatically dropped.
         """
-        if path in self.lookup:
-            return False
-
-        if len(self.queue) == self.max_size:
-            oldest = self.queue.popleft()
-            self.lookup.discard(oldest.path)
-
         self.queue.append(PreloadedMedia(path=path, media=media, meta=meta))
-        self.lookup.add(path)
         return True
 
     def pop(self):
@@ -46,18 +37,15 @@ class PreloadQueue:
         """
         if not self.queue:
             return None
-        item = self.queue.popleft()
-        self.lookup.discard(item.path)
-        return item
+        return self.queue.popleft()
 
     def discard(self, path):
         """
         Remove a specific path from the queue if present.
         Returns True if the path was removed, else False.
         """
-        if path not in self.lookup:
+        if not any(item.path == path for item in self.queue):
             return False
-        self.lookup.discard(path)
         new_queue = deque(maxlen=self.max_size)
         for item in self.queue:
             if item.path != path:
@@ -68,10 +56,9 @@ class PreloadQueue:
     def clear(self):
         """Remove all items from the queue."""
         self.queue.clear()
-        self.lookup.clear()
 
     def __contains__(self, path):
-        return path in self.lookup
+        return any(item.path == path for item in self.queue)
 
     def __len__(self):
         return len(self.queue)

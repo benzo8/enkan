@@ -171,12 +171,13 @@ class Tree:
             self.node_lookup[new_name] = node
 
     def create_node(self, path: str, node_data: dict | None = None) -> None:
-        parent_path: str = self.find_parent_name(path)
+        normalised_path: str = os.path.normpath(path)
+        parent_path: str = self.find_parent_name(normalised_path)
         self.ensure_parent_exists(parent_path)
-        node_name: str = self.convert_path_to_tree_format(path)
+        node_name: str = self.convert_path_to_tree_format(normalised_path)
         new_node: TreeNode = TreeNode(
             name=node_name,
-            path=path,
+            path=normalised_path,
             group=node_data.get("group") if node_data else None,
             weight_modifier=node_data["weight_modifier"],
             is_percentage=node_data["is_percentage"],

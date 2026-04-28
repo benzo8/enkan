@@ -1,13 +1,9 @@
 # ——— Standard library ———
 import os
-import sys
 import tkinter as tk
 import logging
 from dataclasses import dataclass, field
 from typing import Optional
-
-# ——— Third-party ———
-import vlc
 
 # ——— Local ———
 from enkan import constants
@@ -45,6 +41,7 @@ from enkan.mySlideshow.StatusBar import (
     build_mode_text,
 )
 from enkan.mySlideshow.ScopeStack import ScopeStack, ScopeStackEntry
+from enkan.mySlideshow.VideoPlaybackController import VideoPlaybackController
 from enkan.mySlideshow.ZoomPan import ZoomPan
 
 # Configure logging
@@ -61,6 +58,8 @@ class _ScopeState:
 
 
 class ImageSlideshow:
+    VIDEO_START_DEBOUNCE_MS = 150
+
     def __init__(
         self,
         root: TreeNode,
@@ -120,8 +119,13 @@ class ImageSlideshow:
 
         self.rotation_angle: int | float = 0
         self.current_exif_orientation: int = 1
-        self.current_vlc_media = None
-        self.current_video_payload: CachedVideoData | None = None
+        self.video_controller = VideoPlaybackController(
+            root=self.root,
+            screen_width=self.screen_width,
+            screen_height=self.screen_height,
+            logger=logger,
+            debounce_ms=self.VIDEO_START_DEBOUNCE_MS,
+        )
 
         self.root.configure(background="black")  # Set root background to black
         self.label = tk.Label(root, bg="black")  # Set label background to black
@@ -216,18 +220,31 @@ class ImageSlideshow:
     def _new_scope_memory(self) -> FolderSelectionMemory:
         return FolderSelectionMemory()
 
-    def _release_video_resources(self) -> None:
-        if hasattr(self, "video_player") and self.video_player:
-            self.video_player.stop()
-            self.video_player.release()
-            self.video_player = None
-        if self.current_vlc_media is not None:
-            try:
-                self.current_vlc_media.release()
-            except Exception:
-                logger.debug("Failed to release VLC media cleanly.", exc_info=True)
-            self.current_vlc_media = None
-        self.current_video_payload = None
+    def _release_video_resources(self, async_cleanup: bool = True) -> None:
+        controller = getattr(self, "video_controller", None)
+        if controller is None:
+            return
+        controller.release_resources(async_cleanup=async_cleanup)
+
+    def _schedule_video_start(
+        self,
+        image_path: str,
+        media_payload: CachedVideoData | None,
+    ) -> None:
+        controller = getattr(self, "video_controller", None)
+        if controller is None:
+            return
+        def on_video_started():
+            self.filename_label.tkraise()
+            self.mode_label.tkraise()
+            self.root.after(500, self._check_video_ended)
+
+        controller.schedule_start(
+            image_path=image_path,
+            media_payload=media_payload,
+            muted=self.video_muted,
+            on_video_started=on_video_started,
+        )
 
     def _capture_scope_state(self) -> _ScopeState:
         return _ScopeState(
@@ -400,8 +417,9 @@ class ImageSlideshow:
     def show_image(self, image_path: str = None, record_history: bool = True) -> None:
         # Stop existing video playback and clean up resources
         self._release_video_resources()
-        if hasattr(self, "video_frame"):
-            self.video_frame.place_forget()
+        controller = getattr(self, "video_controller", None)
+        if controller is not None:
+            controller.hide_video_frame()
 
         previous_image_path = getattr(self, "current_image_path", None)
         previous_provider_status_payload = getattr(
@@ -466,45 +484,10 @@ class ImageSlideshow:
             self.label.image = None
             self.zoompan.orig_image = None  # disable zoom state while video plays
             self.label.pack()
-
-            if not hasattr(self, "video_frame"):
-                self.video_frame = tk.Frame(self.root, bg="black")
-
-            self.video_frame.place(
-                x=0, y=0, width=self.screen_width, height=self.screen_height
+            self._schedule_video_start(
+                image_path,
+                media_payload if isinstance(media_payload, CachedVideoData) else None,
             )
-
-            if not hasattr(self, "vlc_instance"):
-                self.vlc_instance = vlc.Instance("--no-video-title-show", "--quiet")
-
-            media = None
-            if isinstance(media_payload, CachedVideoData):
-                media = media_payload.to_vlc_media(self.vlc_instance)
-            if media is None:
-                logger.debug("Falling back to path-based VLC media for %s", image_path)
-                media = self.vlc_instance.media_new(image_path)
-                media.get_mrl()  # Ensure it's fully initialised
-
-            self.video_player = self.vlc_instance.media_player_new()
-            self.video_player.set_media(media)
-            self.video_player.audio_set_mute(self.video_muted)
-            self.current_vlc_media = media
-            self.current_video_payload = (
-                media_payload if isinstance(media_payload, CachedVideoData) else None
-            )
-
-            window_id: int = self.video_frame.winfo_id()
-            if sys.platform.startswith("win"):
-                self.video_player.set_hwnd(window_id)
-            elif sys.platform.startswith("linux"):
-                self.video_player.set_xwindow(window_id)
-            elif sys.platform == "darwin":
-                self.video_player.set_nsobject(window_id)
-            else:
-                raise RuntimeError(f"Unsupported platform: {sys.platform}")
-
-            self.video_player.play()
-            self.root.after(500, self._check_video_ended)
 
         self.filename_label.tkraise()
         self.mode_label.tkraise()
@@ -575,15 +558,19 @@ class ImageSlideshow:
     # --- Provider and Display Pipeline ---
 
     def _check_video_ended(self) -> None:
-        if not self.video_player:
+        controller = getattr(self, "video_controller", None)
+        if controller is None:
+            return
+        video_player = controller.video_player
+        if not video_player:
             return
 
-        length = self.video_player.get_length()
-        time = self.video_player.get_time()
+        length = video_player.get_length()
+        time = video_player.get_time()
 
         if length > 0 and time >= length - 200:  # Account for buffering etc.
-            self.video_player.stop()
-            self.video_player.play()
+            video_player.stop()
+            video_player.play()
             return
 
         self.root.after(500, self._check_video_ended)
@@ -865,8 +852,9 @@ class ImageSlideshow:
             if confirm:
                 # Stop and release video player if a video is playing
                 self._release_video_resources()
-                if hasattr(self, "video_frame"):
-                    self.video_frame.place_forget()
+                controller = getattr(self, "video_controller", None)
+                if controller is not None:
+                    controller.hide_video_frame()
                 try:
                     deleted_path = self.current_image_path
                     delete_media_file(deleted_path)
@@ -975,11 +963,10 @@ class ImageSlideshow:
         self.show_image(self.current_image_path, record_history=False)
 
     def toggle_mute(self, event=None) -> None:
-        if hasattr(self, "video_player") and self.video_player:
-            current_mute: bool = self.video_player.audio_get_mute()
-            new_mute: bool = not current_mute
-            self.video_player.audio_set_mute(new_mute)
-            self.video_muted = new_mute
+        controller = getattr(self, "video_controller", None)
+        if controller is None:
+            return
+        self.video_muted = controller.toggle_mute(self.video_muted)
 
     def print_tree_to_console(self, event=None) -> None:
         print_tree(self.defaults, self.original_tree.root, max_depth=9999)
@@ -1430,10 +1417,7 @@ class ImageSlideshow:
     def exit_slideshow(self, event=None) -> None:
         self.manager.lru_cache.clear()
         self.manager.preload_queue.clear()
-        self._release_video_resources()
-        if hasattr(self, "vlc_instance") and self.vlc_instance:
-            self.vlc_instance.release()
-            self.vlc_instance = None
-        if hasattr(self, "video_frame"):
-            self.video_frame.destroy()
+        controller = getattr(self, "video_controller", None)
+        if controller is not None:
+            controller.shutdown()
         self.root.destroy()

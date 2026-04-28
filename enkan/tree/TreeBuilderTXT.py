@@ -313,7 +313,8 @@ class TreeBuilderTXT:
         """
         Create a synthetic 'images' child node under a directory that also has subdirectories.
         """
-        images_path = os.path.join(path, "images")
+        normalised_path = os.path.normpath(path)
+        images_path = os.path.join(normalised_path, "images")
         self.tree.create_node(
             images_path,
             {
@@ -338,7 +339,8 @@ class TreeBuilderTXT:
         """
         Create/overwrite a normal node that directly holds images.
         """
-        node: TreeNode | None = self.tree.path_lookup.get(path)
+        normalised_path = os.path.normpath(path)
+        node: TreeNode | None = self.tree.path_lookup.get(normalised_path)
         if node:
             self.tree.update_node(
                 node,
@@ -353,7 +355,7 @@ class TreeBuilderTXT:
             )
         else:
             self.tree.create_node(
-                path,
+                normalised_path,
                 {
                     "weight_modifier": data.get("weight_modifier", 100),
                     "is_percentage": data.get("is_percentage", True),
