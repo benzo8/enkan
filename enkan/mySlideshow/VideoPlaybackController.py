@@ -26,20 +26,21 @@ class VideoPlaybackController:
         self.logger = logger
         self.debounce_ms = debounce_ms
 
-        self.video_frame = None
-        self.video_player = None
-        self.vlc_instance = None
-        self.current_vlc_media = None
-        self.current_video_payload: CachedVideoData | None = None
+        self._video_frame = None
+        self._video_player = None
+        self._vlc_instance = None
+        self._current_media = None
+        self._current_video_payload: CachedVideoData | None = None
 
         self._pending_video_start_id = None
+        self._pending_loop_check_id = None
         self._video_start_request_id = 0
         self._video_cleanup_done = threading.Event()
         self._video_cleanup_done.set()
 
-    def hide_video_frame(self) -> None:
-        if self.video_frame is not None:
-            self.video_frame.place_forget()
+    def _hide_video_frame(self) -> None:
+        if self._video_frame is not None:
+            self._video_frame.place_forget()
 
     def _cancel_pending_video_start(self) -> None:
         pending_start_id = self._pending_video_start_id
@@ -54,6 +55,20 @@ class VideoPlaybackController:
                     "Pending video start was already cleared.", exc_info=True
                 )
         self._pending_video_start_id = None
+
+    def _cancel_pending_loop_check(self) -> None:
+        loop_check_id = self._pending_loop_check_id
+        if loop_check_id is None:
+            return
+        after_cancel = getattr(self.root, "after_cancel", None)
+        if callable(after_cancel):
+            try:
+                after_cancel(loop_check_id)
+            except tk.TclError:
+                self.logger.debug(
+                    "Pending video loop check was already cleared.", exc_info=True
+                )
+        self._pending_loop_check_id = None
 
     def _is_video_cleanup_active(self) -> bool:
         return not self._video_cleanup_done.is_set()
@@ -83,14 +98,18 @@ class VideoPlaybackController:
         finally:
             self._video_cleanup_done.set()
 
-    def release_resources(self, async_cleanup: bool = True) -> None:
+    def stop(self, async_cleanup: bool = True, hide: bool = False) -> None:
+        self._video_start_request_id += 1
         self._cancel_pending_video_start()
+        self._cancel_pending_loop_check()
+        if hide:
+            self._hide_video_frame()
 
-        video_player = self.video_player
-        media = self.current_vlc_media
-        self.video_player = None
-        self.current_vlc_media = None
-        self.current_video_payload = None
+        video_player = self._video_player
+        media = self._current_media
+        self._video_player = None
+        self._current_media = None
+        self._current_video_payload = None
 
         if video_player is None and media is None:
             return
@@ -113,6 +132,7 @@ class VideoPlaybackController:
         muted: bool,
         on_video_started: Callable[[], None] | None = None,
     ) -> None:
+        self._cancel_pending_video_start()
         self._video_start_request_id += 1
         request_id = self._video_start_request_id
         self._pending_video_start_id = self.root.after(
@@ -151,57 +171,80 @@ class VideoPlaybackController:
 
         self._pending_video_start_id = None
 
-        if self.video_frame is None:
-            self.video_frame = tk.Frame(self.root, bg="black")
+        if self._video_frame is None:
+            self._video_frame = tk.Frame(self.root, bg="black")
 
-        self.video_frame.place(x=0, y=0, width=self.screen_width, height=self.screen_height)
-        self.video_frame.update_idletasks()
-        self.video_frame.lift()
+        self._video_frame.place(
+            x=0, y=0, width=self.screen_width, height=self.screen_height
+        )
+        self._video_frame.update_idletasks()
+        self._video_frame.lift()
 
-        if self.vlc_instance is None:
-            self.vlc_instance = vlc.Instance("--no-video-title-show", "--quiet")
+        if self._vlc_instance is None:
+            self._vlc_instance = vlc.Instance("--no-video-title-show", "--quiet")
 
         media = None
         if isinstance(media_payload, CachedVideoData):
-            media = media_payload.to_vlc_media(self.vlc_instance)
+            media = media_payload.to_vlc_media(self._vlc_instance)
         if media is None:
             self.logger.debug("Falling back to path-based VLC media for %s", image_path)
-            media = self.vlc_instance.media_new(image_path)
+            media = self._vlc_instance.media_new(image_path)
             media.get_mrl()
 
-        self.video_player = self.vlc_instance.media_player_new()
-        self.video_player.set_media(media)
-        self.video_player.audio_set_mute(muted)
-        self.current_vlc_media = media
-        self.current_video_payload = media_payload
+        self._video_player = self._vlc_instance.media_player_new()
+        self._video_player.set_media(media)
+        self._video_player.audio_set_mute(muted)
+        self._current_media = media
+        self._current_video_payload = media_payload
 
-        window_id = self.video_frame.winfo_id()
+        window_id = self._video_frame.winfo_id()
         if sys.platform.startswith("win"):
-            self.video_player.set_hwnd(window_id)
+            self._video_player.set_hwnd(window_id)
         elif sys.platform.startswith("linux"):
-            self.video_player.set_xwindow(window_id)
+            self._video_player.set_xwindow(window_id)
         elif sys.platform == "darwin":
-            self.video_player.set_nsobject(window_id)
+            self._video_player.set_nsobject(window_id)
         else:
             raise RuntimeError(f"Unsupported platform: {sys.platform}")
 
-        self.video_player.play()
+        self._video_player.play()
         if callable(on_video_started):
             on_video_started()
+        self._schedule_loop_check(request_id)
 
-    def toggle_mute(self, fallback_mute: bool) -> bool:
-        if self.video_player is None:
-            return fallback_mute
-        current_mute = bool(self.video_player.audio_get_mute())
-        new_mute = not current_mute
-        self.video_player.audio_set_mute(new_mute)
-        return new_mute
+    def _schedule_loop_check(self, request_id: int) -> None:
+        self._pending_loop_check_id = self.root.after(
+            500,
+            lambda: self._check_video_ended(request_id),
+        )
+
+    def _check_video_ended(self, request_id: int) -> None:
+        self._pending_loop_check_id = None
+        if request_id != self._video_start_request_id:
+            return
+        video_player = self._video_player
+        if not video_player:
+            return
+
+        length = video_player.get_length()
+        time = video_player.get_time()
+
+        if length > 0 and time >= length - 200:
+            video_player.stop()
+            video_player.play()
+            return
+
+        self._schedule_loop_check(request_id)
+
+    def set_muted(self, muted: bool) -> None:
+        if self._video_player is not None:
+            self._video_player.audio_set_mute(muted)
 
     def shutdown(self) -> None:
-        self.release_resources(async_cleanup=False)
-        if self.vlc_instance is not None:
-            self.vlc_instance.release()
-            self.vlc_instance = None
-        if self.video_frame is not None:
-            self.video_frame.destroy()
-            self.video_frame = None
+        self.stop(async_cleanup=False)
+        if self._vlc_instance is not None:
+            self._vlc_instance.release()
+            self._vlc_instance = None
+        if self._video_frame is not None:
+            self._video_frame.destroy()
+            self._video_frame = None

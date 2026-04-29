@@ -58,8 +58,6 @@ class _ScopeState:
 
 
 class ImageSlideshow:
-    VIDEO_START_DEBOUNCE_MS = 150
-
     def __init__(
         self,
         root: TreeNode,
@@ -124,7 +122,7 @@ class ImageSlideshow:
             screen_width=self.screen_width,
             screen_height=self.screen_height,
             logger=logger,
-            debounce_ms=self.VIDEO_START_DEBOUNCE_MS,
+            debounce_ms=constants.VIDEO_START_DEBOUNCE_MS,
         )
 
         self.root.configure(background="black")  # Set root background to black
@@ -224,7 +222,7 @@ class ImageSlideshow:
         controller = getattr(self, "video_controller", None)
         if controller is None:
             return
-        controller.release_resources(async_cleanup=async_cleanup)
+        controller.stop(async_cleanup=async_cleanup, hide=True)
 
     def _schedule_video_start(
         self,
@@ -234,10 +232,10 @@ class ImageSlideshow:
         controller = getattr(self, "video_controller", None)
         if controller is None:
             return
+
         def on_video_started():
             self.filename_label.tkraise()
             self.mode_label.tkraise()
-            self.root.after(500, self._check_video_ended)
 
         controller.schedule_start(
             image_path=image_path,
@@ -417,9 +415,6 @@ class ImageSlideshow:
     def show_image(self, image_path: str = None, record_history: bool = True) -> None:
         # Stop existing video playback and clean up resources
         self._release_video_resources()
-        controller = getattr(self, "video_controller", None)
-        if controller is not None:
-            controller.hide_video_frame()
 
         previous_image_path = getattr(self, "current_image_path", None)
         previous_provider_status_payload = getattr(
@@ -468,8 +463,6 @@ class ImageSlideshow:
             self.current_provider_status_payload = None
         if not utils.is_videofile(image_path):
             image = media_payload
-            self.current_vlc_media = None
-            self.current_video_payload = None
             self.current_exif_orientation = image.info.get("exif_orientation", 1)
             # If rotating, apply before handing to ZoomPan
             if hasattr(self, "rotation_angle") and self.rotation_angle:
@@ -554,26 +547,6 @@ class ImageSlideshow:
             self.image_paths[self.current_image_index],
             record_history=record_initial_history,
         )
-
-    # --- Provider and Display Pipeline ---
-
-    def _check_video_ended(self) -> None:
-        controller = getattr(self, "video_controller", None)
-        if controller is None:
-            return
-        video_player = controller.video_player
-        if not video_player:
-            return
-
-        length = video_player.get_length()
-        time = video_player.get_time()
-
-        if length > 0 and time >= length - 200:  # Account for buffering etc.
-            video_player.stop()
-            video_player.play()
-            return
-
-        self.root.after(500, self._check_video_ended)
 
     # --- Provider Selection and Mode Recalculation ---
 
@@ -852,9 +825,6 @@ class ImageSlideshow:
             if confirm:
                 # Stop and release video player if a video is playing
                 self._release_video_resources()
-                controller = getattr(self, "video_controller", None)
-                if controller is not None:
-                    controller.hide_video_frame()
                 try:
                     deleted_path = self.current_image_path
                     delete_media_file(deleted_path)
@@ -963,10 +933,10 @@ class ImageSlideshow:
         self.show_image(self.current_image_path, record_history=False)
 
     def toggle_mute(self, event=None) -> None:
+        self.video_muted = not self.video_muted
         controller = getattr(self, "video_controller", None)
-        if controller is None:
-            return
-        self.video_muted = controller.toggle_mute(self.video_muted)
+        if controller is not None:
+            controller.set_muted(self.video_muted)
 
     def print_tree_to_console(self, event=None) -> None:
         print_tree(self.defaults, self.original_tree.root, max_depth=9999)

@@ -7,12 +7,13 @@ try:
     VERSION = _pkg_version(PACKAGE_NAME)
 except PackageNotFoundError:
     # Fallback during source-only situations (keep in sync with pyproject if used)
-    VERSION = "2.5.1"
+    VERSION = "2.5.2"
 TOTAL_WEIGHT = 100
 PARENT_STACK_MAX = 5
 HISTORY_QUEUE_LENGTH = 25
 CACHE_SIZE = 10
 PRELOAD_QUEUE_LENGTH = 3
+VIDEO_START_DEBOUNCE_MS = 150
 ROOT_NODE_NAME = "root"
 IMAGE_FILES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff")
 VIDEO_FILES = (".mp4", ".mkv", ".webm", ".avi", ".mov", ".wmv")

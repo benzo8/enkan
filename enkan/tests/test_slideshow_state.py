@@ -778,11 +778,9 @@ def test_show_image_debounces_rapid_video_start_requests(monkeypatch):
     assert requested_paths == ["videos\\two.mp4"]
 
 
-def test_release_video_resources_offloads_cleanup_to_background_thread(monkeypatch):
-    slideshow = ImageSlideshow.__new__(ImageSlideshow)
-    slideshow.root = SimpleNamespace(after_cancel=lambda _: None)
-    slideshow.video_controller = VideoPlaybackController(
-        root=slideshow.root,
+def test_stop_offloads_cleanup_to_background_thread(monkeypatch):
+    controller = VideoPlaybackController(
+        root=SimpleNamespace(after_cancel=lambda _: None),
         screen_width=100,
         screen_height=100,
         logger=logging.getLogger("test"),
@@ -817,15 +815,15 @@ def test_release_video_resources_offloads_cleanup_to_background_thread(monkeypat
         _FakeThread,
     )
 
-    slideshow.video_controller.video_player = _Player()
-    slideshow.video_controller.current_vlc_media = _Media()
-    slideshow.video_controller.current_video_payload = object()
+    controller._video_player = _Player()
+    controller._current_media = _Media()
+    controller._current_video_payload = object()
 
-    slideshow._release_video_resources(async_cleanup=True)
+    controller.stop(async_cleanup=True)
 
-    assert slideshow.video_controller.video_player is None
-    assert slideshow.video_controller.current_vlc_media is None
-    assert slideshow.video_controller.current_video_payload is None
+    assert controller._video_player is None
+    assert controller._current_media is None
+    assert controller._current_video_payload is None
     assert events == []
     assert len(started_targets) == 1
 
@@ -833,6 +831,25 @@ def test_release_video_resources_offloads_cleanup_to_background_thread(monkeypat
     cleanup_target(*cleanup_args)
 
     assert events == ["stop", "player-release", "media-release"]
+
+
+def test_stop_hides_video_frame_and_cancels_pending_loop_check():
+    cancelled: list[str] = []
+    forgotten: list[str] = []
+    controller = VideoPlaybackController(
+        root=SimpleNamespace(after_cancel=lambda ident: cancelled.append(ident)),
+        screen_width=100,
+        screen_height=100,
+        logger=logging.getLogger("test"),
+        debounce_ms=150,
+    )
+    controller._pending_loop_check_id = "loop-check"
+    controller._video_frame = SimpleNamespace(place_forget=lambda: forgotten.append("hide"))
+
+    controller.stop(async_cleanup=True, hide=True)
+
+    assert cancelled == ["loop-check"]
+    assert forgotten == ["hide"]
 
 
 def test_start_video_playback_defers_while_cleanup_active():
@@ -857,3 +874,164 @@ def test_start_video_playback_defers_while_cleanup_active():
     assert controller._pending_video_start_id == "after-1"
     assert len(scheduled) == 1
     assert scheduled[0][0] == 30
+
+
+def test_controller_loop_check_replays_video_once_at_end():
+    controller = VideoPlaybackController(
+        root=SimpleNamespace(after=lambda *_: (_ for _ in ()).throw(AssertionError("no reschedule"))),
+        screen_width=100,
+        screen_height=100,
+        logger=logging.getLogger("test"),
+        debounce_ms=150,
+    )
+    controller._video_start_request_id = 3
+
+    events: list[str] = []
+
+    class _Player:
+        def get_length(self):
+            return 1000
+
+        def get_time(self):
+            return 850
+
+        def stop(self):
+            events.append("stop")
+
+        def play(self):
+            events.append("play")
+
+    controller._video_player = _Player()
+
+    controller._check_video_ended(3)
+
+    assert events == ["stop", "play"]
+
+
+def test_controller_loop_check_reschedules_when_video_is_not_near_end():
+    scheduled: list[tuple[int, object]] = []
+    controller = VideoPlaybackController(
+        root=SimpleNamespace(
+            after=lambda delay, callback: scheduled.append((delay, callback)) or "loop-check"
+        ),
+        screen_width=100,
+        screen_height=100,
+        logger=logging.getLogger("test"),
+        debounce_ms=150,
+    )
+    controller._video_start_request_id = 3
+
+    class _Player:
+        def get_length(self):
+            return 1000
+
+        def get_time(self):
+            return 100
+
+    controller._video_player = _Player()
+
+    controller._check_video_ended(3)
+
+    assert controller._pending_loop_check_id == "loop-check"
+    assert len(scheduled) == 1
+    assert scheduled[0][0] == 500
+
+
+def test_shutdown_stops_synchronously_releases_vlc_instance_and_destroys_frame():
+    controller = VideoPlaybackController(
+        root=SimpleNamespace(after_cancel=lambda _: None),
+        screen_width=100,
+        screen_height=100,
+        logger=logging.getLogger("test"),
+        debounce_ms=150,
+    )
+    events: list[str] = []
+
+    class _Player:
+        def stop(self):
+            events.append("stop")
+
+        def release(self):
+            events.append("player-release")
+
+    class _Media:
+        def release(self):
+            events.append("media-release")
+
+    class _VlcInstance:
+        def release(self):
+            events.append("vlc-release")
+
+    class _Frame:
+        def destroy(self):
+            events.append("frame-destroy")
+
+    controller._video_player = _Player()
+    controller._current_media = _Media()
+    controller._vlc_instance = _VlcInstance()
+    controller._video_frame = _Frame()
+
+    controller.shutdown()
+
+    assert events == [
+        "stop",
+        "player-release",
+        "media-release",
+        "vlc-release",
+        "frame-destroy",
+    ]
+    assert controller._vlc_instance is None
+    assert controller._video_frame is None
+
+
+def test_toggle_mute_updates_preference_and_active_player():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.video_muted = False
+    applied: list[bool] = []
+    slideshow.video_controller = SimpleNamespace(
+        set_muted=lambda muted: applied.append(muted)
+    )
+
+    slideshow.toggle_mute()
+    slideshow.toggle_mute()
+
+    assert applied == [True, False]
+    assert slideshow.video_muted is False
+
+
+def test_show_image_does_not_create_slideshow_vlc_state_for_images():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.image_paths = ["scope\\one.jpg"]
+    slideshow.current_image_index = 0
+    slideshow.current_image_path = None
+    slideshow.current_provider_status_payload = None
+    slideshow.current_exif_orientation = 1
+    slideshow.rotation_angle = 0
+    slideshow.video_muted = False
+    slideshow.screen_width = 100
+    slideshow.screen_height = 100
+    slideshow._release_video_resources = lambda: None
+    slideshow.providers = SimpleNamespace(
+        get_current_provider_name=lambda: "weighted",
+        get_current_provider_display_mode=lambda: "off",
+    )
+    slideshow.zoompan = SimpleNamespace(set_image=lambda image: None)
+    slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
+    slideshow.filename_label = SimpleNamespace(tkraise=lambda: None)
+    slideshow.mode_label = SimpleNamespace(tkraise=lambda: None)
+    slideshow.update_filename_display = lambda: None
+    slideshow.manager = SimpleNamespace(
+        current_media_metadata=None,
+        get_next=lambda image_path=None, record_history=True: (
+            "scope\\one.jpg",
+            Image.new("RGB", (1, 1)),
+        ),
+    )
+    slideshow._record_memory_for_view = (
+        lambda image_path, record_history, provider_pick_meta=None: None
+    )
+
+    slideshow.show_image()
+
+    assert not hasattr(slideshow, "current_vlc_media")
+    assert not hasattr(slideshow, "current_video_payload")
