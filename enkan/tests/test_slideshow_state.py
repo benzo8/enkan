@@ -723,6 +723,7 @@ def test_show_image_debounces_rapid_video_start_requests(monkeypatch):
     slideshow.mode_label = SimpleNamespace(tkraise=lambda: None)
     slideshow.update_filename_display = lambda: None
     slideshow._record_memory_for_view = lambda image_path, record_history, provider_pick_meta=None: None
+    slideshow.runtime_status_text = ""
 
     scheduled = {}
     cancelled: list[str] = []
@@ -746,6 +747,10 @@ def test_show_image_debounces_rapid_video_start_requests(monkeypatch):
         logger=logging.getLogger("test"),
         debounce_ms=150,
     )
+    overlay_states: list[bool] = []
+    slideshow.video_transport_overlay = SimpleNamespace(
+        set_active=lambda active: overlay_states.append(active)
+    )
 
     payloads = {
         "videos\\one.mp4": CachedVideoData(path="videos\\one.mp4", data=b"one"),
@@ -762,8 +767,16 @@ def test_show_image_debounces_rapid_video_start_requests(monkeypatch):
 
     monkeypatch.setattr("enkan.mySlideshow.mySlideshow.utils.is_videofile", lambda path: True)
 
-    def fake_start_video_playback(request_id, image_path, media_payload, muted, on_video_started=None):
+    def fake_start_video_playback(
+        request_id,
+        image_path,
+        media_payload,
+        muted,
+        on_video_started=None,
+        on_status_changed=None,
+    ):
         requested_paths.append(image_path)
+        on_video_started()
 
     slideshow.video_controller._start_video_playback = fake_start_video_playback
 
@@ -776,6 +789,7 @@ def test_show_image_debounces_rapid_video_start_requests(monkeypatch):
     scheduled["after-2"]()
 
     assert requested_paths == ["videos\\two.mp4"]
+    assert overlay_states == [False, False, True]
 
 
 def test_stop_offloads_cleanup_to_background_thread(monkeypatch):
@@ -937,6 +951,112 @@ def test_controller_loop_check_reschedules_when_video_is_not_near_end():
     assert scheduled[0][0] == 500
 
 
+def test_controller_loop_check_does_not_replay_while_paused():
+    scheduled: list[tuple[int, object]] = []
+    controller = VideoPlaybackController(
+        root=SimpleNamespace(
+            after=lambda delay, callback: scheduled.append((delay, callback)) or "loop-check"
+        ),
+        screen_width=100,
+        screen_height=100,
+        logger=logging.getLogger("test"),
+        debounce_ms=150,
+    )
+    controller._video_start_request_id = 3
+    controller._is_paused = True
+    controller._video_player = SimpleNamespace(
+        get_length=lambda: (_ for _ in ()).throw(AssertionError("should not poll")),
+        get_time=lambda: (_ for _ in ()).throw(AssertionError("should not poll")),
+    )
+
+    controller._check_video_ended(3)
+
+    assert controller._pending_loop_check_id == "loop-check"
+    assert len(scheduled) == 1
+
+
+def test_controller_toggle_pause_updates_player_pause_state():
+    controller = VideoPlaybackController(
+        root=SimpleNamespace(),
+        screen_width=100,
+        screen_height=100,
+        logger=logging.getLogger("test"),
+        debounce_ms=150,
+    )
+    pause_values: list[int] = []
+    controller._video_player = SimpleNamespace(set_pause=lambda value: pause_values.append(value))
+
+    assert controller.toggle_pause() is True
+    assert controller.toggle_pause() is False
+
+    assert pause_values == [1, 0]
+
+
+def test_controller_seek_to_ratio_clamps_and_uses_duration():
+    controller = VideoPlaybackController(
+        root=SimpleNamespace(),
+        screen_width=100,
+        screen_height=100,
+        logger=logging.getLogger("test"),
+        debounce_ms=150,
+    )
+    set_times: list[int] = []
+    controller._video_player = SimpleNamespace(
+        get_time=lambda: 100,
+        get_length=lambda: 1000,
+        set_time=lambda value: set_times.append(value),
+    )
+
+    assert controller.seek_to_ratio(1.5) is True
+
+    assert set_times == [1000]
+
+
+def test_controller_seek_ignores_unknown_duration():
+    controller = VideoPlaybackController(
+        root=SimpleNamespace(),
+        screen_width=100,
+        screen_height=100,
+        logger=logging.getLogger("test"),
+        debounce_ms=150,
+    )
+    controller._video_player = SimpleNamespace(
+        get_time=lambda: 100,
+        get_length=lambda: -1,
+        set_time=lambda value: (_ for _ in ()).throw(AssertionError("should not seek")),
+    )
+
+    assert controller.seek_to_ratio(0.5) is False
+
+
+def test_controller_playback_snapshot_handles_active_and_inactive_states():
+    controller = VideoPlaybackController(
+        root=SimpleNamespace(),
+        screen_width=100,
+        screen_height=100,
+        logger=logging.getLogger("test"),
+        debounce_ms=150,
+    )
+
+    inactive = controller.playback_snapshot()
+    assert inactive.active is False
+    assert inactive.seekable is False
+
+    controller._is_paused = True
+    controller._video_player = SimpleNamespace(
+        get_time=lambda: 250,
+        get_length=lambda: 1000,
+    )
+
+    active = controller.playback_snapshot()
+    assert active.active is True
+    assert active.paused is True
+    assert active.current_time_ms == 250
+    assert active.duration_ms == 1000
+    assert active.seekable is True
+    assert active.progress_ratio == 0.25
+
+
 def test_shutdown_stops_synchronously_releases_vlc_instance_and_destroys_frame():
     controller = VideoPlaybackController(
         root=SimpleNamespace(after_cancel=lambda _: None),
@@ -997,6 +1117,19 @@ def test_toggle_mute_updates_preference_and_active_player():
 
     assert applied == [True, False]
     assert slideshow.video_muted is False
+
+
+def test_pointer_motion_delegates_to_transport_overlay():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    events = []
+    slideshow.video_transport_overlay = SimpleNamespace(
+        handle_motion=lambda event: events.append(event)
+    )
+    event = SimpleNamespace(y=99)
+
+    slideshow._handle_pointer_motion(event)
+
+    assert events == [event]
 
 
 def test_show_image_does_not_create_slideshow_vlc_state_for_images():

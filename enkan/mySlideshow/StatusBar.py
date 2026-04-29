@@ -27,6 +27,7 @@ class StatusBarContext:
     provider_enabled: bool
     provider_label: str
     provider_status_text: str
+    runtime_status_text: str
     subfolder_mode: bool
     parent_mode: bool
     auto_advance_running: bool
@@ -80,6 +81,8 @@ def build_mode_text(context: StatusBarContext) -> str:
     mode_parts = [count_text]
     if context.provider_status_text:
         mode_parts.append(context.provider_status_text)
+    if context.runtime_status_text:
+        mode_parts.append(context.runtime_status_text)
     if scope_parts:
         mode_parts.append(" ".join(scope_parts))
     mode_parts.append(provider_label)

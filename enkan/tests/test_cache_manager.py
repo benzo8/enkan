@@ -82,6 +82,30 @@ def test_cache_manager_preloads_and_caches_videos(tmp_path: Path):
     assert media_obj.data == b"video-bytes"
     assert str(video_path) in manager.lru_cache
     assert isinstance(manager.lru_cache.get(str(video_path)), CachedVideoData)
+    assert manager.lru_cache.get(str(video_path)).is_memory_backed
+
+
+def test_cache_manager_uses_path_backed_payload_for_oversized_videos(
+    tmp_path: Path, monkeypatch
+):
+    video_path = tmp_path / "large.mp4"
+    video_path.write_bytes(b"video-bytes")
+    monkeypatch.setattr("enkan.cache.ImageCacheManager.constants.VIDEO_CACHE_MAX_BYTES", 1)
+
+    manager = ImageCacheManager(iter([str(video_path)]), 0, background_preload=False)
+
+    queued = manager.preload_queue.items()
+    assert len(queued) == 1
+    assert queued[0].path == str(video_path)
+    assert isinstance(queued[0].media, CachedVideoData)
+    assert queued[0].media.data is None
+    assert queued[0].media.is_path_backed
+
+    image_path, media_obj = manager.get_next(record_history=False)
+
+    assert image_path == str(video_path)
+    assert isinstance(media_obj, CachedVideoData)
+    assert media_obj.data is None
 
 
 def test_cache_manager_waits_for_starved_background_refill(monkeypatch):

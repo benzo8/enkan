@@ -42,6 +42,7 @@ from enkan.mySlideshow.StatusBar import (
 )
 from enkan.mySlideshow.ScopeStack import ScopeStack, ScopeStackEntry
 from enkan.mySlideshow.VideoPlaybackController import VideoPlaybackController
+from enkan.mySlideshow.VideoTransportOverlay import VideoTransportOverlay
 from enkan.mySlideshow.ZoomPan import ZoomPan
 
 # Configure logging
@@ -106,6 +107,7 @@ class ImageSlideshow:
         self.show_filename = False
         self._last_burst_memory_token = None
         self.current_provider_status_payload = None
+        self.runtime_status_text = ""
 
         self.screen_width: int = root.winfo_screenwidth()
         self.screen_height: int = root.winfo_screenheight()
@@ -149,6 +151,12 @@ class ImageSlideshow:
             self.screen_height,
             on_image_changed=self.update_filename_display,
         )
+        self.video_transport_overlay = VideoTransportOverlay(
+            self.root,
+            snapshot_provider=self.video_controller.playback_snapshot,
+            toggle_pause=self.video_controller.toggle_pause,
+            seek_to_ratio=self.video_controller.seek_to_ratio,
+        )
 
         self.root.attributes("-fullscreen", True)
         self.root.bind("<space>", self.next_image)
@@ -162,6 +170,7 @@ class ImageSlideshow:
             self.root.bind(key, self.select_mode)
 
         self.root.bind("<Control-c>", lambda e: e.widget.event_generate("<<Copy>>"))
+        self.root.bind("<Motion>", self._handle_pointer_motion, add="+")
 
         self.root.bind("<t>", self.toggle_navigation_mode)
         self.root.bind("<u>", self.reset_parent_mode)
@@ -223,6 +232,9 @@ class ImageSlideshow:
         if controller is None:
             return
         controller.stop(async_cleanup=async_cleanup, hide=True)
+        overlay = getattr(self, "video_transport_overlay", None)
+        if overlay is not None:
+            overlay.set_active(False)
 
     def _schedule_video_start(
         self,
@@ -234,15 +246,34 @@ class ImageSlideshow:
             return
 
         def on_video_started():
+            self._set_runtime_status("")
             self.filename_label.tkraise()
             self.mode_label.tkraise()
+            overlay = getattr(self, "video_transport_overlay", None)
+            if overlay is not None:
+                overlay.set_active(True)
 
         controller.schedule_start(
             image_path=image_path,
             media_payload=media_payload,
             muted=self.video_muted,
             on_video_started=on_video_started,
+            on_status_changed=self._set_video_status,
         )
+
+    def _set_runtime_status(self, status_text: str) -> None:
+        if getattr(self, "runtime_status_text", "") == status_text:
+            return
+        self.runtime_status_text = status_text
+        self.update_filename_display()
+
+    def _set_video_status(self, status_text: str) -> None:
+        self._set_runtime_status(f"VIDEO: {status_text}" if status_text else "")
+
+    def _handle_pointer_motion(self, event=None) -> None:
+        overlay = getattr(self, "video_transport_overlay", None)
+        if overlay is not None:
+            overlay.handle_motion(event)
 
     def _capture_scope_state(self) -> _ScopeState:
         return _ScopeState(
@@ -428,6 +459,7 @@ class ImageSlideshow:
         )
         if not image_path:
             logger.warning("No displayable media available.")
+            self._set_runtime_status("No displayable media")
             return
         provider_pick_meta = getattr(self.manager, "current_media_metadata", None)
 
@@ -462,6 +494,7 @@ class ImageSlideshow:
         else:
             self.current_provider_status_payload = None
         if not utils.is_videofile(image_path):
+            self._set_runtime_status("")
             image = media_payload
             self.current_exif_orientation = image.info.get("exif_orientation", 1)
             # If rotating, apply before handing to ZoomPan
@@ -471,6 +504,7 @@ class ImageSlideshow:
             self.zoompan.set_image(image)
             self.label.pack()
         else:
+            self._set_runtime_status("")
             self.current_exif_orientation = 1
             # Clear any existing image from label
             self.label.config(image="")
@@ -1340,6 +1374,7 @@ class ImageSlideshow:
                 display_mode=self.providers.get_current_provider_display_mode(),
                 status_payload=provider_status_payload,
             ),
+            runtime_status_text=getattr(self, "runtime_status_text", ""),
             subfolder_mode=self.subfolder_mode,
             parent_mode=self.parent_mode,
             auto_advance_running=bool(getattr(self, "auto_advance_running", False)),

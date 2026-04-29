@@ -10,9 +10,19 @@ import vlc
 @dataclass(frozen=True)
 class CachedVideoData:
     path: str
-    data: bytes
+    data: bytes | None = None
+
+    @property
+    def is_memory_backed(self) -> bool:
+        return self.data is not None
+
+    @property
+    def is_path_backed(self) -> bool:
+        return self.data is None
 
     def to_vlc_media(self, vlc_instance: vlc.Instance):
+        if self.data is None:
+            return vlc_instance.media_new(self.path)
         stream = _InMemoryVideoStream(self.data)
         media = stream.create_media(vlc_instance)
         if media is not None:

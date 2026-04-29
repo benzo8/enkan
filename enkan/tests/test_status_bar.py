@@ -18,6 +18,7 @@ def _context(**overrides) -> StatusBarContext:
         provider_enabled=True,
         provider_label="WGT",
         provider_status_text="",
+        runtime_status_text="",
         subfolder_mode=False,
         parent_mode=False,
         auto_advance_running=False,
@@ -54,6 +55,19 @@ def test_build_mode_text_includes_scope_and_provider():
     )
 
     assert text == "(1/2) A7 S2 B-10% SUB PAR CRW"
+
+
+def test_build_mode_text_includes_runtime_status():
+    text = build_mode_text(
+        _context(
+            provider_label="CRW",
+            provider_status_text="A7",
+            runtime_status_text="VIDEO: failed",
+            subfolder_mode=True,
+        )
+    )
+
+    assert text == "(1/2) A7 VIDEO: failed SUB CRW"
 
 
 def test_build_mode_text_prefixes_auto_advance():

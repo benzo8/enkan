@@ -38,7 +38,7 @@ If you install into a fresh environment, remember to install VLC separately so t
 - Folder-aware subfolder and parent navigation modes
 - EXIF orientation support
 - Image caching and background preload for performance
-- Video playback support (via VLC)
+- Video playback support (via VLC), including a bottom-reveal transport overlay
 - Interactive GUI with zoom/pan
 - Rotation persistence to EXIF
 
@@ -198,6 +198,10 @@ A group definition stores graft level, proportion, and mode modifiers. Any line 
 | 0 | Reset Zoom |
 | Shift-Cursor | Move viewport around zoomed image |
 | A | Toggle Auto-Advance (Timed) Mode |
+
+### Video Transport Overlay
+
+When a video is playing, move the mouse near the bottom edge of the slideshow window to reveal the transport overlay. It shows playback progress, current time / duration, pause or resume, and click/drag seeking when VLC reports a known duration. The overlay hides automatically after a short idle period and is not shown for image slides.
 
 ## Navigation and Parent Mode
 
