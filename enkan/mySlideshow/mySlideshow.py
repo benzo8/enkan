@@ -42,7 +42,6 @@ from enkan.mySlideshow.StatusBar import (
 )
 from enkan.mySlideshow.ScopeStack import ScopeStack, ScopeStackEntry
 from enkan.mySlideshow.VideoPlaybackController import VideoPlaybackController
-from enkan.mySlideshow.VideoTransportOverlay import VideoTransportOverlay
 from enkan.mySlideshow.ZoomPan import ZoomPan
 
 # Configure logging
@@ -151,12 +150,6 @@ class ImageSlideshow:
             self.screen_height,
             on_image_changed=self.update_filename_display,
         )
-        self.video_transport_overlay = VideoTransportOverlay(
-            self.root,
-            snapshot_provider=self.video_controller.playback_snapshot,
-            toggle_pause=self.video_controller.toggle_pause,
-            seek_to_ratio=self.video_controller.seek_to_ratio,
-        )
 
         self.root.attributes("-fullscreen", True)
         self.root.bind("<space>", self.next_image)
@@ -170,7 +163,6 @@ class ImageSlideshow:
             self.root.bind(key, self.select_mode)
 
         self.root.bind("<Control-c>", lambda e: e.widget.event_generate("<<Copy>>"))
-        self.root.bind("<Motion>", self._handle_pointer_motion, add="+")
 
         self.root.bind("<t>", self.toggle_navigation_mode)
         self.root.bind("<u>", self.reset_parent_mode)
@@ -232,9 +224,6 @@ class ImageSlideshow:
         if controller is None:
             return
         controller.stop(async_cleanup=async_cleanup, hide=True)
-        overlay = getattr(self, "video_transport_overlay", None)
-        if overlay is not None:
-            overlay.set_active(False)
 
     def _schedule_video_start(
         self,
@@ -249,9 +238,6 @@ class ImageSlideshow:
             self._set_runtime_status("")
             self.filename_label.tkraise()
             self.mode_label.tkraise()
-            overlay = getattr(self, "video_transport_overlay", None)
-            if overlay is not None:
-                overlay.set_active(True)
 
         controller.schedule_start(
             image_path=image_path,
@@ -269,11 +255,6 @@ class ImageSlideshow:
 
     def _set_video_status(self, status_text: str) -> None:
         self._set_runtime_status(f"VIDEO: {status_text}" if status_text else "")
-
-    def _handle_pointer_motion(self, event=None) -> None:
-        overlay = getattr(self, "video_transport_overlay", None)
-        if overlay is not None:
-            overlay.handle_motion(event)
 
     def _capture_scope_state(self) -> _ScopeState:
         return _ScopeState(

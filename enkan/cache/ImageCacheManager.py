@@ -117,18 +117,22 @@ class ImageCacheManager:
                 logger.info("Video path missing: %s", image_path)
                 return None
             try:
-                video_size = os.path.getsize(image_path)
-                if video_size <= constants.VIDEO_CACHE_MAX_BYTES:
+                if constants.VIDEO_CACHE_POLICY == "cache-all":
                     with open(image_path, "rb") as handle:
                         media = CachedVideoData(path=image_path, data=handle.read())
                 else:
-                    logger.debug(
-                        "Video exceeds byte-cache limit (%s > %s): %s",
-                        video_size,
-                        constants.VIDEO_CACHE_MAX_BYTES,
-                        image_path,
-                    )
-                    media = CachedVideoData(path=image_path)
+                    video_size = os.path.getsize(image_path)
+                    if video_size <= constants.VIDEO_CACHE_MAX_BYTES:
+                        with open(image_path, "rb") as handle:
+                            media = CachedVideoData(path=image_path, data=handle.read())
+                    else:
+                        logger.debug(
+                            "Video exceeds byte-cache limit (%s > %s): %s",
+                            video_size,
+                            constants.VIDEO_CACHE_MAX_BYTES,
+                            image_path,
+                        )
+                        media = CachedVideoData(path=image_path)
             except OSError as exc:
                 logger.warning("Failed to read video into cache: %s", image_path, exc_info=exc)
                 return None

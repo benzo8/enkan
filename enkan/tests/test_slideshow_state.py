@@ -747,10 +747,6 @@ def test_show_image_debounces_rapid_video_start_requests(monkeypatch):
         logger=logging.getLogger("test"),
         debounce_ms=150,
     )
-    overlay_states: list[bool] = []
-    slideshow.video_transport_overlay = SimpleNamespace(
-        set_active=lambda active: overlay_states.append(active)
-    )
 
     payloads = {
         "videos\\one.mp4": CachedVideoData(path="videos\\one.mp4", data=b"one"),
@@ -789,7 +785,6 @@ def test_show_image_debounces_rapid_video_start_requests(monkeypatch):
     scheduled["after-2"]()
 
     assert requested_paths == ["videos\\two.mp4"]
-    assert overlay_states == [False, False, True]
 
 
 def test_stop_offloads_cleanup_to_background_thread(monkeypatch):
@@ -1117,19 +1112,6 @@ def test_toggle_mute_updates_preference_and_active_player():
 
     assert applied == [True, False]
     assert slideshow.video_muted is False
-
-
-def test_pointer_motion_delegates_to_transport_overlay():
-    slideshow = ImageSlideshow.__new__(ImageSlideshow)
-    events = []
-    slideshow.video_transport_overlay = SimpleNamespace(
-        handle_motion=lambda event: events.append(event)
-    )
-    event = SimpleNamespace(y=99)
-
-    slideshow._handle_pointer_motion(event)
-
-    assert events == [event]
 
 
 def test_show_image_does_not_create_slideshow_vlc_state_for_images():

@@ -85,12 +85,40 @@ def test_cache_manager_preloads_and_caches_videos(tmp_path: Path):
     assert manager.lru_cache.get(str(video_path)).is_memory_backed
 
 
-def test_cache_manager_uses_path_backed_payload_for_oversized_videos(
+def test_cache_manager_cache_all_policy_reads_oversized_videos(
     tmp_path: Path, monkeypatch
 ):
     video_path = tmp_path / "large.mp4"
     video_path.write_bytes(b"video-bytes")
     monkeypatch.setattr("enkan.cache.ImageCacheManager.constants.VIDEO_CACHE_MAX_BYTES", 1)
+    monkeypatch.setattr("enkan.cache.ImageCacheManager.constants.VIDEO_CACHE_POLICY", "cache-all")
+
+    manager = ImageCacheManager(iter([str(video_path)]), 0, background_preload=False)
+
+    queued = manager.preload_queue.items()
+    assert len(queued) == 1
+    assert queued[0].path == str(video_path)
+    assert isinstance(queued[0].media, CachedVideoData)
+    assert queued[0].media.data == b"video-bytes"
+    assert queued[0].media.is_memory_backed
+
+    image_path, media_obj = manager.get_next(record_history=False)
+
+    assert image_path == str(video_path)
+    assert isinstance(media_obj, CachedVideoData)
+    assert media_obj.data == b"video-bytes"
+
+
+def test_cache_manager_bounded_bytes_policy_uses_path_backed_payload_for_oversized_videos(
+    tmp_path: Path, monkeypatch
+):
+    video_path = tmp_path / "large.mp4"
+    video_path.write_bytes(b"video-bytes")
+    monkeypatch.setattr("enkan.cache.ImageCacheManager.constants.VIDEO_CACHE_MAX_BYTES", 1)
+    monkeypatch.setattr(
+        "enkan.cache.ImageCacheManager.constants.VIDEO_CACHE_POLICY",
+        "bounded-bytes",
+    )
 
     manager = ImageCacheManager(iter([str(video_path)]), 0, background_preload=False)
 
