@@ -107,6 +107,7 @@ class ImageSlideshow:
         self._last_burst_memory_token = None
         self.current_provider_status_payload = None
         self.runtime_status_text = ""
+        self._video_status_refresh_id = None
 
         self.screen_width: int = root.winfo_screenwidth()
         self.screen_height: int = root.winfo_screenheight()
@@ -175,6 +176,11 @@ class ImageSlideshow:
         self.root.bind("<Delete>", self.delete_image)
 
         self.root.bind("<m>", self.toggle_mute)
+        self.root.bind("<v>", self.toggle_video_pause)
+        self.root.bind("<comma>", lambda e: self.seek_video_by_ms(-5000))
+        self.root.bind("<period>", lambda e: self.seek_video_by_ms(5000))
+        self.root.bind("<z>", lambda e: self.seek_video_by_ms(-30000))
+        self.root.bind("<x>", lambda e: self.seek_video_by_ms(30000))
         self.root.bind("<n>", self.toggle_filename_display)
         self.root.bind("<s>", self.toggle_subfolder_mode)
         self.root.bind("<Control-b>", self.reset_burst_cycle)
@@ -220,6 +226,7 @@ class ImageSlideshow:
         return FolderSelectionMemory()
 
     def _release_video_resources(self, async_cleanup: bool = True) -> None:
+        self._cancel_video_status_refresh()
         controller = getattr(self, "video_controller", None)
         if controller is None:
             return
@@ -238,6 +245,7 @@ class ImageSlideshow:
             self._set_runtime_status("")
             self.filename_label.tkraise()
             self.mode_label.tkraise()
+            self._schedule_video_status_refresh()
 
         controller.schedule_start(
             image_path=image_path,
@@ -255,6 +263,53 @@ class ImageSlideshow:
 
     def _set_video_status(self, status_text: str) -> None:
         self._set_runtime_status(f"VIDEO: {status_text}" if status_text else "")
+
+    def _cancel_video_status_refresh(self) -> None:
+        refresh_id = getattr(self, "_video_status_refresh_id", None)
+        if refresh_id is None:
+            return
+        after_cancel = getattr(self.root, "after_cancel", None)
+        if callable(after_cancel):
+            try:
+                after_cancel(refresh_id)
+            except tk.TclError:
+                logger.debug("Video status refresh was already cleared.", exc_info=True)
+        self._video_status_refresh_id = None
+
+    def _schedule_video_status_refresh(self) -> None:
+        self._cancel_video_status_refresh()
+        root_after = getattr(self.root, "after", None)
+        if callable(root_after):
+            self._video_status_refresh_id = root_after(
+                500,
+                self._refresh_video_status_display,
+            )
+
+    def _refresh_video_status_display(self) -> None:
+        self._video_status_refresh_id = None
+        if not utils.is_videofile(getattr(self, "current_image_path", "") or ""):
+            return
+        self.update_filename_display()
+        snapshot = self.video_controller.playback_snapshot()
+        if snapshot.active:
+            self._schedule_video_status_refresh()
+
+    def toggle_video_pause(self, event=None):
+        controller = getattr(self, "video_controller", None)
+        if controller is None or not controller.toggle_pause():
+            if controller is None or not controller.playback_snapshot().active:
+                return None
+        self.update_filename_display()
+        return "break"
+
+    def seek_video_by_ms(self, delta_ms: int, event=None):
+        controller = getattr(self, "video_controller", None)
+        if controller is None:
+            return None
+        if not controller.seek_relative_ms(delta_ms):
+            return None
+        self.update_filename_display()
+        return "break"
 
     def _capture_scope_state(self) -> _ScopeState:
         return _ScopeState(
@@ -1283,6 +1338,30 @@ class ImageSlideshow:
             return f"{exif_angle}° [EXIF]"
         return "0°"
 
+    @staticmethod
+    def _format_video_time(milliseconds: int | None) -> str:
+        if milliseconds is None or milliseconds < 0:
+            return "--:--"
+        total_seconds = int(milliseconds // 1000)
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours:
+            return f"{hours}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def _format_filename_meta(self) -> str | None:
+        if not utils.is_videofile(getattr(self, "current_image_path", "") or ""):
+            return None
+        snapshot = self.video_controller.playback_snapshot()
+        position = self._format_video_time(snapshot.current_time_ms)
+        duration = self._format_video_time(snapshot.duration_ms)
+        state_parts = ["VIDEO", f"{position} / {duration}"]
+        if snapshot.paused:
+            state_parts.append("PAUSED")
+        elif snapshot.status_text:
+            state_parts.append(snapshot.status_text.upper())
+        return f" {{ {' '.join(state_parts)} }}"
+
     def _status_label_path(self) -> str:
         label_path = self.current_image_path
         if self._navigation_state().is_branch:
@@ -1346,6 +1425,7 @@ class ImageSlideshow:
                 if hasattr(self, "zoompan") and self.zoompan
                 else 100
             ),
+            filename_meta_text=self._format_filename_meta(),
             current_image_path=self.current_image_path,
             image_paths=self.image_paths,
             current_image_index=self.current_image_index,

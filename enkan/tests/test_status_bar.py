@@ -12,6 +12,7 @@ def _context(**overrides) -> StatusBarContext:
         fixed_colour=None,
         rotation_text="0°",
         zoom_percent=100,
+        filename_meta_text=None,
         current_image_path="root\\folder\\image.jpg",
         image_paths=["root\\folder\\image.jpg", "root\\folder\\two.jpg"],
         current_image_index=0,
@@ -42,6 +43,17 @@ def test_build_filename_display_splits_fixed_and_normal_segments():
         " (0°, 100%)",
     ]
     assert display.fixed_colour == "gold"
+
+
+def test_build_filename_display_uses_filename_meta_override():
+    display = build_filename_display(
+        _context(filename_meta_text=" { VIDEO 00:05 / 01:00 PAUSED }")
+    )
+
+    assert [segment.text for segment in display.segments] == [
+        "root\\folder\\image.jpg",
+        " { VIDEO 00:05 / 01:00 PAUSED }",
+    ]
 
 
 def test_build_mode_text_includes_scope_and_provider():

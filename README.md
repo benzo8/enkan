@@ -38,7 +38,7 @@ If you install into a fresh environment, remember to install VLC separately so t
 - Folder-aware subfolder and parent navigation modes
 - EXIF orientation support
 - Image caching and background preload for performance
-- Video playback support (via VLC)
+- Video playback support (via VLC), including keyboard pause/seek controls
 - Interactive GUI with zoom/pan
 - Rotation persistence to EXIF
 
@@ -189,6 +189,9 @@ A group definition stores graft level, proportion, and mode modifiers. Any line 
 | U | Reset Parent Mode |
 | Ctrl-D | Clear controlled-random selection memory for the current scope |
 | M | Toggle mute |
+| V | Pause / resume active video |
+| , / . | Seek active video backward / forward by 5 seconds |
+| Z / X | Seek active video backward / forward by 30 seconds |
 | R | Rotate image clockwise by 90 degrees |
 | Ctrl-R | Try to write current orientation to image EXIF data |
 | Delete | Delete current image or video |
@@ -198,6 +201,10 @@ A group definition stores graft level, proportion, and mode modifiers. Any line 
 | 0 | Reset Zoom |
 | Shift-Cursor | Move viewport around zoomed image |
 | A | Toggle Auto-Advance (Timed) Mode |
+
+When the information line is visible during video playback, image rotation and zoom
+metadata are replaced by video state, for example
+`{ VIDEO 01:23 / 04:56 PAUSED }`.
 
 ## Navigation and Parent Mode
 

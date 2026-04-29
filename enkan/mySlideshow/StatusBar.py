@@ -21,6 +21,7 @@ class StatusBarContext:
     fixed_colour: str | None
     rotation_text: str
     zoom_percent: int
+    filename_meta_text: str | None
     current_image_path: str | None
     image_paths: list[str]
     current_image_index: int
@@ -51,7 +52,11 @@ def build_filename_display(context: StatusBarContext) -> FilenameDisplay:
     else:
         segments = (StatusSegment(context.label_path, "normal"),)
 
-    meta_text = f" ({context.rotation_text}, {context.zoom_percent}%)"
+    meta_text = (
+        context.filename_meta_text
+        if context.filename_meta_text is not None
+        else f" ({context.rotation_text}, {context.zoom_percent}%)"
+    )
     segments = (*segments, StatusSegment(meta_text, "meta"))
     width = len("".join(segment.text for segment in segments)) + 10
     return FilenameDisplay(

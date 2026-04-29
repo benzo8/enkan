@@ -887,7 +887,9 @@ def test_start_video_playback_defers_while_cleanup_active():
 
 def test_controller_loop_check_replays_video_once_at_end():
     controller = VideoPlaybackController(
-        root=SimpleNamespace(after=lambda *_: (_ for _ in ()).throw(AssertionError("no reschedule"))),
+        root=SimpleNamespace(
+            after=lambda delay, callback: scheduled.append((delay, callback)) or "loop-check"
+        ),
         screen_width=100,
         screen_height=100,
         logger=logging.getLogger("test"),
@@ -896,6 +898,7 @@ def test_controller_loop_check_replays_video_once_at_end():
     controller._video_start_request_id = 3
 
     events: list[str] = []
+    scheduled: list[tuple[int, object]] = []
 
     class _Player:
         def get_length(self):
@@ -915,6 +918,9 @@ def test_controller_loop_check_replays_video_once_at_end():
     controller._check_video_ended(3)
 
     assert events == ["stop", "play"]
+    assert controller._pending_loop_check_id == "loop-check"
+    assert len(scheduled) == 1
+    assert scheduled[0][0] == 500
 
 
 def test_controller_loop_check_reschedules_when_video_is_not_near_end():
@@ -1007,6 +1013,27 @@ def test_controller_seek_to_ratio_clamps_and_uses_duration():
     assert set_times == [1000]
 
 
+def test_controller_seek_relative_clamps_to_current_duration():
+    controller = VideoPlaybackController(
+        root=SimpleNamespace(),
+        screen_width=100,
+        screen_height=100,
+        logger=logging.getLogger("test"),
+        debounce_ms=150,
+    )
+    set_times: list[int] = []
+    controller._video_player = SimpleNamespace(
+        get_time=lambda: 900,
+        get_length=lambda: 1000,
+        set_time=lambda value: set_times.append(value),
+    )
+
+    assert controller.seek_relative_ms(5000) is True
+    assert controller.seek_relative_ms(-950) is True
+
+    assert set_times == [1000, 0]
+
+
 def test_controller_seek_ignores_unknown_duration():
     controller = VideoPlaybackController(
         root=SimpleNamespace(),
@@ -1022,6 +1049,57 @@ def test_controller_seek_ignores_unknown_duration():
     )
 
     assert controller.seek_to_ratio(0.5) is False
+
+
+def test_video_pause_hotkey_updates_status_for_active_player():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    updated: list[str] = []
+
+    class _Controller:
+        def __init__(self):
+            self.active = True
+
+        def toggle_pause(self):
+            return True
+
+        def playback_snapshot(self):
+            return SimpleNamespace(active=self.active)
+
+    slideshow.video_controller = _Controller()
+    slideshow.update_filename_display = lambda: updated.append("updated")
+
+    assert slideshow.toggle_video_pause() == "break"
+    assert updated == ["updated"]
+
+
+def test_video_seek_hotkey_updates_status_when_seek_succeeds():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    updated: list[str] = []
+    deltas: list[int] = []
+    slideshow.video_controller = SimpleNamespace(
+        seek_relative_ms=lambda delta: deltas.append(delta) or True
+    )
+    slideshow.update_filename_display = lambda: updated.append("updated")
+
+    assert slideshow.seek_video_by_ms(-5000) == "break"
+
+    assert deltas == [-5000]
+    assert updated == ["updated"]
+
+
+def test_video_filename_meta_replaces_image_rotation_and_zoom():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.current_image_path = "clip.mp4"
+    slideshow.video_controller = SimpleNamespace(
+        playback_snapshot=lambda: SimpleNamespace(
+            current_time_ms=65000,
+            duration_ms=125000,
+            paused=True,
+            status_text="",
+        )
+    )
+
+    assert slideshow._format_filename_meta() == " { VIDEO 01:05 / 02:05 PAUSED }"
 
 
 def test_controller_playback_snapshot_handles_active_and_inactive_states():

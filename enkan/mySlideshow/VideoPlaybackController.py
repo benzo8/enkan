@@ -275,6 +275,7 @@ class VideoPlaybackController:
         if length > 0 and time >= length - 200:
             video_player.stop()
             video_player.play()
+            self._schedule_loop_check(request_id)
             return
 
         self._schedule_loop_check(request_id)
@@ -298,6 +299,20 @@ class VideoPlaybackController:
             return False
         clamped = max(0.0, min(float(ratio), 1.0))
         self._video_player.set_time(int(snapshot.duration_ms * clamped))
+        return True
+
+    def seek_relative_ms(self, delta_ms: int) -> bool:
+        if self._video_player is None:
+            return False
+        snapshot = self.playback_snapshot()
+        if snapshot.current_time_ms is None:
+            return False
+
+        target = snapshot.current_time_ms + int(delta_ms)
+        if snapshot.duration_ms is not None:
+            target = min(target, snapshot.duration_ms)
+        target = max(0, target)
+        self._video_player.set_time(target)
         return True
 
     def playback_snapshot(self) -> VideoPlaybackSnapshot:
