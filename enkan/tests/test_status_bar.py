@@ -1,6 +1,7 @@
 from enkan.mySlideshow.StatusBar import (
     StatusContribution,
     StatusDots,
+    StatusFacts,
     StatusFilePath,
     StatusKind,
     StatusTimer,
@@ -9,6 +10,7 @@ from enkan.mySlideshow.StatusBar import (
     build_filename_display,
     build_mode_text,
     build_status_contributions,
+    build_status_contributions_from_facts,
     build_status_display,
     render_contribution,
     render_dots,
@@ -39,6 +41,34 @@ def _context(**overrides) -> StatusBarContext:
     )
     base.update(overrides)
     return StatusBarContext(**base)
+
+
+def _facts(**overrides) -> StatusFacts:
+    base = dict(
+        label_path="root\\folder\\image.jpg",
+        fixed_path=None,
+        fixed_colour=None,
+        rotation_text="0°",
+        zoom_percent=100,
+        is_video=False,
+        video_current_ms=None,
+        video_duration_ms=None,
+        video_paused=False,
+        video_status_text="",
+        current_image_path="root\\folder\\image.jpg",
+        image_paths=["root\\folder\\image.jpg", "root\\folder\\two.jpg"],
+        current_image_index=0,
+        provider_enabled=True,
+        provider_label="WGT",
+        provider_status_text="",
+        runtime_status_text="",
+        subfolder_mode=False,
+        parent_mode=False,
+        auto_advance_running=False,
+        auto_advance_interval=None,
+    )
+    base.update(overrides)
+    return StatusFacts(**base)
 
 
 def test_build_filename_display_splits_fixed_and_normal_segments():
@@ -176,6 +206,76 @@ def test_status_contributions_reproduce_video_timer_display():
         "normal",
         "timer",
     ]
+
+
+def test_status_facts_surface_runtime_provider_scope_and_auto_advance():
+    display = build_status_display(
+        build_status_contributions_from_facts(
+            _facts(
+                provider_enabled=True,
+                provider_label="CRW",
+                provider_status_text="A7 S2 B-10%",
+                runtime_status_text="VIDEO: failed",
+                subfolder_mode=True,
+                parent_mode=True,
+                auto_advance_running=True,
+                auto_advance_interval=3000,
+            )
+        )
+    )
+
+    assert display.mode_text == "AUTO (3000ms)   (1/2) A7 S2 B-10% VIDEO: failed SUB PAR CRW"
+
+
+def test_status_facts_disable_provider_label_without_losing_other_status():
+    display = build_status_display(
+        build_status_contributions_from_facts(
+            _facts(
+                provider_enabled=False,
+                provider_label="CRW",
+                provider_status_text="A7",
+                runtime_status_text="VIDEO: failed",
+            )
+        )
+    )
+
+    assert display.mode_text == "(1/2) A7 VIDEO: failed -"
+
+
+def test_status_facts_video_degrades_cleanly_when_timing_is_unavailable():
+    display = build_status_display(
+        build_status_contributions_from_facts(
+            _facts(
+                label_path="clip.mp4",
+                is_video=True,
+                video_current_ms=None,
+                video_duration_ms=None,
+                video_paused=False,
+                video_status_text="buffering",
+                current_image_path="clip.mp4",
+                image_paths=["clip.mp4"],
+            )
+        )
+    )
+
+    assert [segment.text for segment in display.filename.segments] == [
+        "clip.mp4",
+        " { VIDEO --:-- / --:-- BUFFERING }",
+    ]
+
+
+def test_status_facts_uses_index_fallback_when_current_path_not_in_list():
+    display = build_status_display(
+        build_status_contributions_from_facts(
+            _facts(
+                current_image_path="outside.jpg",
+                image_paths=["one.jpg", "two.jpg"],
+                current_image_index=9,
+            )
+        )
+    )
+
+    assert display.mode_text == "(2/2) WGT"
 
 
 def test_render_status_orders_left_and_center_from_left_edge():

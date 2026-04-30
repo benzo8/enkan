@@ -38,7 +38,8 @@ from enkan.mySlideshow.NavigationTypes import (
 from enkan.mySlideshow.StatusBar import (
     StatusBar,
     StatusContribution,
-    build_status_contributions,
+    StatusFacts,
+    build_status_contributions_from_facts,
     build_status_display,
 )
 from enkan.mySlideshow.ScopeStack import ScopeStack, ScopeStackEntry
@@ -1400,35 +1401,37 @@ class ImageSlideshow:
             video_paused = False
             video_status_text = ""
 
-        return build_status_contributions(
-            label_path=self._status_label_path(),
-            fixed_path=fixed_path,
-            fixed_colour=fixed_colour,
-            rotation_text=self._format_rotation_display(),
-            zoom_percent=(
-                self.zoompan.get_zoom_percent()
-                if hasattr(self, "zoompan") and self.zoompan
-                else 100
-            ),
-            is_video=is_video,
-            video_current_ms=video_current_ms,
-            video_duration_ms=video_duration_ms,
-            video_paused=video_paused,
-            video_status_text=video_status_text,
-            current_image_path=self.current_image_path,
-            image_paths=self.image_paths,
-            current_image_index=self.current_image_index,
-            provider_enabled=bool(self.mode),
-            provider_label=self.providers.get_current_provider_label(),
-            provider_status_text=self.providers.get_current_provider_status(
-                display_mode=self.providers.get_current_provider_display_mode(),
-                status_payload=provider_status_payload,
-            ),
-            runtime_status_text=getattr(self, "runtime_status_text", ""),
-            subfolder_mode=self.subfolder_mode,
-            parent_mode=self.parent_mode,
-            auto_advance_running=bool(getattr(self, "auto_advance_running", False)),
-            auto_advance_interval=getattr(self, "auto_advance_interval", None),
+        return build_status_contributions_from_facts(
+            StatusFacts(
+                label_path=self._status_label_path(),
+                fixed_path=fixed_path,
+                fixed_colour=fixed_colour,
+                rotation_text=self._format_rotation_display(),
+                zoom_percent=(
+                    self.zoompan.get_zoom_percent()
+                    if hasattr(self, "zoompan") and self.zoompan
+                    else 100
+                ),
+                is_video=is_video,
+                video_current_ms=video_current_ms,
+                video_duration_ms=video_duration_ms,
+                video_paused=video_paused,
+                video_status_text=video_status_text,
+                current_image_path=self.current_image_path,
+                image_paths=self.image_paths,
+                current_image_index=self.current_image_index,
+                provider_enabled=bool(self.mode),
+                provider_label=self.providers.get_current_provider_label(),
+                provider_status_text=self.providers.get_current_provider_status(
+                    display_mode=self.providers.get_current_provider_display_mode(),
+                    status_payload=provider_status_payload,
+                ),
+                runtime_status_text=getattr(self, "runtime_status_text", ""),
+                subfolder_mode=self.subfolder_mode,
+                parent_mode=self.parent_mode,
+                auto_advance_running=bool(getattr(self, "auto_advance_running", False)),
+                auto_advance_interval=getattr(self, "auto_advance_interval", None),
+            )
         )
 
     def update_filename_display(self) -> None:

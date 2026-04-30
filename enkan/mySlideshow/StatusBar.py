@@ -165,6 +165,31 @@ class StatusBarContext:
     auto_advance_interval: int | float | None
 
 
+@dataclass(frozen=True)
+class StatusFacts:
+    label_path: str
+    fixed_path: str | None
+    fixed_colour: str | None
+    rotation_text: str
+    zoom_percent: int
+    is_video: bool
+    video_current_ms: int | None
+    video_duration_ms: int | None
+    video_paused: bool
+    video_status_text: str
+    current_image_path: str | None
+    image_paths: list[str]
+    current_image_index: int
+    provider_enabled: bool
+    provider_label: str
+    provider_status_text: str
+    runtime_status_text: str
+    subfolder_mode: bool
+    parent_mode: bool
+    auto_advance_running: bool
+    auto_advance_interval: int | float | None
+
+
 def render_text(content: object, tag: str = "normal") -> tuple[StatusSegment, ...]:
     text = str(content) if content is not None else ""
     if not text:
@@ -342,17 +367,51 @@ def build_status_contributions(
     auto_advance_running: bool,
     auto_advance_interval: int | float | None,
 ) -> tuple[StatusContribution, ...]:
+    return build_status_contributions_from_facts(
+        StatusFacts(
+            label_path=label_path,
+            fixed_path=fixed_path,
+            fixed_colour=fixed_colour,
+            rotation_text=rotation_text,
+            zoom_percent=zoom_percent,
+            is_video=is_video,
+            video_current_ms=video_current_ms,
+            video_duration_ms=video_duration_ms,
+            video_paused=video_paused,
+            video_status_text=video_status_text,
+            current_image_path=current_image_path,
+            image_paths=image_paths,
+            current_image_index=current_image_index,
+            provider_enabled=provider_enabled,
+            provider_label=provider_label,
+            provider_status_text=provider_status_text,
+            runtime_status_text=runtime_status_text,
+            subfolder_mode=subfolder_mode,
+            parent_mode=parent_mode,
+            auto_advance_running=auto_advance_running,
+            auto_advance_interval=auto_advance_interval,
+        )
+    )
+
+
+def build_status_contributions_from_facts(
+    facts: StatusFacts,
+) -> tuple[StatusContribution, ...]:
     contributions: list[StatusContribution] = [
         StatusContribution(
             "filepath",
             StatusZone.LEFT,
             100,
             kind=StatusKind.FILEPATH,
-            content=StatusFilePath(label_path, fixed_path, fixed_colour),
+            content=StatusFilePath(
+                facts.label_path,
+                facts.fixed_path,
+                facts.fixed_colour,
+            ),
         )
     ]
 
-    if is_video:
+    if facts.is_video:
         contributions.append(
             StatusContribution(
                 "video-timer",
@@ -360,10 +419,14 @@ def build_status_contributions(
                 90,
                 kind=StatusKind.TIMER,
                 content=StatusTimer(
-                    current_ms=video_current_ms,
-                    duration_ms=video_duration_ms,
-                    paused=video_paused,
-                    status_text=video_status_text.upper() if video_status_text else "",
+                    current_ms=facts.video_current_ms,
+                    duration_ms=facts.video_duration_ms,
+                    paused=facts.video_paused,
+                    status_text=(
+                        facts.video_status_text.upper()
+                        if facts.video_status_text
+                        else ""
+                    ),
                     prefix=" { ",
                     suffix=" }",
                 ),
@@ -375,18 +438,22 @@ def build_status_contributions(
                 "image-meta",
                 StatusZone.LEFT,
                 90,
-                content=f" ({rotation_text}, {zoom_percent}%)",
+                content=f" ({facts.rotation_text}, {facts.zoom_percent}%)",
                 style="meta",
             )
         )
 
-    if auto_advance_running and auto_advance_interval is not None and auto_advance_interval > 0:
+    if (
+        facts.auto_advance_running
+        and facts.auto_advance_interval is not None
+        and facts.auto_advance_interval > 0
+    ):
         contributions.append(
             StatusContribution(
                 "auto-advance",
                 StatusZone.RIGHT,
                 0,
-                content=f"AUTO ({auto_advance_interval}ms)  ",
+                content=f"AUTO ({facts.auto_advance_interval}ms)  ",
             )
         )
 
@@ -395,31 +462,35 @@ def build_status_contributions(
             "count",
             StatusZone.RIGHT,
             10,
-            content=_count_text(current_image_path, image_paths, current_image_index),
+            content=_count_text(
+                facts.current_image_path,
+                facts.image_paths,
+                facts.current_image_index,
+            ),
         )
     )
-    if provider_status_text:
+    if facts.provider_status_text:
         contributions.append(
             StatusContribution(
                 "provider-status",
                 StatusZone.RIGHT,
                 20,
-                content=provider_status_text,
+                content=facts.provider_status_text,
             )
         )
-    if runtime_status_text:
+    if facts.runtime_status_text:
         contributions.append(
             StatusContribution(
                 "runtime-status",
                 StatusZone.RIGHT,
                 30,
-                content=runtime_status_text,
+                content=facts.runtime_status_text,
             )
         )
     scope_parts: list[str] = []
-    if subfolder_mode:
+    if facts.subfolder_mode:
         scope_parts.append("SUB")
-    if parent_mode:
+    if facts.parent_mode:
         scope_parts.append("PAR")
     if scope_parts:
         contributions.append(
@@ -435,7 +506,7 @@ def build_status_contributions(
             "provider-label",
             StatusZone.RIGHT,
             100,
-            content=provider_label if provider_enabled else "-",
+            content=facts.provider_label if facts.provider_enabled else "-",
         )
     )
     return tuple(contributions)
