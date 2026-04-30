@@ -876,7 +876,7 @@ def test_stop_offloads_cleanup_to_background_thread(monkeypatch):
     assert events == ["stop", "player-release", "media-release"]
 
 
-def test_stop_hides_video_frame_and_cancels_pending_loop_check():
+def test_stop_hides_video_frame_and_cancels_pending_replay():
     cancelled: list[str] = []
     forgotten: list[str] = []
     controller = VideoPlaybackController(
@@ -886,12 +886,12 @@ def test_stop_hides_video_frame_and_cancels_pending_loop_check():
         logger=logging.getLogger("test"),
         debounce_ms=150,
     )
-    controller._pending_loop_check_id = "loop-check"
+    controller._pending_replay_id = "replay"
     controller._video_frame = SimpleNamespace(place_forget=lambda: forgotten.append("hide"))
 
     controller.stop(async_cleanup=True, hide=True)
 
-    assert cancelled == ["loop-check"]
+    assert cancelled == ["replay"]
     assert forgotten == ["hide"]
 
 
@@ -993,10 +993,10 @@ def test_start_video_playback_releases_media_when_player_setup_fails(monkeypatch
     assert controller._current_media is None
 
 
-def test_controller_loop_check_replays_video_once_at_end():
+def test_controller_end_event_schedules_replay_on_tk_thread():
     controller = VideoPlaybackController(
         root=SimpleNamespace(
-            after=lambda delay, callback: scheduled.append((delay, callback)) or "loop-check"
+            after=lambda delay, callback: scheduled.append((delay, callback)) or "replay"
         ),
         screen_width=100,
         screen_height=100,
@@ -1005,33 +1005,45 @@ def test_controller_loop_check_replays_video_once_at_end():
     )
     controller._video_start_request_id = 3
 
-    events: list[str] = []
     scheduled: list[tuple[int, object]] = []
 
+    controller._on_video_end_reached(None, 3)
+
+    assert controller._pending_replay_id == "replay"
+    assert len(scheduled) == 1
+    assert scheduled[0][0] == 0
+
+
+def test_controller_replay_ended_video_restarts_player():
+    controller = VideoPlaybackController(
+        root=SimpleNamespace(),
+        screen_width=100,
+        screen_height=100,
+        logger=logging.getLogger("test"),
+        debounce_ms=150,
+    )
+    controller._video_start_request_id = 3
+    controller._pending_replay_id = "replay"
+
+    events: list[str] = []
+
     class _Player:
-        def get_length(self):
-            return 1000
-
-        def get_time(self):
-            return 850
-
         def stop(self):
             events.append("stop")
 
         def play(self):
             events.append("play")
+            return 0
 
     controller._video_player = _Player()
 
-    controller._check_video_ended(3)
+    controller._replay_ended_video(3)
 
     assert events == ["stop", "play"]
-    assert controller._pending_loop_check_id == "loop-check"
-    assert len(scheduled) == 1
-    assert scheduled[0][0] == 500
+    assert controller._pending_replay_id is None
 
 
-def test_controller_loop_check_failure_is_recoverable(monkeypatch):
+def test_controller_replay_failure_is_recoverable(monkeypatch):
     controller = VideoPlaybackController(
         root=SimpleNamespace(after_cancel=lambda _: None),
         screen_width=100,
@@ -1047,11 +1059,11 @@ def test_controller_loop_check_failure_is_recoverable(monkeypatch):
     events: list[str] = []
 
     class _Player:
-        def get_length(self):
-            raise RuntimeError("length failed")
-
         def stop(self):
             events.append("player-stop")
+
+        def play(self):
+            raise RuntimeError("play failed")
 
         def release(self):
             events.append("player-release")
@@ -1070,20 +1082,17 @@ def test_controller_loop_check_failure_is_recoverable(monkeypatch):
     )
     controller._video_player = _Player()
 
-    controller._check_video_ended(3)
+    controller._replay_ended_video(3)
 
     assert statuses == ["Video playback failed"]
     assert forgotten == ["hide"]
-    assert events == ["player-stop", "player-release"]
+    assert events == ["player-stop", "player-stop", "player-release"]
     assert controller._video_player is None
 
 
-def test_controller_loop_check_reschedules_when_video_is_not_near_end():
-    scheduled: list[tuple[int, object]] = []
+def test_controller_ignores_stale_end_event():
     controller = VideoPlaybackController(
-        root=SimpleNamespace(
-            after=lambda delay, callback: scheduled.append((delay, callback)) or "loop-check"
-        ),
+        root=SimpleNamespace(after=lambda *_: (_ for _ in ()).throw(AssertionError("stale event should not schedule"))),
         screen_width=100,
         screen_height=100,
         logger=logging.getLogger("test"),
@@ -1091,28 +1100,34 @@ def test_controller_loop_check_reschedules_when_video_is_not_near_end():
     )
     controller._video_start_request_id = 3
 
-    class _Player:
-        def get_length(self):
-            return 1000
+    controller._on_video_end_reached(None, 2)
 
-        def get_time(self):
-            return 100
-
-    controller._video_player = _Player()
-
-    controller._check_video_ended(3)
-
-    assert controller._pending_loop_check_id == "loop-check"
-    assert len(scheduled) == 1
-    assert scheduled[0][0] == 500
+    assert controller._pending_replay_id is None
 
 
-def test_controller_loop_check_does_not_replay_while_paused():
-    scheduled: list[tuple[int, object]] = []
+def test_controller_ignores_duplicate_end_event_while_replay_pending():
     controller = VideoPlaybackController(
         root=SimpleNamespace(
-            after=lambda delay, callback: scheduled.append((delay, callback)) or "loop-check"
+            after=lambda *_: (_ for _ in ()).throw(
+                AssertionError("duplicate event should not schedule")
+            )
         ),
+        screen_width=100,
+        screen_height=100,
+        logger=logging.getLogger("test"),
+        debounce_ms=150,
+    )
+    controller._video_start_request_id = 3
+    controller._pending_replay_id = "replay"
+
+    controller._on_video_end_reached(None, 3)
+
+    assert controller._pending_replay_id == "replay"
+
+
+def test_controller_replay_does_not_restart_while_paused():
+    controller = VideoPlaybackController(
+        root=SimpleNamespace(),
         screen_width=100,
         screen_height=100,
         logger=logging.getLogger("test"),
@@ -1121,14 +1136,13 @@ def test_controller_loop_check_does_not_replay_while_paused():
     controller._video_start_request_id = 3
     controller._is_paused = True
     controller._video_player = SimpleNamespace(
-        get_length=lambda: (_ for _ in ()).throw(AssertionError("should not poll")),
-        get_time=lambda: (_ for _ in ()).throw(AssertionError("should not poll")),
+        stop=lambda: (_ for _ in ()).throw(AssertionError("should not replay")),
+        play=lambda: (_ for _ in ()).throw(AssertionError("should not replay")),
     )
 
-    controller._check_video_ended(3)
+    controller._replay_ended_video(3)
 
-    assert controller._pending_loop_check_id == "loop-check"
-    assert len(scheduled) == 1
+    assert controller._video_player is not None
 
 
 def test_controller_toggle_pause_updates_player_pause_state():

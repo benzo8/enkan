@@ -7,7 +7,7 @@ try:
     VERSION = _pkg_version(PACKAGE_NAME)
 except PackageNotFoundError:
     # Fallback during source-only situations (keep in sync with pyproject if used)
-    VERSION = "2.6.0.dev5"
+    VERSION = "2.6.0.dev6"
 TOTAL_WEIGHT = 100
 PARENT_STACK_MAX = 5
 HISTORY_QUEUE_LENGTH = 25

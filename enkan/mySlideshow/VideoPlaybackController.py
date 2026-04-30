@@ -52,9 +52,10 @@ class VideoPlaybackController:
         self._vlc_instance = None
         self._current_media = None
         self._current_video_payload: CachedVideoData | None = None
+        self._video_event_manager = None
 
         self._pending_video_start_id = None
-        self._pending_loop_check_id = None
+        self._pending_replay_id = None
         self._video_start_request_id = 0
         self._video_cleanup_done = threading.Event()
         self._video_cleanup_done.set()
@@ -80,19 +81,29 @@ class VideoPlaybackController:
                 )
         self._pending_video_start_id = None
 
-    def _cancel_pending_loop_check(self) -> None:
-        loop_check_id = self._pending_loop_check_id
-        if loop_check_id is None:
+    def _cancel_pending_replay(self) -> None:
+        replay_id = self._pending_replay_id
+        if replay_id is None:
             return
         after_cancel = getattr(self.root, "after_cancel", None)
         if callable(after_cancel):
             try:
-                after_cancel(loop_check_id)
+                after_cancel(replay_id)
             except tk.TclError:
                 self.logger.debug(
-                    "Pending video loop check was already cleared.", exc_info=True
+                    "Pending video replay was already cleared.", exc_info=True
                 )
-        self._pending_loop_check_id = None
+        self._pending_replay_id = None
+
+    def _detach_video_end_handler(self) -> None:
+        event_manager = self._video_event_manager
+        if event_manager is None:
+            return
+        try:
+            event_manager.event_detach(vlc.EventType.MediaPlayerEndReached)
+        except Exception:
+            self.logger.debug("Failed to detach VLC end event handler.", exc_info=True)
+        self._video_event_manager = None
 
     def _is_video_cleanup_active(self) -> bool:
         return not self._video_cleanup_done.is_set()
@@ -125,7 +136,8 @@ class VideoPlaybackController:
     def stop(self, async_cleanup: bool = True, hide: bool = False) -> None:
         self._video_start_request_id += 1
         self._cancel_pending_video_start()
-        self._cancel_pending_loop_check()
+        self._cancel_pending_replay()
+        self._detach_video_end_handler()
         if hide:
             self._hide_video_frame()
 
@@ -245,6 +257,7 @@ class VideoPlaybackController:
             else:
                 raise RuntimeError(f"Unsupported platform: {sys.platform}")
 
+            self._attach_video_end_handler(request_id)
             result = self._video_player.play()
             if result == -1:
                 self._set_status("Video playback failed", on_status_changed)
@@ -253,45 +266,58 @@ class VideoPlaybackController:
             if callable(on_video_started):
                 on_video_started()
             self._set_status("", on_status_changed)
-            self._schedule_loop_check(request_id)
         except Exception as exc:
             self.logger.warning("Failed to start video playback: %s", image_path, exc_info=exc)
             self._set_status("Video playback failed", on_status_changed)
             self.stop(async_cleanup=True, hide=True)
 
-    def _schedule_loop_check(self, request_id: int) -> None:
-        self._pending_loop_check_id = self.root.after(
-            500,
-            lambda: self._check_video_ended(request_id),
+    def _attach_video_end_handler(self, request_id: int) -> None:
+        if self._video_player is None:
+            return
+        self._detach_video_end_handler()
+        event_manager = self._video_player.event_manager()
+        event_manager.event_attach(
+            vlc.EventType.MediaPlayerEndReached,
+            self._on_video_end_reached,
+            request_id,
         )
+        self._video_event_manager = event_manager
 
-    def _check_video_ended(self, request_id: int) -> None:
-        self._pending_loop_check_id = None
+    def _on_video_end_reached(self, event, request_id: int) -> None:
+        if request_id != self._video_start_request_id:
+            return
+        if self._pending_replay_id is not None:
+            return
+        root_after = getattr(self.root, "after", None)
+        if not callable(root_after):
+            return
+        try:
+            self._pending_replay_id = root_after(
+                0,
+                lambda: self._replay_ended_video(request_id),
+            )
+        except Exception:
+            self.logger.debug("Failed to schedule VLC replay callback.", exc_info=True)
+
+    def _replay_ended_video(self, request_id: int) -> None:
+        self._pending_replay_id = None
         if request_id != self._video_start_request_id:
             return
         video_player = self._video_player
         if not video_player:
             return
         if self._is_paused:
-            self._schedule_loop_check(request_id)
             return
 
         try:
-            length = video_player.get_length()
-            time = video_player.get_time()
-
-            if length > 0 and time >= length - 200:
-                video_player.stop()
-                video_player.play()
-                self._schedule_loop_check(request_id)
-                return
+            video_player.stop()
+            result = video_player.play()
+            if result == -1:
+                raise RuntimeError("VLC replay failed.")
         except Exception as exc:
-            self.logger.warning("Video playback loop check failed.", exc_info=exc)
+            self.logger.warning("Video replay failed.", exc_info=exc)
             self._set_status("Video playback failed")
             self.stop(async_cleanup=True, hide=True)
-            return
-
-        self._schedule_loop_check(request_id)
 
     def set_muted(self, muted: bool) -> None:
         if self._video_player is not None:
