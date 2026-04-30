@@ -26,7 +26,6 @@ from enkan.tree.tree_logic import (
 from enkan.tree.diagnostics import print_tree
 from enkan.mySlideshow.Gui.Gui import Gui
 from enkan.mySlideshow.MediaFileOps import (
-    ORIENTATION_TO_CW,
     delete_media_file,
     write_exif_orientation,
 )
@@ -36,9 +35,11 @@ from enkan.mySlideshow.NavigationTypes import (
     ScopeKind,
 )
 from enkan.mySlideshow.StatusBar import (
+    FILEPATH_STATUS_KEY,
     StatusBar,
     StatusContribution,
     StatusFacts,
+    build_filepath_contribution,
     build_status_contributions_from_facts,
 )
 from enkan.mySlideshow.ScopeStack import ScopeStack, ScopeStackEntry
@@ -117,8 +118,6 @@ class ImageSlideshow:
         self.video_muted: bool = self.defaults.mute
         self.interval: int | float | None = interval
 
-        self.rotation_angle: int | float = 0
-        self.current_exif_orientation: int = 1
         self.root.configure(background="black")  # Set root background to black
         self.label = tk.Label(root, bg="black")  # Set label background to black
         self.label.pack()
@@ -141,6 +140,7 @@ class ImageSlideshow:
             self.screen_width,
             self.screen_height,
             on_image_changed=self.update_filename_display,
+            status_sink=self.status_bar,
         )
 
         self.root.attributes("-fullscreen", True)
@@ -484,20 +484,18 @@ class ImageSlideshow:
         if not utils.is_videofile(image_path):
             self._set_runtime_status("")
             image = media_payload
-            self.current_exif_orientation = image.info.get("exif_orientation", 1)
-            # If rotating, apply before handing to ZoomPan
-            if hasattr(self, "rotation_angle") and self.rotation_angle:
-                image = image.rotate(self.rotation_angle, expand=True)
             # Provide full-resolution image to ZoomPan, which will fit & manage viewport
-            self.zoompan.set_image(image)
+            self.zoompan.set_image(
+                image,
+                exif_orientation=image.info.get("exif_orientation", 1),
+            )
             self.label.pack()
         else:
             self._set_runtime_status("")
-            self.current_exif_orientation = 1
             # Clear any existing image from label
             self.label.config(image="")
             self.label.image = None
-            self.zoompan.orig_image = None  # disable zoom state while video plays
+            self.zoompan.clear_image()  # disable zoom state while video plays
             self.label.pack()
             self._schedule_video_start(
                 image_path,
@@ -509,8 +507,7 @@ class ImageSlideshow:
         self._record_memory_for_view(image_path, record_history, provider_pick_meta)
 
     def next_image(self, event=None) -> None:
-        if self.rotation_angle != 0:
-            self.rotation_angle = 0
+        self.zoompan.reset_display_rotation()
         self.show_image()
         self.reset_auto_advance()
 
@@ -887,8 +884,7 @@ class ImageSlideshow:
             case "Right":
                 image_path, image_obj = self.manager.forward()
         if image_path:
-            if self.rotation_angle != 0:
-                self.rotation_angle = 0
+            self.zoompan.reset_display_rotation()
             self.show_image(image_path, record_history=False)
             self.reset_auto_advance()
 
@@ -899,8 +895,7 @@ class ImageSlideshow:
                     image_path = self.image_paths[self.current_image_index + 1]
                 case "Down":
                     image_path = self.image_paths[self.current_image_index - 1]
-            if self.rotation_angle != 0:
-                self.rotation_angle = 0
+            self.zoompan.reset_display_rotation()
             self.show_image(image_path)
             self.reset_auto_advance()
         except IndexError:
@@ -915,7 +910,8 @@ class ImageSlideshow:
             return
         if utils.is_videofile(self.current_image_path):
             return
-        if self.rotation_angle % 360 == 0:
+        rotation_angle = getattr(self.zoompan, "rotation_angle", 0)
+        if rotation_angle % 360 == 0:
             return
 
         confirm: bool = self._confirm_action(
@@ -927,7 +923,7 @@ class ImageSlideshow:
         try:
             outcome = write_exif_orientation(
                 self.current_image_path,
-                self.rotation_angle,
+                rotation_angle,
             )
             if outcome.warning_title and outcome.warning_message:
                 self._show_warning(outcome.warning_title, outcome.warning_message)
@@ -945,8 +941,7 @@ class ImageSlideshow:
             return
 
         self.manager.invalidate(self.current_image_path)
-        self.rotation_angle = 0
-        self.current_exif_orientation = outcome.new_orientation
+        self.zoompan.update_exif_orientation(outcome.new_orientation)
         self.show_image(self.current_image_path, record_history=False)
 
     def rotate_image(self, event=None):
@@ -956,8 +951,7 @@ class ImageSlideshow:
             return "break"
         if not utils.is_imagefile(self.current_image_path):
             return None
-        self.rotation_angle = (self.rotation_angle - 90) % 360
-        self.show_image(self.current_image_path, record_history=False)
+        self.zoompan.rotate_display(-90)
         return "break"
 
     def toggle_mute(self, event=None) -> None:
@@ -1286,16 +1280,6 @@ class ImageSlideshow:
 
     # --- Status-Bar Display ---
 
-    def _format_rotation_display(self) -> str:
-        exif_angle: int = ORIENTATION_TO_CW.get(self.current_exif_orientation, 0)
-        manual_delta: int = (-self.rotation_angle) % 360
-        if manual_delta:
-            total_angle: int = (exif_angle + manual_delta) % 360
-            return f"{total_angle}°"
-        if exif_angle:
-            return f"{exif_angle}° [EXIF]"
-        return "0°"
-
     def _status_label_path(self) -> str:
         label_path = self.current_image_path
         if self._navigation_state().is_branch:
@@ -1356,12 +1340,8 @@ class ImageSlideshow:
                 label_path=self._status_label_path(),
                 fixed_path=fixed_path,
                 fixed_colour=fixed_colour,
-                rotation_text=self._format_rotation_display(),
-                zoom_percent=(
-                    self.zoompan.get_zoom_percent()
-                    if hasattr(self, "zoompan") and self.zoompan
-                    else 100
-                ),
+                rotation_text="0°",
+                zoom_percent=100,
                 is_video=is_video,
                 video_current_ms=None,
                 video_duration_ms=None,
@@ -1381,16 +1361,30 @@ class ImageSlideshow:
                 parent_mode=self.parent_mode,
                 auto_advance_running=bool(getattr(self, "auto_advance_running", False)),
                 auto_advance_interval=getattr(self, "auto_advance_interval", None),
+                filepath_from_sink=True,
                 video_timer_from_sink=True,
+                image_meta_from_sink=True,
+            )
+        )
+
+    def _publish_filepath_status(self) -> None:
+        fixed_path, fixed_colour = self._status_fixed_path_and_colour()
+        self.status_bar.set_contribution(
+            build_filepath_contribution(
+                self._status_label_path(),
+                fixed_path,
+                fixed_colour,
             )
         )
 
     def update_filename_display(self) -> None:
         if self.show_filename:
             if not self.current_image_path or not self.image_paths:
+                self.status_bar.clear_contribution(FILEPATH_STATUS_KEY)
                 self.status_bar.set_base_contributions((), visible=False)
                 return
 
+            self._publish_filepath_status()
             self.status_bar.set_base_contributions(
                 self._status_contributions(),
                 visible=True,

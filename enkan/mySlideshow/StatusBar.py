@@ -6,6 +6,8 @@ from typing import Protocol
 
 VIDEO_TIMER_STATUS_KEY = "video-timer"
 VIDEO_RUNTIME_STATUS_KEY = "video-runtime-status"
+FILEPATH_STATUS_KEY = "filepath"
+IMAGE_META_STATUS_KEY = "image-meta"
 
 
 @dataclass(frozen=True)
@@ -206,6 +208,33 @@ def build_video_runtime_status_contribution(status_text: str) -> "StatusContribu
     )
 
 
+def build_filepath_contribution(
+    label_path: str,
+    fixed_path: str | None,
+    fixed_colour: str | None,
+) -> "StatusContribution":
+    return StatusContribution(
+        FILEPATH_STATUS_KEY,
+        StatusZone.LEFT,
+        100,
+        kind=StatusKind.FILEPATH,
+        content=StatusFilePath(label_path, fixed_path, fixed_colour),
+    )
+
+
+def build_image_meta_contribution(
+    rotation_text: str,
+    zoom_percent: int,
+) -> "StatusContribution":
+    return StatusContribution(
+        IMAGE_META_STATUS_KEY,
+        StatusZone.LEFT,
+        90,
+        content=f" ({rotation_text}, {zoom_percent}%)",
+        style="meta",
+    )
+
+
 @dataclass(frozen=True)
 class StatusDots:
     full: int
@@ -283,7 +312,9 @@ class StatusFacts:
     parent_mode: bool
     auto_advance_running: bool
     auto_advance_interval: int | float | None
+    filepath_from_sink: bool = False
     video_timer_from_sink: bool = False
+    image_meta_from_sink: bool = False
 
 
 def render_text(content: object, tag: str = "normal") -> tuple[StatusSegment, ...]:
@@ -486,7 +517,9 @@ def build_status_contributions(
             parent_mode=parent_mode,
             auto_advance_running=auto_advance_running,
             auto_advance_interval=auto_advance_interval,
+            filepath_from_sink=False,
             video_timer_from_sink=False,
+            image_meta_from_sink=False,
         )
     )
 
@@ -494,19 +527,15 @@ def build_status_contributions(
 def build_status_contributions_from_facts(
     facts: StatusFacts,
 ) -> tuple[StatusContribution, ...]:
-    contributions: list[StatusContribution] = [
-        StatusContribution(
-            "filepath",
-            StatusZone.LEFT,
-            100,
-            kind=StatusKind.FILEPATH,
-            content=StatusFilePath(
+    contributions: list[StatusContribution] = []
+    if not facts.filepath_from_sink:
+        contributions.append(
+            build_filepath_contribution(
                 facts.label_path,
                 facts.fixed_path,
                 facts.fixed_colour,
-            ),
+            )
         )
-    ]
 
     if facts.is_video:
         if not facts.video_timer_from_sink:
@@ -518,14 +547,11 @@ def build_status_contributions_from_facts(
                     status_text=facts.video_status_text,
                 )
             )
-    else:
+    elif not facts.image_meta_from_sink:
         contributions.append(
-            StatusContribution(
-                "image-meta",
-                StatusZone.LEFT,
-                90,
-                content=f" ({facts.rotation_text}, {facts.zoom_percent}%)",
-                style="meta",
+            build_image_meta_contribution(
+                facts.rotation_text,
+                facts.zoom_percent,
             )
         )
 

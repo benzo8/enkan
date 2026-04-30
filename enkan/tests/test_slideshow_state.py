@@ -533,8 +533,14 @@ def test_delete_image_ignores_missing_history_entry(monkeypatch):
 def test_persist_rotation_to_exif_uses_file_op_result(monkeypatch):
     slideshow = ImageSlideshow.__new__(ImageSlideshow)
     slideshow.current_image_path = "image.jpg"
-    slideshow.rotation_angle = 90
-    slideshow.current_exif_orientation = 1
+    slideshow.zoompan = SimpleNamespace(
+        rotation_angle=90,
+        update_exif_orientation=lambda orientation: setattr(
+            slideshow.zoompan,
+            "updated_orientation",
+            orientation,
+        ),
+    )
     slideshow._confirm_action = lambda title, message: True
 
     warnings = []
@@ -557,15 +563,19 @@ def test_persist_rotation_to_exif_uses_file_op_result(monkeypatch):
 
     assert warnings == []
     assert invalidated == ["image.jpg"]
-    assert slideshow.rotation_angle == 0
-    assert slideshow.current_exif_orientation == 6
+    assert slideshow.zoompan.updated_orientation == 6
     assert shown == [("image.jpg", False)]
 
 
 def test_rotate_image_ignores_video_without_restarting(monkeypatch):
     slideshow = ImageSlideshow.__new__(ImageSlideshow)
     slideshow.current_image_path = "clip.mp4"
-    slideshow.rotation_angle = 0
+    slideshow.zoompan = SimpleNamespace(
+        rotation_angle=0,
+        rotate_display=lambda *_: (_ for _ in ()).throw(
+            AssertionError("video rotation should not touch image display")
+        ),
+    )
     slideshow.show_image = lambda *args, **kwargs: (_ for _ in ()).throw(
         AssertionError("video rotation should not restart playback")
     )
@@ -573,24 +583,20 @@ def test_rotate_image_ignores_video_without_restarting(monkeypatch):
     monkeypatch.setattr("enkan.mySlideshow.mySlideshow.utils.is_imagefile", lambda path: False)
 
     assert slideshow.rotate_image() == "break"
-    assert slideshow.rotation_angle == 0
+    assert slideshow.zoompan.rotation_angle == 0
 
 
 def test_rotate_image_still_rotates_images(monkeypatch):
     slideshow = ImageSlideshow.__new__(ImageSlideshow)
     slideshow.current_image_path = "image.jpg"
-    slideshow.rotation_angle = 0
-    shown: list[tuple[str, bool]] = []
-    slideshow.show_image = lambda path, record_history=False: shown.append(
-        (path, record_history)
-    )
+    rotations: list[int] = []
+    slideshow.zoompan = SimpleNamespace(rotate_display=lambda delta: rotations.append(delta))
     monkeypatch.setattr("enkan.mySlideshow.mySlideshow.utils.is_videofile", lambda path: False)
     monkeypatch.setattr("enkan.mySlideshow.mySlideshow.utils.is_imagefile", lambda path: True)
 
     assert slideshow.rotate_image() == "break"
 
-    assert slideshow.rotation_angle == 270
-    assert shown == [("image.jpg", False)]
+    assert rotations == [-90]
 
 
 def test_show_image_allows_history_item_outside_current_scope():
@@ -610,7 +616,7 @@ def test_show_image_allows_history_item_outside_current_scope():
         get_current_provider_display_mode=lambda: "off",
     )
     slideshow._record_memory_for_view = lambda image_path, record_history, provider_pick_meta=None: None
-    slideshow.zoompan = SimpleNamespace(set_image=lambda image: None)
+    slideshow.zoompan = SimpleNamespace(set_image=lambda image, **kwargs: None)
     slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
     slideshow.status_bar = SimpleNamespace(raise_widgets=lambda: None)
     slideshow.update_filename_display = lambda: None
@@ -648,7 +654,7 @@ def test_show_image_preserves_provider_payload_on_same_image_redisplay():
     slideshow.selection_weights = SimpleNamespace(weights=[1.0])
     slideshow.folder_memory = SimpleNamespace()
     slideshow._record_memory_for_view = lambda image_path, record_history, provider_pick_meta=None: None
-    slideshow.zoompan = SimpleNamespace(set_image=lambda image: None)
+    slideshow.zoompan = SimpleNamespace(set_image=lambda image, **kwargs: None)
     slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
     slideshow.status_bar = SimpleNamespace(raise_widgets=lambda: None)
     slideshow.update_filename_display = lambda: None
@@ -704,7 +710,7 @@ def test_show_image_displays_before_recording_memory():
         get_current_provider_name=lambda: "weighted",
         get_current_provider_display_mode=lambda: "off",
     )
-    slideshow.zoompan = SimpleNamespace(set_image=lambda image: order.append("display"))
+    slideshow.zoompan = SimpleNamespace(set_image=lambda image, **kwargs: order.append("display"))
     slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
     slideshow.status_bar = SimpleNamespace(
         raise_widgets=lambda: order.append("status-raise")
@@ -747,7 +753,7 @@ def test_show_image_debounces_rapid_video_start_requests(monkeypatch):
         get_current_provider_name=lambda: "weighted",
         get_current_provider_display_mode=lambda: "off",
     )
-    slideshow.zoompan = SimpleNamespace(orig_image=None)
+    slideshow.zoompan = SimpleNamespace(clear_image=lambda: None)
     slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
     slideshow.status_bar = SimpleNamespace(raise_widgets=lambda: None)
     slideshow.update_filename_display = lambda: None
@@ -1498,7 +1504,7 @@ def test_show_image_does_not_create_slideshow_vlc_state_for_images():
         get_current_provider_name=lambda: "weighted",
         get_current_provider_display_mode=lambda: "off",
     )
-    slideshow.zoompan = SimpleNamespace(set_image=lambda image: None)
+    slideshow.zoompan = SimpleNamespace(set_image=lambda image, **kwargs: None)
     slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
     slideshow.status_bar = SimpleNamespace(raise_widgets=lambda: None)
     slideshow.update_filename_display = lambda: None

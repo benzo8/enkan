@@ -283,6 +283,20 @@ def test_status_facts_video_sink_mode_does_not_show_image_meta():
     assert [segment.text for segment in display.filename.segments] == ["clip.mp4"]
 
 
+def test_status_facts_filepath_and_image_meta_sink_mode_omits_left_segments():
+    display = build_status_display(
+        build_status_contributions_from_facts(
+            _facts(
+                filepath_from_sink=True,
+                image_meta_from_sink=True,
+            )
+        )
+    )
+
+    assert display.filename.segments == ()
+    assert display.mode_text == "(1/2) WGT"
+
+
 def test_status_facts_uses_index_fallback_when_current_path_not_in_list():
     display = build_status_display(
         build_status_contributions_from_facts(
