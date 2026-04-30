@@ -206,6 +206,10 @@ When the information line is visible during video playback, image rotation and z
 metadata are replaced by video state, for example
 `{ VIDEO 01:23 / 04:56 PAUSED }`.
 
+Video playback failures are reported in the information line rather than through
+modal dialogs, and the slideshow should remain navigable so you can advance past
+a failed clip.
+
 ## Navigation and Parent Mode
 
 enkan can navigate in two modes:
