@@ -15,6 +15,12 @@ class FilenameDisplay:
     width: int
 
 
+@dataclass(frozen=True)
+class StatusDisplay:
+    filename: FilenameDisplay
+    mode_text: str
+
+
 class StatusZone(str, Enum):
     LEFT = "left"
     CENTER = "center"
@@ -43,6 +49,8 @@ class StatusTimer:
     paused: bool = False
     status_text: str = ""
     label: str = "VIDEO"
+    prefix: str = ""
+    suffix: str = ""
 
 
 @dataclass(frozen=True)
@@ -143,7 +151,7 @@ def render_timer(timer: StatusTimer) -> tuple[StatusSegment, ...]:
         parts.append("PAUSED")
     if timer.status_text:
         parts.append(timer.status_text)
-    return (StatusSegment(" ".join(parts), "timer"),)
+    return (StatusSegment(f"{timer.prefix}{' '.join(parts)}{timer.suffix}", "timer"),)
 
 
 def render_dots(dots: StatusDots) -> tuple[StatusSegment, ...]:
@@ -238,26 +246,205 @@ def render_status(
     )
 
 
+def _count_text(
+    current_image_path: str | None,
+    image_paths: list[str],
+    current_image_index: int,
+) -> str:
+    count = len(image_paths)
+    if count <= 0:
+        return "(0/0)"
+    if current_image_path in image_paths:
+        return f"({image_paths.index(current_image_path) + 1}/{count})"
+    idx = max(1, min(current_image_index + 1, count))
+    return f"({idx}/{count})"
+
+
+def build_status_contributions(
+    *,
+    label_path: str,
+    fixed_path: str | None,
+    fixed_colour: str | None,
+    rotation_text: str,
+    zoom_percent: int,
+    is_video: bool,
+    video_current_ms: int | None,
+    video_duration_ms: int | None,
+    video_paused: bool,
+    video_status_text: str,
+    current_image_path: str | None,
+    image_paths: list[str],
+    current_image_index: int,
+    provider_enabled: bool,
+    provider_label: str,
+    provider_status_text: str,
+    runtime_status_text: str,
+    subfolder_mode: bool,
+    parent_mode: bool,
+    auto_advance_running: bool,
+    auto_advance_interval: int | float | None,
+) -> tuple[StatusContribution, ...]:
+    contributions: list[StatusContribution] = [
+        StatusContribution(
+            "filepath",
+            StatusZone.LEFT,
+            100,
+            kind=StatusKind.FILEPATH,
+            content=StatusFilePath(label_path, fixed_path, fixed_colour),
+        )
+    ]
+
+    if is_video:
+        contributions.append(
+            StatusContribution(
+                "video-timer",
+                StatusZone.LEFT,
+                90,
+                kind=StatusKind.TIMER,
+                content=StatusTimer(
+                    current_ms=video_current_ms,
+                    duration_ms=video_duration_ms,
+                    paused=video_paused,
+                    status_text=video_status_text.upper() if video_status_text else "",
+                    prefix=" { ",
+                    suffix=" }",
+                ),
+            )
+        )
+    else:
+        contributions.append(
+            StatusContribution(
+                "image-meta",
+                StatusZone.LEFT,
+                90,
+                content=f" ({rotation_text}, {zoom_percent}%)",
+                style="meta",
+            )
+        )
+
+    if auto_advance_running and auto_advance_interval is not None and auto_advance_interval > 0:
+        contributions.append(
+            StatusContribution(
+                "auto-advance",
+                StatusZone.RIGHT,
+                0,
+                content=f"AUTO ({auto_advance_interval}ms)  ",
+            )
+        )
+
+    contributions.append(
+        StatusContribution(
+            "count",
+            StatusZone.RIGHT,
+            10,
+            content=_count_text(current_image_path, image_paths, current_image_index),
+        )
+    )
+    if provider_status_text:
+        contributions.append(
+            StatusContribution(
+                "provider-status",
+                StatusZone.RIGHT,
+                20,
+                content=provider_status_text,
+            )
+        )
+    if runtime_status_text:
+        contributions.append(
+            StatusContribution(
+                "runtime-status",
+                StatusZone.RIGHT,
+                30,
+                content=runtime_status_text,
+            )
+        )
+    scope_parts: list[str] = []
+    if subfolder_mode:
+        scope_parts.append("SUB")
+    if parent_mode:
+        scope_parts.append("PAR")
+    if scope_parts:
+        contributions.append(
+            StatusContribution(
+                "scope",
+                StatusZone.RIGHT,
+                40,
+                content=" ".join(scope_parts),
+            )
+        )
+    contributions.append(
+        StatusContribution(
+            "provider-label",
+            StatusZone.RIGHT,
+            100,
+            content=provider_label if provider_enabled else "-",
+        )
+    )
+    return tuple(contributions)
+
+
+def build_status_display(
+    contributions: list[StatusContribution] | tuple[StatusContribution, ...],
+) -> StatusDisplay:
+    filename_segments: list[StatusSegment] = []
+    fixed_colour = "white"
+    for contribution in sort_contributions(contributions, StatusZone.LEFT):
+        if (
+            contribution.kind == StatusKind.FILEPATH
+            and isinstance(contribution.content, StatusFilePath)
+        ):
+            fixed_colour = contribution.content.fixed_colour or "white"
+        filename_segments.extend(render_contribution(contribution))
+
+    rendered_filename_segments = tuple(filename_segments)
+    filename_display = FilenameDisplay(
+        segments=rendered_filename_segments,
+        fixed_colour=fixed_colour,
+        width=len("".join(segment.text for segment in rendered_filename_segments)) + 10,
+    )
+    return StatusDisplay(
+        filename=filename_display,
+        mode_text=render_zone(contributions, StatusZone.RIGHT).text,
+    )
+
+
 def build_filename_display(context: StatusBarContext) -> FilenameDisplay:
-    fixed_colour = context.fixed_colour or "white"
-    segments = render_filepath(
-        StatusFilePath(
+    display = build_status_display(
+        build_status_contributions(
             label_path=context.label_path,
             fixed_path=context.fixed_path,
             fixed_colour=context.fixed_colour,
+            rotation_text=context.rotation_text,
+            zoom_percent=context.zoom_percent,
+            is_video=context.filename_meta_text is not None,
+            video_current_ms=None,
+            video_duration_ms=None,
+            video_paused=False,
+            video_status_text="",
+            current_image_path=context.current_image_path,
+            image_paths=context.image_paths,
+            current_image_index=context.current_image_index,
+            provider_enabled=context.provider_enabled,
+            provider_label=context.provider_label,
+            provider_status_text=context.provider_status_text,
+            runtime_status_text=context.runtime_status_text,
+            subfolder_mode=context.subfolder_mode,
+            parent_mode=context.parent_mode,
+            auto_advance_running=context.auto_advance_running,
+            auto_advance_interval=context.auto_advance_interval,
         )
     )
-    meta_text = (
-        context.filename_meta_text
-        if context.filename_meta_text is not None
-        else f" ({context.rotation_text}, {context.zoom_percent}%)"
+    if context.filename_meta_text is None:
+        return display.filename
+
+    segments = render_filepath(
+        StatusFilePath(context.label_path, context.fixed_path, context.fixed_colour)
     )
-    segments = (*segments, StatusSegment(meta_text, "meta"))
-    width = len("".join(segment.text for segment in segments)) + 10
+    segments = (*segments, StatusSegment(context.filename_meta_text, "meta"))
     return FilenameDisplay(
         segments=segments,
-        fixed_colour=fixed_colour,
-        width=width,
+        fixed_colour=context.fixed_colour or "white",
+        width=len("".join(segment.text for segment in segments)) + 10,
     )
 
 

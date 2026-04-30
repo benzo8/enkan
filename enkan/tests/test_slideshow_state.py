@@ -1295,21 +1295,6 @@ def test_video_seek_hotkey_updates_status_when_seek_succeeds():
     assert updated == ["updated"]
 
 
-def test_video_filename_meta_replaces_image_rotation_and_zoom():
-    slideshow = ImageSlideshow.__new__(ImageSlideshow)
-    slideshow.current_image_path = "clip.mp4"
-    slideshow.video_controller = SimpleNamespace(
-        playback_snapshot=lambda: SimpleNamespace(
-            current_time_ms=65000,
-            duration_ms=125000,
-            paused=True,
-            status_text="",
-        )
-    )
-
-    assert slideshow._format_filename_meta() == " { VIDEO 01:05 / 02:05 PAUSED }"
-
-
 def test_controller_playback_snapshot_handles_active_and_inactive_states():
     controller = VideoPlaybackController(
         root=SimpleNamespace(),

@@ -8,6 +8,8 @@ from enkan.mySlideshow.StatusBar import (
     StatusBarContext,
     build_filename_display,
     build_mode_text,
+    build_status_contributions,
+    build_status_display,
     render_contribution,
     render_dots,
     render_status,
@@ -101,6 +103,79 @@ def test_build_mode_text_prefixes_auto_advance():
     )
 
     assert text == "AUTO (5000ms)   (1/2) WGT"
+
+
+def test_status_contributions_reproduce_image_status_display():
+    display = build_status_display(
+        build_status_contributions(
+            label_path="root\\folder\\image.jpg",
+            fixed_path="root\\folder",
+            fixed_colour="gold",
+            rotation_text="90°",
+            zoom_percent=125,
+            is_video=False,
+            video_current_ms=None,
+            video_duration_ms=None,
+            video_paused=False,
+            video_status_text="",
+            current_image_path="root\\folder\\image.jpg",
+            image_paths=["root\\folder\\image.jpg", "root\\folder\\two.jpg"],
+            current_image_index=0,
+            provider_enabled=True,
+            provider_label="CRW",
+            provider_status_text="A7",
+            runtime_status_text="",
+            subfolder_mode=True,
+            parent_mode=False,
+            auto_advance_running=True,
+            auto_advance_interval=5000,
+        )
+    )
+
+    assert [segment.text for segment in display.filename.segments] == [
+        "root\\folder",
+        "\\image.jpg",
+        " (90°, 125%)",
+    ]
+    assert display.filename.fixed_colour == "gold"
+    assert display.mode_text == "AUTO (5000ms)   (1/2) A7 SUB CRW"
+
+
+def test_status_contributions_reproduce_video_timer_display():
+    display = build_status_display(
+        build_status_contributions(
+            label_path="clip.mp4",
+            fixed_path=None,
+            fixed_colour=None,
+            rotation_text="0°",
+            zoom_percent=100,
+            is_video=True,
+            video_current_ms=65_000,
+            video_duration_ms=125_000,
+            video_paused=True,
+            video_status_text="",
+            current_image_path="clip.mp4",
+            image_paths=["clip.mp4"],
+            current_image_index=0,
+            provider_enabled=True,
+            provider_label="WGT",
+            provider_status_text="",
+            runtime_status_text="",
+            subfolder_mode=False,
+            parent_mode=False,
+            auto_advance_running=False,
+            auto_advance_interval=None,
+        )
+    )
+
+    assert [segment.text for segment in display.filename.segments] == [
+        "clip.mp4",
+        " { VIDEO 01:05 / 02:05 PAUSED }",
+    ]
+    assert [segment.tag for segment in display.filename.segments] == [
+        "normal",
+        "timer",
+    ]
 
 
 def test_render_status_orders_left_and_center_from_left_edge():

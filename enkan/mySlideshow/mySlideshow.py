@@ -36,9 +36,9 @@ from enkan.mySlideshow.NavigationTypes import (
     ScopeKind,
 )
 from enkan.mySlideshow.StatusBar import (
-    StatusBarContext,
-    build_filename_display,
-    build_mode_text,
+    StatusContribution,
+    build_status_contributions,
+    build_status_display,
 )
 from enkan.mySlideshow.ScopeStack import ScopeStack, ScopeStackEntry
 from enkan.mySlideshow.VideoPlaybackController import VideoPlaybackController
@@ -1345,30 +1345,6 @@ class ImageSlideshow:
             return f"{exif_angle}° [EXIF]"
         return "0°"
 
-    @staticmethod
-    def _format_video_time(milliseconds: int | None) -> str:
-        if milliseconds is None or milliseconds < 0:
-            return "--:--"
-        total_seconds = int(milliseconds // 1000)
-        hours, remainder = divmod(total_seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        if hours:
-            return f"{hours}:{minutes:02d}:{seconds:02d}"
-        return f"{minutes:02d}:{seconds:02d}"
-
-    def _format_filename_meta(self) -> str | None:
-        if not utils.is_videofile(getattr(self, "current_image_path", "") or ""):
-            return None
-        snapshot = self.video_controller.playback_snapshot()
-        position = self._format_video_time(snapshot.current_time_ms)
-        duration = self._format_video_time(snapshot.duration_ms)
-        state_parts = ["VIDEO", f"{position} / {duration}"]
-        if snapshot.paused:
-            state_parts.append("PAUSED")
-        elif snapshot.status_text:
-            state_parts.append(snapshot.status_text.upper())
-        return f" {{ {' '.join(state_parts)} }}"
-
     def _status_label_path(self) -> str:
         label_path = self.current_image_path
         if self._navigation_state().is_branch:
@@ -1409,7 +1385,7 @@ class ImageSlideshow:
 
         return fixed_path, fixed_colour
 
-    def _status_context(self) -> StatusBarContext:
+    def _status_contributions(self) -> tuple[StatusContribution, ...]:
         fixed_path, fixed_colour = self._status_fixed_path_and_colour()
         provider_status_payload = (
             self.current_provider_status_payload
@@ -1422,7 +1398,20 @@ class ImageSlideshow:
                 tree=self.original_tree,
             )
         )
-        return StatusBarContext(
+        is_video = utils.is_videofile(getattr(self, "current_image_path", "") or "")
+        if is_video:
+            snapshot = self.video_controller.playback_snapshot()
+            video_current_ms = snapshot.current_time_ms
+            video_duration_ms = snapshot.duration_ms
+            video_paused = snapshot.paused
+            video_status_text = snapshot.status_text
+        else:
+            video_current_ms = None
+            video_duration_ms = None
+            video_paused = False
+            video_status_text = ""
+
+        return build_status_contributions(
             label_path=self._status_label_path(),
             fixed_path=fixed_path,
             fixed_colour=fixed_colour,
@@ -1432,7 +1421,11 @@ class ImageSlideshow:
                 if hasattr(self, "zoompan") and self.zoompan
                 else 100
             ),
-            filename_meta_text=self._format_filename_meta(),
+            is_video=is_video,
+            video_current_ms=video_current_ms,
+            video_duration_ms=video_duration_ms,
+            video_paused=video_paused,
+            video_status_text=video_status_text,
             current_image_path=self.current_image_path,
             image_paths=self.image_paths,
             current_image_index=self.current_image_index,
@@ -1457,9 +1450,9 @@ class ImageSlideshow:
                 self.root.update_idletasks()
                 return
 
-            status_context = self._status_context()
-            filename_display = build_filename_display(status_context)
-            mode_text = build_mode_text(status_context)
+            status_display = build_status_display(self._status_contributions())
+            filename_display = status_display.filename
+            mode_text = status_display.mode_text
 
             self.filename_label.config(state=tk.NORMAL)
             self.filename_label.delete("1.0", tk.END)
@@ -1471,6 +1464,7 @@ class ImageSlideshow:
             )
             self.filename_label.tag_configure("normal", foreground="white")
             self.filename_label.tag_configure("meta", foreground="white")
+            self.filename_label.tag_configure("timer", foreground="white")
             self.filename_label.place(x=0, y=0)
             self.filename_label.config(height=1, width=filename_display.width, bg="black")
             self.filename_label.config(state=tk.DISABLED)
