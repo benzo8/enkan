@@ -40,7 +40,6 @@ from enkan.mySlideshow.StatusBar import (
     StatusContribution,
     StatusFacts,
     build_status_contributions_from_facts,
-    build_status_display,
 )
 from enkan.mySlideshow.ScopeStack import ScopeStack, ScopeStackEntry
 from enkan.mySlideshow.VideoPlaybackController import VideoPlaybackController
@@ -109,7 +108,6 @@ class ImageSlideshow:
         self._last_burst_memory_token = None
         self.current_provider_status_payload = None
         self.runtime_status_text = ""
-        self._video_status_refresh_id = None
 
         self.screen_width: int = root.winfo_screenwidth()
         self.screen_height: int = root.winfo_screenheight()
@@ -121,18 +119,19 @@ class ImageSlideshow:
 
         self.rotation_angle: int | float = 0
         self.current_exif_orientation: int = 1
+        self.root.configure(background="black")  # Set root background to black
+        self.label = tk.Label(root, bg="black")  # Set label background to black
+        self.label.pack()
+        self.status_bar = StatusBar(self.root)
         self.video_controller = VideoPlaybackController(
             root=self.root,
             screen_width=self.screen_width,
             screen_height=self.screen_height,
             logger=logger,
             debounce_ms=constants.VIDEO_START_DEBOUNCE_MS,
+            status_sink=self.status_bar,
         )
 
-        self.root.configure(background="black")  # Set root background to black
-        self.label = tk.Label(root, bg="black")  # Set label background to black
-        self.label.pack()
-        self.status_bar = StatusBar(self.root)
         self.mode_dialog: object | None = None
         self._ignore_user_proportion: bool = False
 
@@ -218,7 +217,6 @@ class ImageSlideshow:
         return FolderSelectionMemory()
 
     def _release_video_resources(self, async_cleanup: bool = True) -> None:
-        self._cancel_video_status_refresh()
         controller = getattr(self, "video_controller", None)
         if controller is None:
             return
@@ -236,14 +234,12 @@ class ImageSlideshow:
         def on_video_started():
             self._set_runtime_status("")
             self.status_bar.raise_widgets()
-            self._schedule_video_status_refresh()
 
         controller.schedule_start(
             image_path=image_path,
             media_payload=media_payload,
             muted=self.video_muted,
             on_video_started=on_video_started,
-            on_status_changed=self._set_video_status,
         )
 
     def _set_runtime_status(self, status_text: str) -> None:
@@ -252,45 +248,11 @@ class ImageSlideshow:
         self.runtime_status_text = status_text
         self.update_filename_display()
 
-    def _set_video_status(self, status_text: str) -> None:
-        self._set_runtime_status(f"VIDEO: {status_text}" if status_text else "")
-
-    def _cancel_video_status_refresh(self) -> None:
-        refresh_id = getattr(self, "_video_status_refresh_id", None)
-        if refresh_id is None:
-            return
-        after_cancel = getattr(self.root, "after_cancel", None)
-        if callable(after_cancel):
-            try:
-                after_cancel(refresh_id)
-            except tk.TclError:
-                logger.debug("Video status refresh was already cleared.", exc_info=True)
-        self._video_status_refresh_id = None
-
-    def _schedule_video_status_refresh(self) -> None:
-        self._cancel_video_status_refresh()
-        root_after = getattr(self.root, "after", None)
-        if callable(root_after):
-            self._video_status_refresh_id = root_after(
-                500,
-                self._refresh_video_status_display,
-            )
-
-    def _refresh_video_status_display(self) -> None:
-        self._video_status_refresh_id = None
-        if not utils.is_videofile(getattr(self, "current_image_path", "") or ""):
-            return
-        self.update_filename_display()
-        snapshot = self.video_controller.playback_snapshot()
-        if snapshot.active:
-            self._schedule_video_status_refresh()
-
     def toggle_video_pause(self, event=None):
         controller = getattr(self, "video_controller", None)
         if controller is None or not controller.toggle_pause():
             if controller is None or not controller.playback_snapshot().active:
                 return None
-        self.update_filename_display()
         return "break"
 
     def seek_video_by_ms(self, delta_ms: int, event=None):
@@ -299,7 +261,6 @@ class ImageSlideshow:
             return None
         if not controller.seek_relative_ms(delta_ms):
             return None
-        self.update_filename_display()
         return "break"
 
     def _capture_scope_state(self) -> _ScopeState:
@@ -1389,17 +1350,6 @@ class ImageSlideshow:
             )
         )
         is_video = utils.is_videofile(getattr(self, "current_image_path", "") or "")
-        if is_video:
-            snapshot = self.video_controller.playback_snapshot()
-            video_current_ms = snapshot.current_time_ms
-            video_duration_ms = snapshot.duration_ms
-            video_paused = snapshot.paused
-            video_status_text = snapshot.status_text
-        else:
-            video_current_ms = None
-            video_duration_ms = None
-            video_paused = False
-            video_status_text = ""
 
         return build_status_contributions_from_facts(
             StatusFacts(
@@ -1413,10 +1363,10 @@ class ImageSlideshow:
                     else 100
                 ),
                 is_video=is_video,
-                video_current_ms=video_current_ms,
-                video_duration_ms=video_duration_ms,
-                video_paused=video_paused,
-                video_status_text=video_status_text,
+                video_current_ms=None,
+                video_duration_ms=None,
+                video_paused=False,
+                video_status_text="",
                 current_image_path=self.current_image_path,
                 image_paths=self.image_paths,
                 current_image_index=self.current_image_index,
@@ -1431,19 +1381,22 @@ class ImageSlideshow:
                 parent_mode=self.parent_mode,
                 auto_advance_running=bool(getattr(self, "auto_advance_running", False)),
                 auto_advance_interval=getattr(self, "auto_advance_interval", None),
+                video_timer_from_sink=True,
             )
         )
 
     def update_filename_display(self) -> None:
         if self.show_filename:
             if not self.current_image_path or not self.image_paths:
-                self.status_bar.update(None, visible=False)
+                self.status_bar.set_base_contributions((), visible=False)
                 return
 
-            status_display = build_status_display(self._status_contributions())
-            self.status_bar.update(status_display, visible=True)
+            self.status_bar.set_base_contributions(
+                self._status_contributions(),
+                visible=True,
+            )
         else:
-            self.status_bar.update(None, visible=False)
+            self.status_bar.set_base_contributions((), visible=False)
 
     # --- Exit Method ---
 

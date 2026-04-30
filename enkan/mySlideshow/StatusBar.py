@@ -1,6 +1,11 @@
 from dataclasses import dataclass
 from enum import Enum
 import tkinter as tk
+from typing import Protocol
+
+
+VIDEO_TIMER_STATUS_KEY = "video-timer"
+VIDEO_RUNTIME_STATUS_KEY = "video-runtime-status"
 
 
 @dataclass(frozen=True)
@@ -22,9 +27,23 @@ class StatusDisplay:
     mode_text: str
 
 
+class StatusSink(Protocol):
+    def set_contribution(self, contribution: "StatusContribution") -> None: ...
+
+    def set_contributions(
+        self,
+        contributions: list["StatusContribution"] | tuple["StatusContribution", ...],
+    ) -> None: ...
+
+    def clear_contribution(self, key: str) -> None: ...
+
+
 class StatusBar:
     def __init__(self, root) -> None:
         self.root = root
+        self._visible = False
+        self._base_contributions: dict[str, StatusContribution] = {}
+        self._owned_contributions: dict[str, StatusContribution] = {}
         self.filename_label = tk.Text(
             root,
             bg="black",
@@ -45,7 +64,51 @@ class StatusBar:
         self.filename_label.place_forget()
         self.mode_label.place_forget()
 
+    def set_base_contributions(
+        self,
+        contributions: list["StatusContribution"] | tuple["StatusContribution", ...],
+        *,
+        visible: bool,
+    ) -> None:
+        self._base_contributions = {
+            contribution.key: contribution for contribution in contributions
+        }
+        self._visible = visible
+        self._refresh_visible_status()
+
+    def set_contribution(self, contribution: "StatusContribution") -> None:
+        self._owned_contributions[contribution.key] = contribution
+        self._refresh_visible_status()
+
+    def set_contributions(
+        self,
+        contributions: list["StatusContribution"] | tuple["StatusContribution", ...],
+    ) -> None:
+        for contribution in contributions:
+            self._owned_contributions[contribution.key] = contribution
+        self._refresh_visible_status()
+
+    def clear_contribution(self, key: str) -> None:
+        if key in self._owned_contributions:
+            del self._owned_contributions[key]
+            self._refresh_visible_status()
+
+    def _merged_contributions(self) -> tuple["StatusContribution", ...]:
+        merged = {
+            **self._base_contributions,
+            **self._owned_contributions,
+        }
+        return tuple(merged.values())
+
+    def _refresh_visible_status(self) -> None:
+        if not self._visible:
+            self.hide()
+            self.root.update_idletasks()
+            return
+        self.update(build_status_display(self._merged_contributions()), visible=True)
+
     def update(self, display: StatusDisplay | None, *, visible: bool) -> None:
+        self._visible = visible
         if not visible or display is None:
             self.hide()
             self.root.update_idletasks()
@@ -109,6 +172,38 @@ class StatusTimer:
     label: str = "VIDEO"
     prefix: str = ""
     suffix: str = ""
+
+
+def build_video_timer_contribution(
+    *,
+    current_ms: int | None,
+    duration_ms: int | None,
+    paused: bool,
+    status_text: str,
+) -> "StatusContribution":
+    return StatusContribution(
+        VIDEO_TIMER_STATUS_KEY,
+        StatusZone.LEFT,
+        90,
+        kind=StatusKind.TIMER,
+        content=StatusTimer(
+            current_ms=current_ms,
+            duration_ms=duration_ms,
+            paused=paused,
+            status_text=status_text.upper() if status_text else "",
+            prefix=" { ",
+            suffix=" }",
+        ),
+    )
+
+
+def build_video_runtime_status_contribution(status_text: str) -> "StatusContribution":
+    return StatusContribution(
+        VIDEO_RUNTIME_STATUS_KEY,
+        StatusZone.RIGHT,
+        30,
+        content=f"VIDEO: {status_text}" if status_text else "",
+    )
 
 
 @dataclass(frozen=True)
@@ -188,6 +283,7 @@ class StatusFacts:
     parent_mode: bool
     auto_advance_running: bool
     auto_advance_interval: int | float | None
+    video_timer_from_sink: bool = False
 
 
 def render_text(content: object, tag: str = "normal") -> tuple[StatusSegment, ...]:
@@ -390,6 +486,7 @@ def build_status_contributions(
             parent_mode=parent_mode,
             auto_advance_running=auto_advance_running,
             auto_advance_interval=auto_advance_interval,
+            video_timer_from_sink=False,
         )
     )
 
@@ -411,25 +508,13 @@ def build_status_contributions_from_facts(
         )
     ]
 
-    if facts.is_video:
+    if facts.is_video and not facts.video_timer_from_sink:
         contributions.append(
-            StatusContribution(
-                "video-timer",
-                StatusZone.LEFT,
-                90,
-                kind=StatusKind.TIMER,
-                content=StatusTimer(
-                    current_ms=facts.video_current_ms,
-                    duration_ms=facts.video_duration_ms,
-                    paused=facts.video_paused,
-                    status_text=(
-                        facts.video_status_text.upper()
-                        if facts.video_status_text
-                        else ""
-                    ),
-                    prefix=" { ",
-                    suffix=" }",
-                ),
+            build_video_timer_contribution(
+                current_ms=facts.video_current_ms,
+                duration_ms=facts.video_duration_ms,
+                paused=facts.video_paused,
+                status_text=facts.video_status_text,
             )
         )
     else:

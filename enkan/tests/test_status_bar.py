@@ -7,6 +7,7 @@ from enkan.mySlideshow.StatusBar import (
     StatusTimer,
     StatusZone,
     StatusBarContext,
+    StatusBar,
     build_filename_display,
     build_mode_text,
     build_status_contributions,
@@ -276,6 +277,103 @@ def test_status_facts_uses_index_fallback_when_current_path_not_in_list():
     )
 
     assert display.mode_text == "(2/2) WGT"
+
+
+def test_status_bar_set_contribution_refreshes_visible_display():
+    status_bar = StatusBar.__new__(StatusBar)
+    updates = []
+    status_bar._visible = True
+    status_bar._base_contributions = {
+        "filepath": StatusContribution(
+            "filepath",
+            StatusZone.LEFT,
+            100,
+            kind=StatusKind.FILEPATH,
+            content=StatusFilePath("clip.mp4"),
+        )
+    }
+    status_bar._owned_contributions = {}
+    status_bar.update = lambda display, visible: updates.append((display, visible))
+
+    status_bar.set_contribution(
+        StatusContribution(
+            "video-timer",
+            StatusZone.LEFT,
+            90,
+            kind=StatusKind.TIMER,
+            content=StatusTimer(1_000, 2_000),
+        )
+    )
+
+    assert updates[-1][1] is True
+    assert [segment.text for segment in updates[-1][0].filename.segments] == [
+        "clip.mp4",
+        "VIDEO 00:01 / 00:02",
+    ]
+
+
+def test_status_bar_hidden_contribution_is_retained_until_visible():
+    status_bar = StatusBar.__new__(StatusBar)
+    hidden_calls = []
+    updates = []
+    status_bar.root = type(
+        "_Root",
+        (),
+        {"update_idletasks": lambda self: hidden_calls.append("idle")},
+    )()
+    status_bar.hide = lambda: hidden_calls.append("hide")
+    status_bar.update = lambda display, visible: updates.append((display, visible))
+    status_bar._visible = False
+    status_bar._base_contributions = {}
+    status_bar._owned_contributions = {}
+
+    status_bar.set_contribution(
+        StatusContribution("runtime-status", StatusZone.RIGHT, 30, content="VIDEO: failed")
+    )
+    status_bar.set_base_contributions(
+        (
+            StatusContribution(
+                "filepath",
+                StatusZone.LEFT,
+                100,
+                kind=StatusKind.FILEPATH,
+                content=StatusFilePath("clip.mp4"),
+            ),
+        ),
+        visible=True,
+    )
+
+    assert updates[-1][0].mode_text == "VIDEO: failed"
+    assert hidden_calls == ["hide", "idle"]
+
+
+def test_status_bar_clear_contribution_refreshes_without_clearing_base_status():
+    status_bar = StatusBar.__new__(StatusBar)
+    updates = []
+    status_bar._visible = True
+    status_bar._base_contributions = {
+        "filepath": StatusContribution(
+            "filepath",
+            StatusZone.LEFT,
+            100,
+            kind=StatusKind.FILEPATH,
+            content=StatusFilePath("clip.mp4"),
+        )
+    }
+    status_bar._owned_contributions = {
+        "runtime-status": StatusContribution(
+            "runtime-status",
+            StatusZone.RIGHT,
+            30,
+            content="VIDEO: failed",
+        )
+    }
+    status_bar.update = lambda display, visible: updates.append((display, visible))
+
+    status_bar.clear_contribution("runtime-status")
+
+    assert updates[-1][0].mode_text == ""
+    assert [segment.text for segment in updates[-1][0].filename.segments] == ["clip.mp4"]
 
 
 def test_render_status_orders_left_and_center_from_left_edge():

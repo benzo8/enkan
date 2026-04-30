@@ -1144,20 +1144,46 @@ def test_controller_replay_does_not_restart_while_paused():
 
 
 def test_controller_toggle_pause_updates_player_pause_state():
+    class _Sink:
+        def __init__(self):
+            self.contributions = []
+            self.cleared = []
+
+        def set_contribution(self, contribution):
+            self.contributions.append(contribution)
+
+        def set_contributions(self, contributions):
+            self.contributions.extend(contributions)
+
+        def clear_contribution(self, key):
+            self.cleared.append(key)
+
+    sink = _Sink()
     controller = VideoPlaybackController(
         root=SimpleNamespace(),
         screen_width=100,
         screen_height=100,
         logger=logging.getLogger("test"),
         debounce_ms=150,
+        status_sink=sink,
     )
     pause_values: list[int] = []
-    controller._video_player = SimpleNamespace(set_pause=lambda value: pause_values.append(value))
+    controller._video_player = SimpleNamespace(
+        set_pause=lambda value: pause_values.append(value),
+        get_time=lambda: 250,
+        get_length=lambda: 1000,
+    )
 
     assert controller.toggle_pause() is True
     assert controller.toggle_pause() is False
 
     assert pause_values == [1, 0]
+    assert [contribution.key for contribution in sink.contributions] == [
+        "video-timer",
+        "video-timer",
+    ]
+    assert sink.contributions[0].content.paused is True
+    assert sink.contributions[1].content.paused is False
 
 
 def test_controller_toggle_pause_failure_sets_status():
@@ -1200,12 +1226,27 @@ def test_controller_seek_to_ratio_clamps_and_uses_duration():
 
 
 def test_controller_seek_relative_clamps_to_current_duration():
+    class _Sink:
+        def __init__(self):
+            self.contributions = []
+
+        def set_contribution(self, contribution):
+            self.contributions.append(contribution)
+
+        def set_contributions(self, contributions):
+            self.contributions.extend(contributions)
+
+        def clear_contribution(self, key):
+            pass
+
+    sink = _Sink()
     controller = VideoPlaybackController(
         root=SimpleNamespace(),
         screen_width=100,
         screen_height=100,
         logger=logging.getLogger("test"),
         debounce_ms=150,
+        status_sink=sink,
     )
     set_times: list[int] = []
     controller._video_player = SimpleNamespace(
@@ -1218,6 +1259,10 @@ def test_controller_seek_relative_clamps_to_current_duration():
     assert controller.seek_relative_ms(-950) is True
 
     assert set_times == [1000, 0]
+    assert [contribution.key for contribution in sink.contributions] == [
+        "video-timer",
+        "video-timer",
+    ]
 
 
 def test_controller_seek_ignores_unknown_duration():
@@ -1238,12 +1283,28 @@ def test_controller_seek_ignores_unknown_duration():
 
 
 def test_controller_seek_failure_sets_status():
+    class _Sink:
+        def __init__(self):
+            self.contributions = []
+            self.cleared = []
+
+        def set_contribution(self, contribution):
+            self.contributions.append(contribution)
+
+        def set_contributions(self, contributions):
+            self.contributions.extend(contributions)
+
+        def clear_contribution(self, key):
+            self.cleared.append(key)
+
+    sink = _Sink()
     controller = VideoPlaybackController(
         root=SimpleNamespace(),
         screen_width=100,
         screen_height=100,
         logger=logging.getLogger("test"),
         debounce_ms=150,
+        status_sink=sink,
     )
     statuses: list[str] = []
     controller._on_status_changed = statuses.append
@@ -1255,9 +1316,14 @@ def test_controller_seek_failure_sets_status():
 
     assert controller.seek_relative_ms(5000) is False
     assert statuses == ["Video control failed"]
+    assert any(
+        contribution.key == "video-runtime-status"
+        and contribution.content == "VIDEO: Video control failed"
+        for contribution in sink.contributions
+    )
 
 
-def test_video_pause_hotkey_updates_status_for_active_player():
+def test_video_pause_hotkey_delegates_status_update_to_controller():
     slideshow = ImageSlideshow.__new__(ImageSlideshow)
     updated: list[str] = []
 
@@ -1275,10 +1341,10 @@ def test_video_pause_hotkey_updates_status_for_active_player():
     slideshow.update_filename_display = lambda: updated.append("updated")
 
     assert slideshow.toggle_video_pause() == "break"
-    assert updated == ["updated"]
+    assert updated == []
 
 
-def test_video_seek_hotkey_updates_status_when_seek_succeeds():
+def test_video_seek_hotkey_delegates_status_update_to_controller():
     slideshow = ImageSlideshow.__new__(ImageSlideshow)
     updated: list[str] = []
     deltas: list[int] = []
@@ -1290,7 +1356,7 @@ def test_video_seek_hotkey_updates_status_when_seek_succeeds():
     assert slideshow.seek_video_by_ms(-5000) == "break"
 
     assert deltas == [-5000]
-    assert updated == ["updated"]
+    assert updated == []
 
 
 def test_controller_playback_snapshot_handles_active_and_inactive_states():
