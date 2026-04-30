@@ -36,6 +36,7 @@ from enkan.mySlideshow.NavigationTypes import (
     ScopeKind,
 )
 from enkan.mySlideshow.StatusBar import (
+    StatusBar,
     StatusContribution,
     build_status_contributions,
     build_status_display,
@@ -130,17 +131,7 @@ class ImageSlideshow:
         self.root.configure(background="black")  # Set root background to black
         self.label = tk.Label(root, bg="black")  # Set label background to black
         self.label.pack()
-        self.filename_label = tk.Text(
-            self.root,
-            bg="black",
-            fg="white",
-            height=1,
-            wrap="none",
-            bd=0,
-            highlightthickness=0,
-        )
-        self.filename_label.config(state=tk.DISABLED)
-        self.mode_label = tk.Label(self.root, bg="black", fg="white", anchor="ne")
+        self.status_bar = StatusBar(self.root)
         self.mode_dialog: object | None = None
         self._ignore_user_proportion: bool = False
 
@@ -243,8 +234,7 @@ class ImageSlideshow:
 
         def on_video_started():
             self._set_runtime_status("")
-            self.filename_label.tkraise()
-            self.mode_label.tkraise()
+            self.status_bar.raise_widgets()
             self._schedule_video_status_refresh()
 
         controller.schedule_start(
@@ -552,8 +542,7 @@ class ImageSlideshow:
                 media_payload if isinstance(media_payload, CachedVideoData) else None,
             )
 
-        self.filename_label.tkraise()
-        self.mode_label.tkraise()
+        self.status_bar.raise_widgets()
         self.update_filename_display()
         self._record_memory_for_view(image_path, record_history, provider_pick_meta)
 
@@ -1445,39 +1434,13 @@ class ImageSlideshow:
     def update_filename_display(self) -> None:
         if self.show_filename:
             if not self.current_image_path or not self.image_paths:
-                self.filename_label.place_forget()
-                self.mode_label.place_forget()
-                self.root.update_idletasks()
+                self.status_bar.update(None, visible=False)
                 return
 
             status_display = build_status_display(self._status_contributions())
-            filename_display = status_display.filename
-            mode_text = status_display.mode_text
-
-            self.filename_label.config(state=tk.NORMAL)
-            self.filename_label.delete("1.0", tk.END)
-            for segment in filename_display.segments:
-                self.filename_label.insert(tk.END, segment.text, segment.tag)
-
-            self.filename_label.tag_configure(
-                "fixed", foreground=filename_display.fixed_colour
-            )
-            self.filename_label.tag_configure("normal", foreground="white")
-            self.filename_label.tag_configure("meta", foreground="white")
-            self.filename_label.tag_configure("timer", foreground="white")
-            self.filename_label.place(x=0, y=0)
-            self.filename_label.config(height=1, width=filename_display.width, bg="black")
-            self.filename_label.config(state=tk.DISABLED)
-
-            self.mode_label.config(
-                text=mode_text,
-                fg="white",
-            )
-            self.mode_label.place(x=self.root.winfo_screenwidth(), y=0, anchor="ne")
+            self.status_bar.update(status_display, visible=True)
         else:
-            self.filename_label.place_forget()
-            self.mode_label.place_forget()
-        self.root.update_idletasks()
+            self.status_bar.update(None, visible=False)
 
     # --- Exit Method ---
 

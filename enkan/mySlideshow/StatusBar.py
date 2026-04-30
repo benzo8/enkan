@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
+import tkinter as tk
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,63 @@ class FilenameDisplay:
 class StatusDisplay:
     filename: FilenameDisplay
     mode_text: str
+
+
+class StatusBar:
+    def __init__(self, root) -> None:
+        self.root = root
+        self.filename_label = tk.Text(
+            root,
+            bg="black",
+            fg="white",
+            height=1,
+            wrap="none",
+            bd=0,
+            highlightthickness=0,
+        )
+        self.filename_label.config(state=tk.DISABLED)
+        self.mode_label = tk.Label(root, bg="black", fg="white", anchor="ne")
+
+    def raise_widgets(self) -> None:
+        self.filename_label.tkraise()
+        self.mode_label.tkraise()
+
+    def hide(self) -> None:
+        self.filename_label.place_forget()
+        self.mode_label.place_forget()
+
+    def update(self, display: StatusDisplay | None, *, visible: bool) -> None:
+        if not visible or display is None:
+            self.hide()
+            self.root.update_idletasks()
+            return
+
+        filename_display = display.filename
+        self.filename_label.config(state=tk.NORMAL)
+        self.filename_label.delete("1.0", tk.END)
+        for segment in filename_display.segments:
+            self.filename_label.insert(tk.END, segment.text, segment.tag)
+
+        self.filename_label.tag_configure(
+            "fixed", foreground=filename_display.fixed_colour
+        )
+        self.filename_label.tag_configure("normal", foreground="white")
+        self.filename_label.tag_configure("meta", foreground="white")
+        self.filename_label.tag_configure("timer", foreground="white")
+        self.filename_label.tag_configure("separator", foreground="white")
+        self.filename_label.tag_configure("dot-full", foreground="green")
+        self.filename_label.tag_configure("dot-empty", foreground="grey")
+        self.filename_label.tag_configure("dot-overflow", foreground="white")
+        self.filename_label.place(x=0, y=0)
+        self.filename_label.config(height=1, width=filename_display.width, bg="black")
+        self.filename_label.config(state=tk.DISABLED)
+
+        self.mode_label.config(
+            text=display.mode_text,
+            fg="white",
+        )
+        self.mode_label.place(x=self.root.winfo_screenwidth(), y=0, anchor="ne")
+        self.root.update_idletasks()
 
 
 class StatusZone(str, Enum):

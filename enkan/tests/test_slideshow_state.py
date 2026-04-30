@@ -612,8 +612,7 @@ def test_show_image_allows_history_item_outside_current_scope():
     slideshow._record_memory_for_view = lambda image_path, record_history, provider_pick_meta=None: None
     slideshow.zoompan = SimpleNamespace(set_image=lambda image: None)
     slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
-    slideshow.filename_label = SimpleNamespace(tkraise=lambda: None)
-    slideshow.mode_label = SimpleNamespace(tkraise=lambda: None)
+    slideshow.status_bar = SimpleNamespace(raise_widgets=lambda: None)
     slideshow.update_filename_display = lambda: None
     slideshow.root = SimpleNamespace(after=lambda *args, **kwargs: None)
     slideshow.manager = SimpleNamespace(
@@ -651,8 +650,7 @@ def test_show_image_preserves_provider_payload_on_same_image_redisplay():
     slideshow._record_memory_for_view = lambda image_path, record_history, provider_pick_meta=None: None
     slideshow.zoompan = SimpleNamespace(set_image=lambda image: None)
     slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
-    slideshow.filename_label = SimpleNamespace(tkraise=lambda: None)
-    slideshow.mode_label = SimpleNamespace(tkraise=lambda: None)
+    slideshow.status_bar = SimpleNamespace(raise_widgets=lambda: None)
     slideshow.update_filename_display = lambda: None
     slideshow.root = SimpleNamespace(after=lambda *args, **kwargs: None)
     slideshow.manager = SimpleNamespace(
@@ -708,8 +706,9 @@ def test_show_image_displays_before_recording_memory():
     )
     slideshow.zoompan = SimpleNamespace(set_image=lambda image: order.append("display"))
     slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
-    slideshow.filename_label = SimpleNamespace(tkraise=lambda: order.append("filename-raise"))
-    slideshow.mode_label = SimpleNamespace(tkraise=lambda: order.append("mode-raise"))
+    slideshow.status_bar = SimpleNamespace(
+        raise_widgets=lambda: order.append("status-raise")
+    )
     slideshow.update_filename_display = lambda: order.append("status")
     slideshow.root = SimpleNamespace(after=lambda *args, **kwargs: None)
     slideshow.manager = SimpleNamespace(
@@ -727,7 +726,7 @@ def test_show_image_displays_before_recording_memory():
 
     slideshow.show_image()
 
-    assert order == ["display", "filename-raise", "mode-raise", "status", "memory"]
+    assert order == ["display", "status-raise", "status", "memory"]
 
 
 def test_show_image_debounces_rapid_video_start_requests(monkeypatch):
@@ -750,8 +749,7 @@ def test_show_image_debounces_rapid_video_start_requests(monkeypatch):
     )
     slideshow.zoompan = SimpleNamespace(orig_image=None)
     slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
-    slideshow.filename_label = SimpleNamespace(tkraise=lambda: None)
-    slideshow.mode_label = SimpleNamespace(tkraise=lambda: None)
+    slideshow.status_bar = SimpleNamespace(raise_widgets=lambda: None)
     slideshow.update_filename_display = lambda: None
     slideshow._record_memory_for_view = lambda image_path, record_history, provider_pick_meta=None: None
     slideshow.runtime_status_text = ""
@@ -1403,8 +1401,7 @@ def test_show_image_does_not_create_slideshow_vlc_state_for_images():
     )
     slideshow.zoompan = SimpleNamespace(set_image=lambda image: None)
     slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
-    slideshow.filename_label = SimpleNamespace(tkraise=lambda: None)
-    slideshow.mode_label = SimpleNamespace(tkraise=lambda: None)
+    slideshow.status_bar = SimpleNamespace(raise_widgets=lambda: None)
     slideshow.update_filename_display = lambda: None
     slideshow.manager = SimpleNamespace(
         current_media_metadata=None,
