@@ -60,6 +60,7 @@ class VideoPlaybackController:
         self._video_cleanup_done.set()
         self._is_paused = False
         self._status_text = ""
+        self._on_status_changed: Callable[[str], None] | None = None
 
     def _hide_video_frame(self) -> None:
         if self._video_frame is not None:
@@ -159,6 +160,7 @@ class VideoPlaybackController:
     ) -> None:
         self._cancel_pending_video_start()
         self._video_start_request_id += 1
+        self._on_status_changed = on_status_changed
         self._set_status("", on_status_changed)
         request_id = self._video_start_request_id
         self._pending_video_start_id = self.root.after(
@@ -219,13 +221,18 @@ class VideoPlaybackController:
             if media is None:
                 self.logger.debug("Falling back to path-based VLC media for %s", image_path)
                 media = self._vlc_instance.media_new(image_path)
+            if media is None:
+                raise RuntimeError("VLC media creation failed.")
+            self._current_media = media
+            self._current_video_payload = media_payload
+            if not isinstance(media_payload, CachedVideoData):
                 media.get_mrl()
 
             self._video_player = self._vlc_instance.media_player_new()
+            if self._video_player is None:
+                raise RuntimeError("VLC media player creation failed.")
             self._video_player.set_media(media)
             self._video_player.audio_set_mute(muted)
-            self._current_media = media
-            self._current_video_payload = media_payload
             self._is_paused = False
 
             window_id = self._video_frame.winfo_id()
@@ -269,27 +276,42 @@ class VideoPlaybackController:
             self._schedule_loop_check(request_id)
             return
 
-        length = video_player.get_length()
-        time = video_player.get_time()
+        try:
+            length = video_player.get_length()
+            time = video_player.get_time()
 
-        if length > 0 and time >= length - 200:
-            video_player.stop()
-            video_player.play()
-            self._schedule_loop_check(request_id)
+            if length > 0 and time >= length - 200:
+                video_player.stop()
+                video_player.play()
+                self._schedule_loop_check(request_id)
+                return
+        except Exception as exc:
+            self.logger.warning("Video playback loop check failed.", exc_info=exc)
+            self._set_status("Video playback failed")
+            self.stop(async_cleanup=True, hide=True)
             return
 
         self._schedule_loop_check(request_id)
 
     def set_muted(self, muted: bool) -> None:
         if self._video_player is not None:
-            self._video_player.audio_set_mute(muted)
+            try:
+                self._video_player.audio_set_mute(muted)
+            except Exception:
+                self.logger.debug("Failed to apply VLC mute state.", exc_info=True)
 
     def toggle_pause(self) -> bool:
         if self._video_player is None:
             return False
-        self._is_paused = not self._is_paused
-        self._video_player.set_pause(1 if self._is_paused else 0)
-        return self._is_paused
+        paused = not self._is_paused
+        try:
+            self._video_player.set_pause(1 if paused else 0)
+        except Exception:
+            self.logger.warning("Failed to toggle VLC pause state.", exc_info=True)
+            self._set_status("Video control failed")
+            return False
+        self._is_paused = paused
+        return paused
 
     def seek_to_ratio(self, ratio: float) -> bool:
         if self._video_player is None:
@@ -298,7 +320,12 @@ class VideoPlaybackController:
         if not snapshot.seekable or snapshot.duration_ms is None:
             return False
         clamped = max(0.0, min(float(ratio), 1.0))
-        self._video_player.set_time(int(snapshot.duration_ms * clamped))
+        try:
+            self._video_player.set_time(int(snapshot.duration_ms * clamped))
+        except Exception:
+            self.logger.warning("Failed to seek VLC video.", exc_info=True)
+            self._set_status("Video control failed")
+            return False
         return True
 
     def seek_relative_ms(self, delta_ms: int) -> bool:
@@ -312,7 +339,12 @@ class VideoPlaybackController:
         if snapshot.duration_ms is not None:
             target = min(target, snapshot.duration_ms)
         target = max(0, target)
-        self._video_player.set_time(target)
+        try:
+            self._video_player.set_time(target)
+        except Exception:
+            self.logger.warning("Failed to seek VLC video.", exc_info=True)
+            self._set_status("Video control failed")
+            return False
         return True
 
     def playback_snapshot(self) -> VideoPlaybackSnapshot:
@@ -351,8 +383,9 @@ class VideoPlaybackController:
         on_status_changed: Callable[[str], None] | None = None,
     ) -> None:
         self._status_text = status_text
-        if callable(on_status_changed):
-            on_status_changed(status_text)
+        status_callback = on_status_changed or self._on_status_changed
+        if callable(status_callback):
+            status_callback(status_text)
 
     def shutdown(self) -> None:
         self.stop(async_cleanup=False)

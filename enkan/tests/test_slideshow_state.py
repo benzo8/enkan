@@ -562,6 +562,37 @@ def test_persist_rotation_to_exif_uses_file_op_result(monkeypatch):
     assert shown == [("image.jpg", False)]
 
 
+def test_rotate_image_ignores_video_without_restarting(monkeypatch):
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.current_image_path = "clip.mp4"
+    slideshow.rotation_angle = 0
+    slideshow.show_image = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("video rotation should not restart playback")
+    )
+    monkeypatch.setattr("enkan.mySlideshow.mySlideshow.utils.is_videofile", lambda path: True)
+    monkeypatch.setattr("enkan.mySlideshow.mySlideshow.utils.is_imagefile", lambda path: False)
+
+    assert slideshow.rotate_image() == "break"
+    assert slideshow.rotation_angle == 0
+
+
+def test_rotate_image_still_rotates_images(monkeypatch):
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.current_image_path = "image.jpg"
+    slideshow.rotation_angle = 0
+    shown: list[tuple[str, bool]] = []
+    slideshow.show_image = lambda path, record_history=False: shown.append(
+        (path, record_history)
+    )
+    monkeypatch.setattr("enkan.mySlideshow.mySlideshow.utils.is_videofile", lambda path: False)
+    monkeypatch.setattr("enkan.mySlideshow.mySlideshow.utils.is_imagefile", lambda path: True)
+
+    assert slideshow.rotate_image() == "break"
+
+    assert slideshow.rotation_angle == 270
+    assert shown == [("image.jpg", False)]
+
+
 def test_show_image_allows_history_item_outside_current_scope():
     slideshow = ImageSlideshow.__new__(ImageSlideshow)
     slideshow.image_paths = ["scope\\one.jpg", "scope\\two.jpg"]
@@ -806,6 +837,9 @@ def test_stop_offloads_cleanup_to_background_thread(monkeypatch):
             events.append("player-release")
 
     class _Media:
+        def get_mrl(self):
+            return "file:///broken.mp4"
+
         def release(self):
             events.append("media-release")
 
@@ -885,6 +919,80 @@ def test_start_video_playback_defers_while_cleanup_active():
     assert scheduled[0][0] == 30
 
 
+def test_start_video_playback_releases_media_when_player_setup_fails(monkeypatch):
+    controller = VideoPlaybackController(
+        root=SimpleNamespace(after_cancel=lambda _: None),
+        screen_width=100,
+        screen_height=100,
+        logger=logging.getLogger("test"),
+        debounce_ms=150,
+    )
+    controller._video_start_request_id = 1
+    forgotten: list[str] = []
+    controller._video_frame = SimpleNamespace(
+        place=lambda **kwargs: None,
+        update_idletasks=lambda: None,
+        lift=lambda: None,
+        winfo_id=lambda: 123,
+        place_forget=lambda: forgotten.append("hide"),
+    )
+
+    events: list[str] = []
+
+    class _Media:
+        def get_mrl(self):
+            return "file:///broken.mp4"
+
+        def release(self):
+            events.append("media-release")
+
+    class _Player:
+        def set_media(self, media):
+            raise RuntimeError("set_media failed")
+
+        def stop(self):
+            events.append("player-stop")
+
+        def release(self):
+            events.append("player-release")
+
+    class _VlcInstance:
+        def media_new(self, path):
+            return _Media()
+
+        def media_player_new(self):
+            return _Player()
+
+    class _ImmediateThread:
+        def __init__(self, target, args=(), daemon=None):
+            self.target = target
+            self.args = args
+
+        def start(self):
+            self.target(*self.args)
+
+    monkeypatch.setattr(
+        "enkan.mySlideshow.VideoPlaybackController.threading.Thread",
+        _ImmediateThread,
+    )
+    controller._vlc_instance = _VlcInstance()
+    statuses: list[str] = []
+
+    controller._start_video_playback(
+        1,
+        "videos\\broken.mp4",
+        None,
+        False,
+        on_status_changed=statuses.append,
+    )
+
+    assert statuses == ["Video playback failed"]
+    assert forgotten == ["hide"]
+    assert events == ["player-stop", "player-release", "media-release"]
+    assert controller._video_player is None
+    assert controller._current_media is None
+
+
 def test_controller_loop_check_replays_video_once_at_end():
     controller = VideoPlaybackController(
         root=SimpleNamespace(
@@ -921,6 +1029,53 @@ def test_controller_loop_check_replays_video_once_at_end():
     assert controller._pending_loop_check_id == "loop-check"
     assert len(scheduled) == 1
     assert scheduled[0][0] == 500
+
+
+def test_controller_loop_check_failure_is_recoverable(monkeypatch):
+    controller = VideoPlaybackController(
+        root=SimpleNamespace(after_cancel=lambda _: None),
+        screen_width=100,
+        screen_height=100,
+        logger=logging.getLogger("test"),
+        debounce_ms=150,
+    )
+    controller._video_start_request_id = 3
+    forgotten: list[str] = []
+    controller._video_frame = SimpleNamespace(place_forget=lambda: forgotten.append("hide"))
+    statuses: list[str] = []
+    controller._on_status_changed = statuses.append
+    events: list[str] = []
+
+    class _Player:
+        def get_length(self):
+            raise RuntimeError("length failed")
+
+        def stop(self):
+            events.append("player-stop")
+
+        def release(self):
+            events.append("player-release")
+
+    class _ImmediateThread:
+        def __init__(self, target, args=(), daemon=None):
+            self.target = target
+            self.args = args
+
+        def start(self):
+            self.target(*self.args)
+
+    monkeypatch.setattr(
+        "enkan.mySlideshow.VideoPlaybackController.threading.Thread",
+        _ImmediateThread,
+    )
+    controller._video_player = _Player()
+
+    controller._check_video_ended(3)
+
+    assert statuses == ["Video playback failed"]
+    assert forgotten == ["hide"]
+    assert events == ["player-stop", "player-release"]
+    assert controller._video_player is None
 
 
 def test_controller_loop_check_reschedules_when_video_is_not_near_end():
@@ -993,6 +1148,25 @@ def test_controller_toggle_pause_updates_player_pause_state():
     assert pause_values == [1, 0]
 
 
+def test_controller_toggle_pause_failure_sets_status():
+    controller = VideoPlaybackController(
+        root=SimpleNamespace(),
+        screen_width=100,
+        screen_height=100,
+        logger=logging.getLogger("test"),
+        debounce_ms=150,
+    )
+    statuses: list[str] = []
+    controller._on_status_changed = statuses.append
+    controller._video_player = SimpleNamespace(
+        set_pause=lambda value: (_ for _ in ()).throw(RuntimeError("pause failed"))
+    )
+
+    assert controller.toggle_pause() is False
+    assert controller._is_paused is False
+    assert statuses == ["Video control failed"]
+
+
 def test_controller_seek_to_ratio_clamps_and_uses_duration():
     controller = VideoPlaybackController(
         root=SimpleNamespace(),
@@ -1049,6 +1223,26 @@ def test_controller_seek_ignores_unknown_duration():
     )
 
     assert controller.seek_to_ratio(0.5) is False
+
+
+def test_controller_seek_failure_sets_status():
+    controller = VideoPlaybackController(
+        root=SimpleNamespace(),
+        screen_width=100,
+        screen_height=100,
+        logger=logging.getLogger("test"),
+        debounce_ms=150,
+    )
+    statuses: list[str] = []
+    controller._on_status_changed = statuses.append
+    controller._video_player = SimpleNamespace(
+        get_time=lambda: 100,
+        get_length=lambda: 1000,
+        set_time=lambda value: (_ for _ in ()).throw(RuntimeError("seek failed")),
+    )
+
+    assert controller.seek_relative_ms(5000) is False
+    assert statuses == ["Video control failed"]
 
 
 def test_video_pause_hotkey_updates_status_for_active_player():

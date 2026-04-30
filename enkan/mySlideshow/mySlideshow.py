@@ -998,9 +998,16 @@ class ImageSlideshow:
         self.current_exif_orientation = outcome.new_orientation
         self.show_image(self.current_image_path, record_history=False)
 
-    def rotate_image(self, event=None) -> None:
+    def rotate_image(self, event=None):
+        if not self.current_image_path:
+            return None
+        if utils.is_videofile(self.current_image_path):
+            return "break"
+        if not utils.is_imagefile(self.current_image_path):
+            return None
         self.rotation_angle = (self.rotation_angle - 90) % 360
         self.show_image(self.current_image_path, record_history=False)
+        return "break"
 
     def toggle_mute(self, event=None) -> None:
         self.video_muted = not self.video_muted
