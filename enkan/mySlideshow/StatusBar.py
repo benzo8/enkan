@@ -508,15 +508,16 @@ def build_status_contributions_from_facts(
         )
     ]
 
-    if facts.is_video and not facts.video_timer_from_sink:
-        contributions.append(
-            build_video_timer_contribution(
-                current_ms=facts.video_current_ms,
-                duration_ms=facts.video_duration_ms,
-                paused=facts.video_paused,
-                status_text=facts.video_status_text,
+    if facts.is_video:
+        if not facts.video_timer_from_sink:
+            contributions.append(
+                build_video_timer_contribution(
+                    current_ms=facts.video_current_ms,
+                    duration_ms=facts.video_duration_ms,
+                    paused=facts.video_paused,
+                    status_text=facts.video_status_text,
+                )
             )
-        )
     else:
         contributions.append(
             StatusContribution(

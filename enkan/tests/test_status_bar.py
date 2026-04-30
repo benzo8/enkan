@@ -265,6 +265,24 @@ def test_status_facts_video_degrades_cleanly_when_timing_is_unavailable():
     ]
 
 
+def test_status_facts_video_sink_mode_does_not_show_image_meta():
+    display = build_status_display(
+        build_status_contributions_from_facts(
+            _facts(
+                label_path="clip.mp4",
+                is_video=True,
+                video_timer_from_sink=True,
+                rotation_text="90°",
+                zoom_percent=125,
+                current_image_path="clip.mp4",
+                image_paths=["clip.mp4"],
+            )
+        )
+    )
+
+    assert [segment.text for segment in display.filename.segments] == ["clip.mp4"]
+
+
 def test_status_facts_uses_index_fallback_when_current_path_not_in_list():
     display = build_status_display(
         build_status_contributions_from_facts(

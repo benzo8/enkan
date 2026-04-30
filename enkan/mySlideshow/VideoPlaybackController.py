@@ -72,6 +72,7 @@ class VideoPlaybackController:
         self._is_paused = False
         self._status_text = ""
         self._on_status_changed: Callable[[str], None] | None = None
+        self._shutting_down = False
 
     def _hide_video_frame(self) -> None:
         if self._video_frame is not None:
@@ -456,6 +457,8 @@ class VideoPlaybackController:
         self._publish_video_timer_status()
 
     def _publish_video_runtime_status(self, status_text: str) -> None:
+        if self._shutting_down:
+            return
         status_sink = self.status_sink
         if status_sink is None:
             return
@@ -467,6 +470,8 @@ class VideoPlaybackController:
             status_sink.clear_contribution(VIDEO_RUNTIME_STATUS_KEY)
 
     def _publish_video_timer_status(self) -> None:
+        if self._shutting_down:
+            return
         status_sink = self.status_sink
         if status_sink is None or self._video_player is None:
             return
@@ -481,12 +486,16 @@ class VideoPlaybackController:
         )
 
     def _clear_video_timer_status(self) -> None:
+        if self._shutting_down:
+            return
         status_sink = self.status_sink
         if status_sink is None:
             return
         status_sink.clear_contribution(VIDEO_TIMER_STATUS_KEY)
 
     def _clear_video_runtime_status(self) -> None:
+        if self._shutting_down:
+            return
         status_sink = self.status_sink
         if status_sink is None:
             return
@@ -507,7 +516,10 @@ class VideoPlaybackController:
         self._schedule_status_refresh()
 
     def shutdown(self) -> None:
-        self.stop(async_cleanup=False)
+        self._shutting_down = True
+        self.status_sink = None
+        self._on_status_changed = None
+        self.stop(async_cleanup=False, clear_status=False)
         if self._vlc_instance is not None:
             self._vlc_instance.release()
             self._vlc_instance = None

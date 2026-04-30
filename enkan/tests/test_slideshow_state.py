@@ -1434,6 +1434,39 @@ def test_shutdown_stops_synchronously_releases_vlc_instance_and_destroys_frame()
     assert controller._video_frame is None
 
 
+def test_shutdown_detaches_status_sink_before_synchronous_cleanup():
+    class _Sink:
+        def set_contribution(self, contribution):
+            raise AssertionError("shutdown should not publish status")
+
+        def set_contributions(self, contributions):
+            raise AssertionError("shutdown should not publish status")
+
+        def clear_contribution(self, key):
+            raise AssertionError("shutdown should not clear status")
+
+    events: list[str] = []
+    controller = VideoPlaybackController(
+        root=SimpleNamespace(after_cancel=lambda ident: events.append(f"cancel:{ident}")),
+        screen_width=100,
+        screen_height=100,
+        logger=logging.getLogger("test"),
+        debounce_ms=150,
+        status_sink=_Sink(),
+    )
+    controller._status_refresh_id = "refresh"
+    controller._video_player = SimpleNamespace(
+        stop=lambda: events.append("stop"),
+        release=lambda: events.append("player-release"),
+    )
+    controller._current_media = SimpleNamespace(release=lambda: events.append("media-release"))
+
+    controller.shutdown()
+
+    assert events == ["cancel:refresh", "stop", "player-release", "media-release"]
+    assert controller.status_sink is None
+
+
 def test_toggle_mute_updates_preference_and_active_player():
     slideshow = ImageSlideshow.__new__(ImageSlideshow)
     slideshow.video_muted = False
