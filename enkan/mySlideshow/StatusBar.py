@@ -10,6 +10,8 @@ FILEPATH_STATUS_KEY = "filepath"
 IMAGE_META_STATUS_KEY = "image-meta"
 RUNTIME_STATUS_KEY = "runtime-status"
 AUTO_ADVANCE_STATUS_KEY = "auto-advance"
+COUNT_STATUS_KEY = "count"
+SCOPE_STATUS_KEY = "scope"
 
 
 @dataclass(frozen=True)
@@ -260,6 +262,38 @@ def build_auto_advance_contribution(
     )
 
 
+def build_count_contribution(
+    current_image_path: str | None,
+    image_paths: list[str],
+    current_image_index: int,
+) -> "StatusContribution":
+    return StatusContribution(
+        COUNT_STATUS_KEY,
+        StatusZone.RIGHT,
+        10,
+        content=_count_text(current_image_path, image_paths, current_image_index),
+    )
+
+
+def build_scope_contribution(
+    subfolder_mode: bool,
+    parent_mode: bool,
+) -> "StatusContribution | None":
+    scope_parts: list[str] = []
+    if subfolder_mode:
+        scope_parts.append("SUB")
+    if parent_mode:
+        scope_parts.append("PAR")
+    if not scope_parts:
+        return None
+    return StatusContribution(
+        SCOPE_STATUS_KEY,
+        StatusZone.RIGHT,
+        40,
+        content=" ".join(scope_parts),
+    )
+
+
 @dataclass(frozen=True)
 class StatusDots:
     full: int
@@ -342,6 +376,8 @@ class StatusFacts:
     image_meta_from_sink: bool = False
     runtime_status_from_sink: bool = False
     auto_advance_from_sink: bool = False
+    count_from_sink: bool = False
+    scope_from_sink: bool = False
 
 
 def render_text(content: object, tag: str = "normal") -> tuple[StatusSegment, ...]:
@@ -549,6 +585,8 @@ def build_status_contributions(
             image_meta_from_sink=False,
             runtime_status_from_sink=False,
             auto_advance_from_sink=False,
+            count_from_sink=False,
+            scope_from_sink=False,
         )
     )
 
@@ -597,18 +635,14 @@ def build_status_contributions_from_facts(
         if contribution is not None:
             contributions.append(contribution)
 
-    contributions.append(
-        StatusContribution(
-            "count",
-            StatusZone.RIGHT,
-            10,
-            content=_count_text(
+    if not facts.count_from_sink:
+        contributions.append(
+            build_count_contribution(
                 facts.current_image_path,
                 facts.image_paths,
                 facts.current_image_index,
-            ),
+            )
         )
-    )
     if facts.provider_status_text:
         contributions.append(
             StatusContribution(
@@ -620,20 +654,10 @@ def build_status_contributions_from_facts(
         )
     if facts.runtime_status_text and not facts.runtime_status_from_sink:
         contributions.append(build_runtime_status_contribution(facts.runtime_status_text))
-    scope_parts: list[str] = []
-    if facts.subfolder_mode:
-        scope_parts.append("SUB")
-    if facts.parent_mode:
-        scope_parts.append("PAR")
-    if scope_parts:
-        contributions.append(
-            StatusContribution(
-                "scope",
-                StatusZone.RIGHT,
-                40,
-                content=" ".join(scope_parts),
-            )
-        )
+    if not facts.scope_from_sink:
+        contribution = build_scope_contribution(facts.subfolder_mode, facts.parent_mode)
+        if contribution is not None:
+            contributions.append(contribution)
     contributions.append(
         StatusContribution(
             "provider-label",

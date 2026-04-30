@@ -1565,3 +1565,43 @@ def test_auto_advance_status_publishes_to_status_sink():
         ("set", "AUTO (5000ms)  "),
         ("clear", "auto-advance"),
     ]
+
+
+def test_count_status_publishes_to_status_sink():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.current_image_path = "two.jpg"
+    slideshow.image_paths = ["one.jpg", "two.jpg"]
+    slideshow.current_image_index = 0
+    events: list[tuple[str, str]] = []
+    slideshow.status_bar = SimpleNamespace(
+        set_contribution=lambda contribution: events.append(
+            ("set", contribution.content)
+        )
+    )
+
+    slideshow._publish_count_status()
+
+    assert events == [("set", "(2/2)")]
+
+
+def test_scope_status_publishes_to_status_sink():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    events: list[tuple[str, str]] = []
+    slideshow.status_bar = SimpleNamespace(
+        set_contribution=lambda contribution: events.append(
+            ("set", contribution.content)
+        ),
+        clear_contribution=lambda key: events.append(("clear", key)),
+    )
+
+    slideshow.subfolder_mode = True
+    slideshow.parent_mode = True
+    slideshow._publish_scope_status()
+    slideshow.subfolder_mode = False
+    slideshow.parent_mode = False
+    slideshow._publish_scope_status()
+
+    assert events == [
+        ("set", "SUB PAR"),
+        ("clear", "scope"),
+    ]

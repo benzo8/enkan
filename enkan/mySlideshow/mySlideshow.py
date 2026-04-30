@@ -36,14 +36,18 @@ from enkan.mySlideshow.NavigationTypes import (
 )
 from enkan.mySlideshow.StatusBar import (
     AUTO_ADVANCE_STATUS_KEY,
+    COUNT_STATUS_KEY,
     FILEPATH_STATUS_KEY,
     RUNTIME_STATUS_KEY,
+    SCOPE_STATUS_KEY,
     StatusBar,
     StatusContribution,
     StatusFacts,
     build_auto_advance_contribution,
+    build_count_contribution,
     build_filepath_contribution,
     build_runtime_status_contribution,
+    build_scope_contribution,
     build_status_contributions_from_facts,
 )
 from enkan.mySlideshow.ScopeStack import ScopeStack, ScopeStackEntry
@@ -810,6 +814,25 @@ class ImageSlideshow:
         else:
             self.status_bar.set_contribution(contribution)
 
+    def _publish_count_status(self) -> None:
+        self.status_bar.set_contribution(
+            build_count_contribution(
+                self.current_image_path,
+                self.image_paths,
+                self.current_image_index,
+            )
+        )
+
+    def _publish_scope_status(self) -> None:
+        contribution = build_scope_contribution(
+            self.subfolder_mode,
+            self.parent_mode,
+        )
+        if contribution is None:
+            self.status_bar.clear_contribution(SCOPE_STATUS_KEY)
+        else:
+            self.status_bar.set_contribution(contribution)
+
     # --- UI Messaging and User Actions ---
 
     def _confirm_action(self, title: str, message: str) -> bool:
@@ -1390,6 +1413,8 @@ class ImageSlideshow:
                 image_meta_from_sink=True,
                 runtime_status_from_sink=True,
                 auto_advance_from_sink=True,
+                count_from_sink=True,
+                scope_from_sink=True,
             )
         )
 
@@ -1407,10 +1432,14 @@ class ImageSlideshow:
         if self.show_filename:
             if not self.current_image_path or not self.image_paths:
                 self.status_bar.clear_contribution(FILEPATH_STATUS_KEY)
+                self.status_bar.clear_contribution(COUNT_STATUS_KEY)
+                self.status_bar.clear_contribution(SCOPE_STATUS_KEY)
                 self.status_bar.set_base_contributions((), visible=False)
                 return
 
             self._publish_filepath_status()
+            self._publish_count_status()
+            self._publish_scope_status()
             self.status_bar.set_base_contributions(
                 self._status_contributions(),
                 visible=True,
