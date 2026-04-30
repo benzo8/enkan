@@ -1,7 +1,17 @@
 from enkan.mySlideshow.StatusBar import (
+    StatusContribution,
+    StatusDots,
+    StatusFilePath,
+    StatusKind,
+    StatusTimer,
+    StatusZone,
     StatusBarContext,
     build_filename_display,
     build_mode_text,
+    render_contribution,
+    render_dots,
+    render_status,
+    render_timer,
 )
 
 
@@ -91,3 +101,101 @@ def test_build_mode_text_prefixes_auto_advance():
     )
 
     assert text == "AUTO (5000ms)   (1/2) WGT"
+
+
+def test_render_status_orders_left_and_center_from_left_edge():
+    rendered = render_status(
+        (
+            StatusContribution("left-low", StatusZone.LEFT, 1, content="low"),
+            StatusContribution("left-high", StatusZone.LEFT, 10, content="high"),
+            StatusContribution("center-low", StatusZone.CENTER, 1, content="C-low"),
+            StatusContribution("center-high", StatusZone.CENTER, 10, content="C-high"),
+        )
+    )
+
+    assert rendered.left.text == "high low"
+    assert rendered.center.text == "C-high C-low"
+
+
+def test_render_status_orders_right_from_right_edge():
+    rendered = render_status(
+        (
+            StatusContribution("right-low", StatusZone.RIGHT, 1, content="low"),
+            StatusContribution("right-high", StatusZone.RIGHT, 10, content="high"),
+        )
+    )
+
+    assert rendered.right.text == "low high"
+
+
+def test_render_filepath_segments_fixed_prefix():
+    segments = render_contribution(
+        StatusContribution(
+            "path",
+            StatusZone.LEFT,
+            1,
+            kind=StatusKind.FILEPATH,
+            content=StatusFilePath(
+                label_path="root\\folder\\image.jpg",
+                fixed_path="root\\folder",
+                fixed_colour="gold",
+            ),
+        )
+    )
+
+    assert [(segment.text, segment.tag) for segment in segments] == [
+        ("root\\folder", "fixed"),
+        ("\\image.jpg", "normal"),
+    ]
+
+
+def test_render_timer_formats_time_and_state():
+    segments = render_timer(
+        StatusTimer(
+            current_ms=65_000,
+            duration_ms=3_665_000,
+            paused=True,
+            status_text="BUFFERING",
+        )
+    )
+
+    assert segments[0].text == "VIDEO 01:05 / 1:01:05 PAUSED BUFFERING"
+    assert segments[0].tag == "timer"
+
+
+def test_render_timer_handles_unknown_times():
+    segments = render_timer(StatusTimer(current_ms=None, duration_ms=-1))
+
+    assert segments[0].text == "VIDEO --:-- / --:--"
+
+
+def test_render_dots_caps_visible_dots_and_marks_overflow():
+    segments = render_dots(StatusDots(full=3, total=6, max_visible=5))
+
+    assert [(segment.text, segment.tag) for segment in segments] == [
+        ("・・・", "dot-full"),
+        ("・・", "dot-empty"),
+        ("+1", "dot-overflow"),
+    ]
+
+
+def test_render_dots_clamps_full_count():
+    segments = render_dots(StatusDots(full=8, total=3, max_visible=5))
+
+    assert [(segment.text, segment.tag) for segment in segments] == [
+        ("・・・", "dot-full"),
+    ]
+
+
+def test_graph_contribution_is_stubbed_empty():
+    segments = render_contribution(
+        StatusContribution(
+            "graph",
+            StatusZone.RIGHT,
+            1,
+            kind=StatusKind.GRAPH,
+            content=None,
+        )
+    )
+
+    assert segments == ()
