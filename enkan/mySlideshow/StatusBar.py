@@ -8,6 +8,8 @@ VIDEO_TIMER_STATUS_KEY = "video-timer"
 VIDEO_RUNTIME_STATUS_KEY = "video-runtime-status"
 FILEPATH_STATUS_KEY = "filepath"
 IMAGE_META_STATUS_KEY = "image-meta"
+RUNTIME_STATUS_KEY = "runtime-status"
+AUTO_ADVANCE_STATUS_KEY = "auto-advance"
 
 
 @dataclass(frozen=True)
@@ -235,6 +237,29 @@ def build_image_meta_contribution(
     )
 
 
+def build_runtime_status_contribution(status_text: str) -> "StatusContribution":
+    return StatusContribution(
+        RUNTIME_STATUS_KEY,
+        StatusZone.RIGHT,
+        30,
+        content=status_text,
+    )
+
+
+def build_auto_advance_contribution(
+    running: bool,
+    interval: int | float | None,
+) -> "StatusContribution | None":
+    if not running or interval is None or interval <= 0:
+        return None
+    return StatusContribution(
+        AUTO_ADVANCE_STATUS_KEY,
+        StatusZone.RIGHT,
+        0,
+        content=f"AUTO ({interval}ms)  ",
+    )
+
+
 @dataclass(frozen=True)
 class StatusDots:
     full: int
@@ -315,6 +340,8 @@ class StatusFacts:
     filepath_from_sink: bool = False
     video_timer_from_sink: bool = False
     image_meta_from_sink: bool = False
+    runtime_status_from_sink: bool = False
+    auto_advance_from_sink: bool = False
 
 
 def render_text(content: object, tag: str = "normal") -> tuple[StatusSegment, ...]:
@@ -520,6 +547,8 @@ def build_status_contributions(
             filepath_from_sink=False,
             video_timer_from_sink=False,
             image_meta_from_sink=False,
+            runtime_status_from_sink=False,
+            auto_advance_from_sink=False,
         )
     )
 
@@ -559,15 +588,14 @@ def build_status_contributions_from_facts(
         facts.auto_advance_running
         and facts.auto_advance_interval is not None
         and facts.auto_advance_interval > 0
+        and not facts.auto_advance_from_sink
     ):
-        contributions.append(
-            StatusContribution(
-                "auto-advance",
-                StatusZone.RIGHT,
-                0,
-                content=f"AUTO ({facts.auto_advance_interval}ms)  ",
-            )
+        contribution = build_auto_advance_contribution(
+            facts.auto_advance_running,
+            facts.auto_advance_interval,
         )
+        if contribution is not None:
+            contributions.append(contribution)
 
     contributions.append(
         StatusContribution(
@@ -590,15 +618,8 @@ def build_status_contributions_from_facts(
                 content=facts.provider_status_text,
             )
         )
-    if facts.runtime_status_text:
-        contributions.append(
-            StatusContribution(
-                "runtime-status",
-                StatusZone.RIGHT,
-                30,
-                content=facts.runtime_status_text,
-            )
-        )
+    if facts.runtime_status_text and not facts.runtime_status_from_sink:
+        contributions.append(build_runtime_status_contribution(facts.runtime_status_text))
     scope_parts: list[str] = []
     if facts.subfolder_mode:
         scope_parts.append("SUB")

@@ -1523,3 +1523,45 @@ def test_show_image_does_not_create_slideshow_vlc_state_for_images():
 
     assert not hasattr(slideshow, "current_vlc_media")
     assert not hasattr(slideshow, "current_video_payload")
+
+
+def test_runtime_status_publishes_to_status_sink():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.runtime_status_text = ""
+    events: list[tuple[str, str]] = []
+    slideshow.status_bar = SimpleNamespace(
+        set_contribution=lambda contribution: events.append(
+            ("set", contribution.content)
+        ),
+        clear_contribution=lambda key: events.append(("clear", key)),
+    )
+
+    slideshow._set_runtime_status("No displayable media")
+    slideshow._set_runtime_status("")
+
+    assert events == [
+        ("set", "No displayable media"),
+        ("clear", "runtime-status"),
+    ]
+
+
+def test_auto_advance_status_publishes_to_status_sink():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    events: list[tuple[str, str]] = []
+    slideshow.status_bar = SimpleNamespace(
+        set_contribution=lambda contribution: events.append(
+            ("set", contribution.content)
+        ),
+        clear_contribution=lambda key: events.append(("clear", key)),
+    )
+
+    slideshow.auto_advance_running = True
+    slideshow.auto_advance_interval = 5000
+    slideshow._publish_auto_advance_status()
+    slideshow.auto_advance_running = False
+    slideshow._publish_auto_advance_status()
+
+    assert events == [
+        ("set", "AUTO (5000ms)  "),
+        ("clear", "auto-advance"),
+    ]

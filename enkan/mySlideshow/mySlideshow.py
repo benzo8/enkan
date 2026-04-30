@@ -35,11 +35,15 @@ from enkan.mySlideshow.NavigationTypes import (
     ScopeKind,
 )
 from enkan.mySlideshow.StatusBar import (
+    AUTO_ADVANCE_STATUS_KEY,
     FILEPATH_STATUS_KEY,
+    RUNTIME_STATUS_KEY,
     StatusBar,
     StatusContribution,
     StatusFacts,
+    build_auto_advance_contribution,
     build_filepath_contribution,
+    build_runtime_status_contribution,
     build_status_contributions_from_facts,
 )
 from enkan.mySlideshow.ScopeStack import ScopeStack, ScopeStackEntry
@@ -209,6 +213,7 @@ class ImageSlideshow:
             self.auto_advance_interval: int | float = interval
             self._schedule_next_image()
             self.auto_advance_running = True
+            self._publish_auto_advance_status()
 
     def _reset_zoom(self, event=None) -> None:
         self.zoompan.reset_view()
@@ -246,7 +251,16 @@ class ImageSlideshow:
         if getattr(self, "runtime_status_text", "") == status_text:
             return
         self.runtime_status_text = status_text
-        self.update_filename_display()
+        self._publish_runtime_status()
+
+    def _publish_runtime_status(self) -> None:
+        status_text = getattr(self, "runtime_status_text", "")
+        if status_text:
+            self.status_bar.set_contribution(
+                build_runtime_status_contribution(status_text)
+            )
+        else:
+            self.status_bar.clear_contribution(RUNTIME_STATUS_KEY)
 
     def toggle_video_pause(self, event=None):
         controller = getattr(self, "video_controller", None)
@@ -780,11 +794,21 @@ class ImageSlideshow:
             self.auto_advance_running = True
             logger.debug("Auto-advance started (%s ms).", self.auto_advance_interval)
 
-        self.update_filename_display()
+        self._publish_auto_advance_status()
 
     def reset_auto_advance(self) -> None:
         if getattr(self, "auto_advance_running", False):
             self._schedule_next_image()
+
+    def _publish_auto_advance_status(self) -> None:
+        contribution = build_auto_advance_contribution(
+            bool(getattr(self, "auto_advance_running", False)),
+            getattr(self, "auto_advance_interval", None),
+        )
+        if contribution is None:
+            self.status_bar.clear_contribution(AUTO_ADVANCE_STATUS_KEY)
+        else:
+            self.status_bar.set_contribution(contribution)
 
     # --- UI Messaging and User Actions ---
 
@@ -1364,6 +1388,8 @@ class ImageSlideshow:
                 filepath_from_sink=True,
                 video_timer_from_sink=True,
                 image_meta_from_sink=True,
+                runtime_status_from_sink=True,
+                auto_advance_from_sink=True,
             )
         )
 

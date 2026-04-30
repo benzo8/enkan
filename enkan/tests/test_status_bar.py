@@ -6,10 +6,14 @@ from enkan.mySlideshow.StatusBar import (
     StatusKind,
     StatusTimer,
     StatusZone,
+    AUTO_ADVANCE_STATUS_KEY,
+    RUNTIME_STATUS_KEY,
     StatusBarContext,
     StatusBar,
+    build_auto_advance_contribution,
     build_filename_display,
     build_mode_text,
+    build_runtime_status_contribution,
     build_status_contributions,
     build_status_contributions_from_facts,
     build_status_display,
@@ -295,6 +299,38 @@ def test_status_facts_filepath_and_image_meta_sink_mode_omits_left_segments():
 
     assert display.filename.segments == ()
     assert display.mode_text == "(1/2) WGT"
+
+
+def test_status_facts_runtime_and_auto_sink_mode_omits_right_segments():
+    display = build_status_display(
+        build_status_contributions_from_facts(
+            _facts(
+                runtime_status_text="No displayable media",
+                auto_advance_running=True,
+                auto_advance_interval=5000,
+                runtime_status_from_sink=True,
+                auto_advance_from_sink=True,
+            )
+        )
+    )
+
+    assert display.mode_text == "(1/2) WGT"
+
+
+def test_runtime_status_contribution_uses_stable_key():
+    contribution = build_runtime_status_contribution("No displayable media")
+
+    assert contribution.key == RUNTIME_STATUS_KEY
+    assert contribution.content == "No displayable media"
+
+
+def test_auto_advance_contribution_uses_stable_key_and_clears_when_stopped():
+    contribution = build_auto_advance_contribution(True, 5000)
+
+    assert contribution is not None
+    assert contribution.key == AUTO_ADVANCE_STATUS_KEY
+    assert contribution.content == "AUTO (5000ms)  "
+    assert build_auto_advance_contribution(False, 5000) is None
 
 
 def test_status_facts_uses_index_fallback_when_current_path_not_in_list():
