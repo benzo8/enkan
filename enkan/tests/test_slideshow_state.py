@@ -1605,3 +1605,14 @@ def test_scope_status_publishes_to_status_sink():
         ("set", "SUB PAR"),
         ("clear", "scope"),
     ]
+
+
+def test_cache_dots_hotkey_toggles_status_contribution_visibility():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    toggled: list[str] = []
+    slideshow.status_bar = SimpleNamespace(
+        toggle_contribution_visibility=lambda key: toggled.append(key)
+    )
+
+    assert slideshow.toggle_cache_dots() == "break"
+    assert toggled == ["cache-dots"]

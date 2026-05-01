@@ -406,7 +406,7 @@ def test_select_manager_uses_selection_scope_without_image_level_tree_resolution
 
     monkeypatch.setattr(
         "enkan.plugables.ImageProviders.ImageCacheManager",
-        lambda image_provider, current_image_index, background_preload=True: object(),
+        lambda image_provider, current_image_index, background_preload=True, **kwargs: object(),
     )
 
     providers.select_manager(

@@ -7,12 +7,14 @@ from enkan.mySlideshow.StatusBar import (
     StatusTimer,
     StatusZone,
     AUTO_ADVANCE_STATUS_KEY,
+    CACHE_DOTS_STATUS_KEY,
     COUNT_STATUS_KEY,
     RUNTIME_STATUS_KEY,
     SCOPE_STATUS_KEY,
     StatusBarContext,
     StatusBar,
     build_auto_advance_contribution,
+    build_cache_dots_contribution,
     build_count_contribution,
     build_filename_display,
     build_mode_text,
@@ -352,6 +354,13 @@ def test_auto_advance_contribution_uses_stable_key_and_clears_when_stopped():
     assert build_auto_advance_contribution(False, 5000) is None
 
 
+def test_cache_dots_contribution_renders_in_center_zone():
+    display = build_status_display((build_cache_dots_contribution(2, 3),))
+
+    assert display.center_text == "・・・"
+    assert display.mode_text == ""
+
+
 def test_count_contribution_uses_stable_key_and_index_fallback():
     contribution = build_count_contribution(
         current_image_path="outside.jpg",
@@ -452,6 +461,26 @@ def test_status_bar_hidden_contribution_is_retained_until_visible():
 
     assert updates[-1][0].mode_text == "VIDEO: failed"
     assert hidden_calls == ["hide", "idle"]
+
+
+def test_status_bar_contribution_visibility_hides_and_restores_data():
+    status_bar = StatusBar.__new__(StatusBar)
+    updates = []
+    status_bar._visible = True
+    status_bar._base_contributions = {}
+    status_bar._owned_contributions = {}
+    status_bar._hidden_contribution_keys = set()
+    status_bar.update = lambda display, visible: updates.append((display, visible))
+
+    status_bar.set_contribution(build_cache_dots_contribution(2, 3))
+    status_bar.set_contribution_visible(CACHE_DOTS_STATUS_KEY, False)
+    status_bar.set_contribution(build_cache_dots_contribution(3, 3))
+    status_bar.set_contribution_visible(CACHE_DOTS_STATUS_KEY, True)
+
+    assert updates[0][0].center_text == "・・・"
+    assert updates[1][0].center_text == ""
+    assert updates[2][0].center_text == ""
+    assert updates[3][0].center_text == "・・・"
 
 
 def test_status_bar_clear_contribution_refreshes_without_clearing_base_status():

@@ -11,6 +11,10 @@ from .CachedVideoData import CachedVideoData
 from enkan.plugables.ImageLoaders import ImageLoaders
 from enkan.utils.utils import is_videofile
 from enkan import constants
+from enkan.mySlideshow.StatusBar import (
+    StatusSink,
+    build_cache_dots_contribution,
+)
 
 logger: logging.Logger = logging.getLogger("enkan.cache")     
 
@@ -21,7 +25,13 @@ class ImageCacheManager:
     Supports background preloading of images.
     """
 
-    def __init__(self, image_provider, current_image_index, background_preload=True):
+    def __init__(
+        self,
+        image_provider,
+        current_image_index,
+        background_preload=True,
+        status_sink: StatusSink | None = None,
+    ):
         self.lru_cache = LRUCache(constants.CACHE_SIZE)
         self.preload_queue = PreloadQueue(constants.PRELOAD_QUEUE_LENGTH)
         self.history_manager = HistoryManager(constants.HISTORY_QUEUE_LENGTH)
@@ -30,6 +40,7 @@ class ImageCacheManager:
         self.current_image_index = current_image_index
         self.background_preload = background_preload
         self.current_media_metadata = None
+        self.status_sink = status_sink
 
         self._lock = threading.RLock()
         self._queue_state = threading.Condition(self._lock)
@@ -42,6 +53,16 @@ class ImageCacheManager:
             self._background_refill()
         else:
             self._preload_refill()
+        self._publish_cache_dots_status()
+
+    def _publish_cache_dots_status(self) -> None:
+        status_sink = self.status_sink
+        if status_sink is None:
+            return
+        with self._queue_state:
+            full = len(self.preload_queue)
+            total = self.preload_queue.max_size
+        status_sink.set_contribution(build_cache_dots_contribution(full, total))
 
     # -----------------------
     # Preload
@@ -82,11 +103,13 @@ class ImageCacheManager:
                     self.preload_queue.push(image_path, media, meta=provider_meta)
                     self._queue_state.notify_all()
                     logger.debug("Preloaded: %s", image_path)
+                self._publish_cache_dots_status()
         finally:
             with self._queue_state:
                 self._refill_active = False
                 self._refill_thread = None
                 self._queue_state.notify_all()
+            self._publish_cache_dots_status()
 
     def _background_refill(self):
         """Start a background refill thread if not already running."""
@@ -163,12 +186,17 @@ class ImageCacheManager:
 
     def _pop_preloaded(self):
         with self._queue_state:
-            return self.preload_queue.pop()
+            item = self.preload_queue.pop()
+        if item is not None:
+            self._publish_cache_dots_status()
+        return item
 
     def _wait_for_preloaded(self):
         with self._queue_state:
             if len(self.preload_queue) > 0:
-                return self.preload_queue.pop()
+                item = self.preload_queue.pop()
+                self._publish_cache_dots_status()
+                return item
             if not self._refill_active:
                 return None
 
@@ -177,7 +205,9 @@ class ImageCacheManager:
                 self._queue_state.wait()
 
             if len(self.preload_queue) > 0:
-                return self.preload_queue.pop()
+                item = self.preload_queue.pop()
+                self._publish_cache_dots_status()
+                return item
             return None
 
     # -----------------------
@@ -248,6 +278,7 @@ class ImageCacheManager:
             self._background_refill()
         else:
             self._preload_refill()
+        self._publish_cache_dots_status()
 
         # Step 4: Debug output
         self.current_media_metadata = provider_meta
@@ -288,6 +319,7 @@ class ImageCacheManager:
             self.lru_cache.clear()
             self.preload_queue.clear()
             self._queue_state.notify_all()
+        self._publish_cache_dots_status()
         self.history_manager.clear()
         logger.debug("Cache, preload queue, and history cleared.")
 
@@ -295,6 +327,7 @@ class ImageCacheManager:
             self._background_refill()
         else:
             self._preload_refill()
+        self._publish_cache_dots_status()
 
     def reset_provider(self) -> bool:
         """Reset provider-specific state and clear pending preloads."""
@@ -306,10 +339,12 @@ class ImageCacheManager:
         with self._queue_state:
             self.preload_queue.clear()
             self._queue_state.notify_all()
+        self._publish_cache_dots_status()
         if self.background_preload:
             self._background_refill()
         else:
             self._preload_refill()
+        self._publish_cache_dots_status()
         logger.debug("Provider state reset; preload queue cleared.")
         return True
 
@@ -318,10 +353,12 @@ class ImageCacheManager:
         with self._queue_state:
             self.preload_queue.clear()
             self._queue_state.notify_all()
+        self._publish_cache_dots_status()
         if self.background_preload:
             self._background_refill()
         else:
             self._preload_refill()
+        self._publish_cache_dots_status()
         logger.debug("Provider queue refreshed.")
 
     def invalidate(self, image_path: str) -> None:
@@ -330,6 +367,7 @@ class ImageCacheManager:
             self.lru_cache.pop(image_path)
             self.preload_queue.discard(image_path)
             self._queue_state.notify_all()
+        self._publish_cache_dots_status()
 
     def history_snapshot(self) -> dict[str, object]:
         return self.history_manager.snapshot()

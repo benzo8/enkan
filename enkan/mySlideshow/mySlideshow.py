@@ -36,6 +36,7 @@ from enkan.mySlideshow.NavigationTypes import (
 )
 from enkan.mySlideshow.StatusBar import (
     AUTO_ADVANCE_STATUS_KEY,
+    CACHE_DOTS_STATUS_KEY,
     COUNT_STATUS_KEY,
     FILEPATH_STATUS_KEY,
     RUNTIME_STATUS_KEY,
@@ -130,6 +131,7 @@ class ImageSlideshow:
         self.label = tk.Label(root, bg="black")  # Set label background to black
         self.label.pack()
         self.status_bar = StatusBar(self.root)
+        self.status_bar.set_contribution_visible(CACHE_DOTS_STATUS_KEY, False)
         self.video_controller = VideoPlaybackController(
             root=self.root,
             screen_width=self.screen_width,
@@ -186,6 +188,7 @@ class ImageSlideshow:
         self.root.bind("<Control-d>", self.clear_memory)
         self.root.bind("<D>", self.toggle_provider_display_mode)
         self.root.bind("<a>", self.toggle_auto_advance)
+        self.root.bind("<k>", self.toggle_cache_dots)
         self.root.bind("<Control-Shift-M>", self.open_mode_dialog)
         self.root.bind("<Control-Shift-T>", self.print_tree_to_console)
 
@@ -574,6 +577,7 @@ class ImageSlideshow:
             image_paths=image_paths,
             provider_name=self.providers.get_current_provider_name(),
             index=self.current_image_index,
+            status_sink=self.status_bar,
             **self._provider_kwargs(),
         )
         self.manager.restore_history(history_snapshot)
@@ -602,6 +606,7 @@ class ImageSlideshow:
             image_paths=self.image_paths,
             provider_name=provider_name,
             background_preload=self.defaults.background,
+            status_sink=self.status_bar,
             **provider_kwargs,
         )
         self.manager.restore_history(history_snapshot)
@@ -803,6 +808,10 @@ class ImageSlideshow:
     def reset_auto_advance(self) -> None:
         if getattr(self, "auto_advance_running", False):
             self._schedule_next_image()
+
+    def toggle_cache_dots(self, event=None):
+        self.status_bar.toggle_contribution_visibility(CACHE_DOTS_STATUS_KEY)
+        return "break"
 
     def _publish_auto_advance_status(self) -> None:
         contribution = build_auto_advance_contribution(
@@ -1147,7 +1156,6 @@ class ImageSlideshow:
                     )
                     return
         self.reset_parent_mode(preserve_navigation_state=True)
-        self.update_filename_display()
 
     # -- Parent Mode Navigation ---
 

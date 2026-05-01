@@ -367,6 +367,7 @@ class ImageProviders:
         provider_func = self.providers.get(provider_name)
         if not provider_func:
             raise ValueError(f"No such provider: {provider_name}")
+        status_sink = kwargs.pop("status_sink", None)
         preserve_display_mode = provider_name == self.current_provider_name
         kwargs = self._resolve_provider_kwargs(
             image_paths=image_paths,
@@ -378,7 +379,8 @@ class ImageProviders:
         self.manager = ImageCacheManager(
             image_provider,
             kwargs.get("index", 0),
-            background_preload=kwargs.get("background_preload", True)
+            background_preload=kwargs.get("background_preload", True),
+            status_sink=status_sink,
         )
         self.current_provider_name = provider_name
         if not preserve_display_mode:

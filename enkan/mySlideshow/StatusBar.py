@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
+import threading
 import tkinter as tk
 from typing import Protocol
 
@@ -12,6 +13,7 @@ RUNTIME_STATUS_KEY = "runtime-status"
 AUTO_ADVANCE_STATUS_KEY = "auto-advance"
 COUNT_STATUS_KEY = "count"
 SCOPE_STATUS_KEY = "scope"
+CACHE_DOTS_STATUS_KEY = "cache-dots"
 
 
 @dataclass(frozen=True)
@@ -30,7 +32,12 @@ class FilenameDisplay:
 @dataclass(frozen=True)
 class StatusDisplay:
     filename: FilenameDisplay
+    center: "StatusZoneRender"
     mode_text: str
+
+    @property
+    def center_text(self) -> str:
+        return self.center.text
 
 
 class StatusSink(Protocol):
@@ -47,9 +54,11 @@ class StatusSink(Protocol):
 class StatusBar:
     def __init__(self, root) -> None:
         self.root = root
+        self._ui_thread_id = threading.get_ident()
         self._visible = False
         self._base_contributions: dict[str, StatusContribution] = {}
         self._owned_contributions: dict[str, StatusContribution] = {}
+        self._hidden_contribution_keys: set[str] = set()
         self.filename_label = tk.Text(
             root,
             bg="black",
@@ -60,14 +69,26 @@ class StatusBar:
             highlightthickness=0,
         )
         self.filename_label.config(state=tk.DISABLED)
+        self.center_label = tk.Text(
+            root,
+            bg="black",
+            fg="white",
+            height=1,
+            wrap="none",
+            bd=0,
+            highlightthickness=0,
+        )
+        self.center_label.config(state=tk.DISABLED)
         self.mode_label = tk.Label(root, bg="black", fg="white", anchor="ne")
 
     def raise_widgets(self) -> None:
         self.filename_label.tkraise()
+        self.center_label.tkraise()
         self.mode_label.tkraise()
 
     def hide(self) -> None:
         self.filename_label.place_forget()
+        self.center_label.place_forget()
         self.mode_label.place_forget()
 
     def set_base_contributions(
@@ -83,6 +104,9 @@ class StatusBar:
         self._refresh_visible_status()
 
     def set_contribution(self, contribution: "StatusContribution") -> None:
+        if self._should_marshal_to_ui_thread():
+            self._schedule_on_ui_thread(lambda: self.set_contribution(contribution))
+            return
         self._owned_contributions[contribution.key] = contribution
         self._refresh_visible_status()
 
@@ -90,21 +114,53 @@ class StatusBar:
         self,
         contributions: list["StatusContribution"] | tuple["StatusContribution", ...],
     ) -> None:
+        if self._should_marshal_to_ui_thread():
+            self._schedule_on_ui_thread(lambda: self.set_contributions(contributions))
+            return
         for contribution in contributions:
             self._owned_contributions[contribution.key] = contribution
         self._refresh_visible_status()
 
     def clear_contribution(self, key: str) -> None:
+        if self._should_marshal_to_ui_thread():
+            self._schedule_on_ui_thread(lambda: self.clear_contribution(key))
+            return
         if key in self._owned_contributions:
             del self._owned_contributions[key]
             self._refresh_visible_status()
 
+    def set_contribution_visible(self, key: str, visible: bool) -> None:
+        if visible:
+            self._hidden_contribution_keys.discard(key)
+        else:
+            self._hidden_contribution_keys.add(key)
+        self._refresh_visible_status()
+
+    def toggle_contribution_visibility(self, key: str) -> bool:
+        visible = key in self._hidden_contribution_keys
+        self.set_contribution_visible(key, visible)
+        return visible
+
+    def _should_marshal_to_ui_thread(self) -> bool:
+        ui_thread_id = getattr(self, "_ui_thread_id", threading.get_ident())
+        return threading.get_ident() != ui_thread_id
+
+    def _schedule_on_ui_thread(self, callback) -> None:
+        after = getattr(self.root, "after", None)
+        if callable(after):
+            after(0, callback)
+
     def _merged_contributions(self) -> tuple["StatusContribution", ...]:
+        hidden_keys = getattr(self, "_hidden_contribution_keys", set())
         merged = {
             **self._base_contributions,
             **self._owned_contributions,
         }
-        return tuple(merged.values())
+        return tuple(
+            contribution
+            for contribution in merged.values()
+            if contribution.key not in hidden_keys
+        )
 
     def _refresh_visible_status(self) -> None:
         if not self._visible:
@@ -144,6 +200,27 @@ class StatusBar:
             text=display.mode_text,
             fg="white",
         )
+        self.center_label.config(state=tk.NORMAL)
+        self.center_label.delete("1.0", tk.END)
+        for segment in display.center.segments:
+            self.center_label.insert(tk.END, segment.text, segment.tag)
+        self.center_label.tag_configure("normal", foreground="white")
+        self.center_label.tag_configure("separator", foreground="white")
+        self.center_label.tag_configure("dot-full", foreground="green")
+        self.center_label.tag_configure("dot-empty", foreground="grey")
+        self.center_label.tag_configure("dot-overflow", foreground="white")
+        self.center_label.config(
+            state=tk.DISABLED,
+            width=max(len(display.center_text), 1),
+        )
+        if display.center_text:
+            self.center_label.place(
+                x=self.root.winfo_screenwidth() // 2,
+                y=0,
+                anchor="n",
+            )
+        else:
+            self.center_label.place_forget()
         self.mode_label.place(x=self.root.winfo_screenwidth(), y=0, anchor="ne")
         self.root.update_idletasks()
 
@@ -291,6 +368,19 @@ def build_scope_contribution(
         StatusZone.RIGHT,
         40,
         content=" ".join(scope_parts),
+    )
+
+
+def build_cache_dots_contribution(
+    full: int,
+    total: int,
+) -> "StatusContribution":
+    return StatusContribution(
+        CACHE_DOTS_STATUS_KEY,
+        StatusZone.CENTER,
+        50,
+        kind=StatusKind.DOTS,
+        content=StatusDots(full=full, total=total),
     )
 
 
@@ -690,6 +780,7 @@ def build_status_display(
     )
     return StatusDisplay(
         filename=filename_display,
+        center=render_zone(contributions, StatusZone.CENTER),
         mode_text=render_zone(contributions, StatusZone.RIGHT).text,
     )
 
