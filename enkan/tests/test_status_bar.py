@@ -357,7 +357,7 @@ def test_auto_advance_contribution_uses_stable_key_and_clears_when_stopped():
 def test_cache_dots_contribution_renders_in_center_zone():
     display = build_status_display((build_cache_dots_contribution(2, 3),))
 
-    assert display.center_text == "・・・"
+    assert display.center_text == "●●●"
     assert display.mode_text == ""
 
 
@@ -477,10 +477,10 @@ def test_status_bar_contribution_visibility_hides_and_restores_data():
     status_bar.set_contribution(build_cache_dots_contribution(3, 3))
     status_bar.set_contribution_visible(CACHE_DOTS_STATUS_KEY, True)
 
-    assert updates[0][0].center_text == "・・・"
+    assert updates[0][0].center_text == "●●●"
     assert updates[1][0].center_text == ""
     assert updates[2][0].center_text == ""
-    assert updates[3][0].center_text == "・・・"
+    assert updates[3][0].center_text == "●●●"
 
 
 def test_status_bar_clear_contribution_refreshes_without_clearing_base_status():
@@ -582,8 +582,8 @@ def test_render_dots_caps_visible_dots_and_marks_overflow():
     segments = render_dots(StatusDots(full=3, total=6, max_visible=5))
 
     assert [(segment.text, segment.tag) for segment in segments] == [
-        ("・・・", "dot-full"),
-        ("・・", "dot-empty"),
+        ("●●●", "dot-full"),
+        ("●●", "dot-empty"),
         ("+1", "dot-overflow"),
     ]
 
@@ -592,7 +592,7 @@ def test_render_dots_clamps_full_count():
     segments = render_dots(StatusDots(full=8, total=3, max_visible=5))
 
     assert [(segment.text, segment.tag) for segment in segments] == [
-        ("・・・", "dot-full"),
+        ("●●●", "dot-full"),
     ]
 
 

@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from enum import Enum
 import threading
 import tkinter as tk
+import tkinter.font as tkfont
 from typing import Protocol
 
 
@@ -59,6 +60,12 @@ class StatusBar:
         self._base_contributions: dict[str, StatusContribution] = {}
         self._owned_contributions: dict[str, StatusContribution] = {}
         self._hidden_contribution_keys: set[str] = set()
+        self.status_band = tk.Frame(
+            root,
+            bg="black",
+            bd=0,
+            highlightthickness=0,
+        )
         self.filename_label = tk.Text(
             root,
             bg="black",
@@ -82,11 +89,13 @@ class StatusBar:
         self.mode_label = tk.Label(root, bg="black", fg="white", anchor="ne")
 
     def raise_widgets(self) -> None:
+        self.status_band.tkraise()
         self.filename_label.tkraise()
         self.center_label.tkraise()
         self.mode_label.tkraise()
 
     def hide(self) -> None:
+        self.status_band.place_forget()
         self.filename_label.place_forget()
         self.center_label.place_forget()
         self.mode_label.place_forget()
@@ -176,6 +185,14 @@ class StatusBar:
             self.root.update_idletasks()
             return
 
+        status_height = self._status_height()
+        self.status_band.place(
+            x=0,
+            y=0,
+            width=self.root.winfo_screenwidth(),
+            height=status_height,
+        )
+
         filename_display = display.filename
         self.filename_label.config(state=tk.NORMAL)
         self.filename_label.delete("1.0", tk.END)
@@ -192,7 +209,7 @@ class StatusBar:
         self.filename_label.tag_configure("dot-full", foreground="green")
         self.filename_label.tag_configure("dot-empty", foreground="grey")
         self.filename_label.tag_configure("dot-overflow", foreground="white")
-        self.filename_label.place(x=0, y=0)
+        self.filename_label.place(x=0, y=0, height=status_height)
         self.filename_label.config(height=1, width=filename_display.width, bg="black")
         self.filename_label.config(state=tk.DISABLED)
 
@@ -211,18 +228,36 @@ class StatusBar:
         self.center_label.tag_configure("dot-overflow", foreground="white")
         self.center_label.config(
             state=tk.DISABLED,
-            width=max(len(display.center_text), 1),
         )
         if display.center_text:
+            text_width = tkfont.Font(font=self.center_label.cget("font")).measure(
+                display.center_text
+            )
             self.center_label.place(
                 x=self.root.winfo_screenwidth() // 2,
                 y=0,
+                height=status_height,
+                width=max(text_width + 8, 1),
                 anchor="n",
             )
         else:
             self.center_label.place_forget()
-        self.mode_label.place(x=self.root.winfo_screenwidth(), y=0, anchor="ne")
+        self.mode_label.place(
+            x=self.root.winfo_screenwidth(),
+            y=0,
+            height=status_height,
+            anchor="ne",
+        )
+        self.raise_widgets()
         self.root.update_idletasks()
+
+    def _status_height(self) -> int:
+        fonts = (
+            tkfont.Font(font=self.filename_label.cget("font")),
+            tkfont.Font(font=self.center_label.cget("font")),
+            tkfont.Font(font=self.mode_label.cget("font")),
+        )
+        return max(font.metrics("linespace") for font in fonts) + 4
 
 
 class StatusZone(str, Enum):
@@ -388,7 +423,7 @@ def build_cache_dots_contribution(
 class StatusDots:
     full: int
     total: int
-    symbol: str = "・"
+    symbol: str = "●"
     full_colour: str = "green"
     empty_colour: str = "grey"
     max_visible: int = 20
