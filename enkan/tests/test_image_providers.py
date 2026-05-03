@@ -2,7 +2,12 @@ import os
 import random
 
 from enkan.plugables.FolderSelectionMemory import FolderSelectionMemory
-from enkan.plugables.ImageProviders import ImageProviders
+from enkan.plugables.ImageProviders import (
+    ImageProviders,
+    ProviderDisplayEvent,
+    ProviderRuntimeContext,
+)
+from enkan.mySlideshow.StatusBar import build_provider_detail_contribution
 from enkan.tree.selection_scope import SelectionScope, SelectionUnit
 from enkan.tree.diagnostics import _resolve_test_provider
 
@@ -69,6 +74,69 @@ def _selection_scope_from_units(*units):
     return SelectionScope.from_parts(image_paths, weights, selection_units)
 
 
+class _Sink:
+    def __init__(self):
+        self.contributions = {}
+        self.cleared = []
+
+    def set_contribution(self, contribution):
+        self.contributions[contribution.key] = contribution
+
+    def set_contributions(self, contributions):
+        for contribution in contributions:
+            self.set_contribution(contribution)
+
+    def clear_contribution(self, key):
+        self.contributions.pop(key, None)
+        self.cleared.append(key)
+
+
+def _runtime_context(
+    *,
+    sink=None,
+    image_paths=None,
+    weights=None,
+    selection_scope=None,
+    folder_memory=None,
+    seen_folders=None,
+    recorded=None,
+    synced=None,
+):
+    sink = sink or _Sink()
+    image_paths = image_paths or ["root\\folder\\one.jpg"]
+    weights = weights or [1.0] * len(image_paths)
+    folder_memory = folder_memory or FolderSelectionMemory()
+    seen_folders = seen_folders if seen_folders is not None else set()
+    recorded = recorded if recorded is not None else []
+    synced = synced if synced is not None else []
+
+    original_record = folder_memory.record_folder
+
+    def record_folder(folder):
+        recorded.append(folder)
+        original_record(folder)
+
+    folder_memory.record_folder = record_folder
+
+    return ProviderRuntimeContext(
+        status_sink=sink,
+        image_paths=image_paths,
+        weights=weights,
+        selection_scope=selection_scope,
+        tree=None,
+        folder_memory=folder_memory,
+        seen_folders=seen_folders,
+        resolve_memory_key_for_image=lambda path, meta=None: (
+            str(meta["memory_key"])
+            if meta is not None and "memory_key" in meta
+            else os.path.dirname(path)
+        ),
+        resolve_memory_key_for_scope=lambda scope_path: scope_path,
+        scope_records_once_per_folder=lambda: False,
+        sync_memory=lambda: synced.append("sync"),
+    )
+
+
 def test_controlled_random_weighted_registered():
     providers = ImageProviders()
 
@@ -77,6 +145,180 @@ def test_controlled_random_weighted_registered():
         _resolve_test_provider(providers.providers, "image_provider_controlled_random_weighted")
         == "controlled_random_weighted"
     )
+
+
+def test_image_providers_publish_short_codes_for_builtin_providers():
+    for provider_name, expected_label in (
+        ("random", "RND"),
+        ("weighted", "WGT"),
+        ("controlled_random_weighted", "CRW"),
+        ("burst", "BUR"),
+    ):
+        providers = ImageProviders()
+        sink = _Sink()
+        providers.current_provider_name = provider_name
+        providers.configure_runtime_context(_runtime_context(sink=sink))
+
+        assert sink.contributions["provider-label"].content == expected_label
+
+
+def test_image_providers_records_weighted_memory_through_display_hook():
+    providers = ImageProviders()
+    providers.current_provider_name = "weighted"
+    recorded: list[str] = []
+    synced: list[str] = []
+    providers.configure_runtime_context(
+        _runtime_context(recorded=recorded, synced=synced)
+    )
+
+    providers.on_media_displayed(
+        ProviderDisplayEvent(
+            image_path="root\\folder\\one.jpg",
+            provider_pick_meta={"memory_key": "root\\folder"},
+        )
+    )
+
+    assert recorded == ["root\\folder"]
+    assert synced == ["sync"]
+
+
+def test_image_providers_does_not_record_sequential_memory():
+    providers = ImageProviders()
+    providers.current_provider_name = "sequential"
+    recorded: list[str] = []
+    providers.configure_runtime_context(_runtime_context(recorded=recorded))
+
+    providers.on_media_displayed(ProviderDisplayEvent("root\\folder\\one.jpg"))
+
+    assert recorded == []
+
+
+def test_image_providers_publishes_burst_dots_and_records_once_per_token():
+    providers = ImageProviders()
+    providers.current_provider_name = "burst"
+    sink = _Sink()
+    recorded: list[str] = []
+    providers.configure_runtime_context(
+        _runtime_context(sink=sink, recorded=recorded)
+    )
+
+    event = ProviderDisplayEvent(
+        image_path="root\\burst\\one.jpg",
+        provider_pick_meta={
+            "burst_folder": "root\\burst",
+            "burst_token": 12,
+            "burst_index": 2,
+            "burst_size": 5,
+        },
+    )
+    providers.on_media_displayed(event)
+    providers.on_media_displayed(event)
+
+    assert recorded == ["root\\burst"]
+    assert sink.contributions["provider-label"].content == "BUR"
+    dots = sink.contributions["provider-burst-dots"].content
+    assert dots.full == 3
+    assert dots.total == 5
+    assert dots.empty_symbol is None
+
+
+def test_image_providers_keeps_burst_dot_width_on_final_item():
+    providers = ImageProviders()
+    providers.current_provider_name = "burst"
+    sink = _Sink()
+    providers.configure_runtime_context(_runtime_context(sink=sink))
+
+    providers.on_media_displayed(
+        ProviderDisplayEvent(
+            image_path="root\\burst\\last.jpg",
+            record_history=False,
+            provider_pick_meta={
+                "burst_folder": "root\\burst",
+                "burst_token": 12,
+                "burst_index": 5,
+                "burst_size": 5,
+            },
+        )
+    )
+
+    dots = sink.contributions["provider-burst-dots"].content
+    assert dots.full == 0
+    assert dots.total == 5
+
+
+def test_image_providers_publishes_crw_status_before_recording_memory():
+    providers = ImageProviders()
+    providers.current_provider_name = "controlled_random_weighted"
+    providers.current_provider_display_mode_index = 1
+    sink = _Sink()
+    recorded: list[str] = []
+    providers.configure_runtime_context(
+        _runtime_context(
+            sink=sink,
+            image_paths=["root\\folder\\one.jpg"],
+            weights=[1.0],
+            recorded=recorded,
+        )
+    )
+
+    providers.on_media_displayed(
+        ProviderDisplayEvent(
+            image_path="root\\folder\\one.jpg",
+            provider_pick_meta={"memory_key": "root\\folder"},
+        )
+    )
+
+    assert recorded == ["root\\folder"]
+    assert sink.contributions["provider-detail"].content == "BB NEW"
+
+
+def test_image_providers_refreshes_crw_detail_when_display_mode_changes():
+    providers = ImageProviders()
+    providers.current_provider_name = "controlled_random_weighted"
+    sink = _Sink()
+    providers.configure_runtime_context(
+        _runtime_context(
+            sink=sink,
+            image_paths=["root\\folder\\one.jpg"],
+            weights=[1.0],
+        )
+    )
+
+    providers.on_media_displayed(
+        ProviderDisplayEvent(
+            image_path="root\\folder\\one.jpg",
+            provider_pick_meta={"memory_key": "root\\folder"},
+        )
+    )
+    assert "provider-detail" not in sink.contributions
+
+    assert providers.cycle_current_provider_display_mode() == "friendly"
+
+    assert sink.contributions["provider-detail"].content == "BB NEW"
+
+
+def test_image_providers_clears_provider_detail_and_burst_dots_with_runtime_state():
+    providers = ImageProviders()
+    providers.current_provider_name = "burst"
+    sink = _Sink()
+    providers.configure_runtime_context(_runtime_context(sink=sink))
+    providers.on_media_displayed(
+        ProviderDisplayEvent(
+            image_path="root\\burst\\one.jpg",
+            provider_pick_meta={
+                "burst_folder": "root\\burst",
+                "burst_token": 1,
+                "burst_index": 1,
+                "burst_size": 3,
+            },
+        )
+    )
+    sink.set_contribution(build_provider_detail_contribution("BB NEW"))
+
+    providers.clear_provider_runtime_state()
+
+    assert "provider-detail" not in sink.contributions
+    assert "provider-burst-dots" not in sink.contributions
 
 
 def test_controlled_random_weighted_penalises_recent_folders():
@@ -191,6 +433,9 @@ def test_burst_provider_exposes_memory_token(tmp_path):
 
     assert first_token is not None
     assert provider.current_burst_folder == os.path.dirname(first)
+    assert provider.last_pick_meta["burst_token"] == first_token
+    assert provider.last_pick_meta["burst_index"] == 1
+    assert provider.last_pick_meta["burst_size"] >= 1
     provider.reset_burst()
     assert provider.current_burst_token is None
     assert provider.current_burst_folder is None
@@ -406,7 +651,7 @@ def test_select_manager_uses_selection_scope_without_image_level_tree_resolution
 
     monkeypatch.setattr(
         "enkan.plugables.ImageProviders.ImageCacheManager",
-        lambda image_provider, current_image_index, background_preload=True: object(),
+        lambda image_provider, current_image_index, background_preload=True, **kwargs: object(),
     )
 
     providers.select_manager(

@@ -2,25 +2,44 @@ import tkinter as tk
 from PIL import Image, ImageTk
 import time
 
+from enkan.mySlideshow.MediaFileOps import ORIENTATION_TO_CW
+from enkan.mySlideshow.StatusBar import (
+    IMAGE_META_STATUS_KEY,
+    StatusSink,
+    build_image_meta_contribution,
+)
 
-class ZoomPan:
-    """Interactive zoom & pan helper for a Tk image widget (Label or Canvas).
+
+class ImageDisplayController:
+    """Interactive image display helper for a Tk image widget (Label or Canvas).
 
     Parameters:
       easing (bool): enable animated eased zoom. If False, zoom applies instantly.
     """
 
-    def __init__(self, widget: tk.Widget, screen_w: int, screen_h: int, on_image_changed=None, allow_upscale: bool = False, easing: bool = False, fill_small: bool = True):
+    def __init__(
+        self,
+        widget: tk.Widget,
+        screen_w: int,
+        screen_h: int,
+        allow_upscale: bool = False,
+        easing: bool = False,
+        fill_small: bool = True,
+        status_sink: StatusSink | None = None,
+    ):
         # ...existing code up to interaction / quality management...
         self.widget = widget
         self.screen_w = screen_w
         self.screen_h = screen_h
-        self.on_image_changed = on_image_changed
+        self.status_sink = status_sink
         self.allow_upscale = allow_upscale  # governs whether user zoom can exceed 1:1 base
         self.fill_small = fill_small        # if True, smaller-than-screen images are fit (upscaled) initially
         self.easing = easing  # <-- existing flag
         # ...existing code remains unchanged below this line...
         self.orig_image = None
+        self.source_image = None
+        self.current_exif_orientation = 1
+        self.rotation_angle = 0
         self.fit_image = None
         self.base_scale = 1.0
         self.zoom_factor = 1.0
@@ -49,10 +68,15 @@ class ZoomPan:
 
     # ---------- Public API ----------
 
-    def set_image(self, pil_image):
+    def set_image(self, pil_image, exif_orientation: int | None = None, reset_rotation: bool = False):
         if pil_image is None:
             return
-        self.orig_image = pil_image
+        self.source_image = pil_image
+        if exif_orientation is not None:
+            self.current_exif_orientation = exif_orientation
+        if reset_rotation:
+            self.rotation_angle = 0
+        self.orig_image = self._display_image()
         self._recompute_base_scale()
         self.zoom_factor = 1.0
         iw, ih = self.orig_image.size
@@ -63,6 +87,44 @@ class ZoomPan:
         # Fresh image always high quality
         self._fast_mode = False
         self._refresh()
+        self.publish_image_meta_status()
+
+    def clear_image(self) -> None:
+        self.orig_image = None
+        self.source_image = None
+        self.photo = None
+        if self.status_sink is not None:
+            self.status_sink.clear_contribution(IMAGE_META_STATUS_KEY)
+
+    def rotate_display(self, delta_degrees: int = -90) -> None:
+        if self.source_image is None:
+            return
+        self.rotation_angle = (self.rotation_angle + delta_degrees) % 360
+        self.orig_image = self._display_image()
+        self._recompute_base_scale()
+        self.zoom_factor = 1.0
+        iw, ih = self.orig_image.size
+        self.view_cx = iw / 2
+        self.view_cy = ih / 2
+        self._build_fit_image()
+        self._fast_mode = False
+        self._refresh()
+        self.publish_image_meta_status()
+
+    def reset_display_rotation(self) -> None:
+        self.rotation_angle = 0
+
+    def update_exif_orientation(self, exif_orientation: int) -> None:
+        self.current_exif_orientation = exif_orientation
+        self.rotation_angle = 0
+        self.publish_image_meta_status()
+
+    def _display_image(self):
+        if self.source_image is None:
+            return None
+        if self.rotation_angle:
+            return self.source_image.rotate(self.rotation_angle, expand=True)
+        return self.source_image
 
     def zoom_in(self, event=None):
         self._apply_zoom(1.15, center=None)
@@ -99,6 +161,26 @@ class ZoomPan:
         if not self.orig_image:
             return 100
         return int(round(self.zoom_factor * 100))
+
+    def rotation_display_text(self) -> str:
+        exif_angle: int = ORIENTATION_TO_CW.get(self.current_exif_orientation, 0)
+        manual_delta: int = (-self.rotation_angle) % 360
+        if manual_delta:
+            total_angle: int = (exif_angle + manual_delta) % 360
+            return f"{total_angle}°"
+        if exif_angle:
+            return f"{exif_angle}° [EXIF]"
+        return "0°"
+
+    def publish_image_meta_status(self) -> None:
+        if self.status_sink is None or self.orig_image is None:
+            return
+        self.status_sink.set_contribution(
+            build_image_meta_contribution(
+                self.rotation_display_text(),
+                self.get_zoom_percent(),
+            )
+        )
 
     # ---------- Internal computations ----------
 
@@ -190,6 +272,7 @@ class ZoomPan:
             self._mark_interaction()
             self._fast_mode = True
             self._refresh(fast=True)
+            self.publish_image_meta_status()
             return
         # Cancel prior animation
         if self._zoom_anim_id is not None:
@@ -226,6 +309,7 @@ class ZoomPan:
             self.view_cy = top_new + vis_h_new / 2
             self._clamp_center(vis_w_new, vis_h_new)
             self._refresh(fast=True)
+            self.publish_image_meta_status()
             return
         # Progress with easing
         t = (step + 1) / steps
@@ -280,8 +364,6 @@ class ZoomPan:
         self.photo = ImageTk.PhotoImage(disp)
         self.widget.config(image=self.photo)
         self.widget.image = self.photo
-        if self.on_image_changed:
-            self.on_image_changed()
 
     # ---------- Event handlers ----------
 

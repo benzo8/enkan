@@ -103,8 +103,6 @@ def test_select_mode_toggles_crw_bucket_mode_when_active():
     slideshow.current_image_index = 4
     provider_calls: list[tuple[str, dict[str, object]]] = []
     slideshow.set_provider = lambda name, **kwargs: provider_calls.append((name, kwargs))
-    display_updates: list[str] = []
-    slideshow.update_filename_display = lambda: display_updates.append("updated")
     slideshow.providers = SimpleNamespace(
         get_current_provider_name=lambda: "controlled_random_weighted",
         get_current_provider_settings=lambda: {
@@ -126,7 +124,48 @@ def test_select_mode_toggles_crw_bucket_mode_when_active():
             },
         )
     ]
-    assert display_updates == ["updated"]
+
+
+def test_set_provider_seeds_status_from_current_media_without_history_record():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.image_paths = ["root\\folder\\one.jpg"]
+    slideshow.current_image_path = "root\\folder\\one.jpg"
+    slideshow.current_image_index = 0
+    slideshow.defaults = SimpleNamespace(background=False)
+    slideshow.selection_weights = SimpleNamespace(
+        provider_kwargs=lambda: {"weights": [1.0]},
+        weights=[1.0],
+    )
+    slideshow.selection_scope = None
+    slideshow.original_tree = None
+    slideshow.folder_memory = SimpleNamespace()
+    slideshow.scope_seen_folders = set()
+    slideshow.status_bar = SimpleNamespace()
+    slideshow._resolve_memory_key_for_image = lambda path, meta=None: "root\\folder"
+    slideshow._resolve_memory_key_for_scope = lambda path: path
+    slideshow._scope_records_once_per_folder = lambda: False
+    slideshow._sync_original_scope_memory = lambda: None
+
+    provider_events = []
+    context_calls = []
+    manager = SimpleNamespace(
+        history_snapshot=lambda: ("history",),
+        restore_history=lambda snapshot: None,
+    )
+    slideshow.manager = manager
+    slideshow.providers = SimpleNamespace(
+        select_manager=lambda **kwargs: manager,
+        configure_runtime_context=lambda context: context_calls.append(context),
+        on_media_displayed=lambda event: provider_events.append(event),
+    )
+
+    slideshow.set_provider("controlled_random_weighted", gap_min=3)
+
+    assert context_calls
+    assert len(provider_events) == 1
+    assert provider_events[0].image_path == "root\\folder\\one.jpg"
+    assert provider_events[0].record_history is False
+    assert provider_events[0].provider_pick_meta is None
 
 
 def test_navigation_state_prefers_subfolder_scope_over_parent_flag():
@@ -156,7 +195,6 @@ def test_apply_scope_state_restores_navigation_modes_from_snapshot():
     slideshow.parent_mode = False
     slideshow.subfolder_mode = False
     slideshow.navigation_node = None
-    slideshow._last_burst_memory_token = "token"
 
     class _SelectionWeights:
         def copy(self):
@@ -184,7 +222,6 @@ def test_apply_scope_state_restores_navigation_modes_from_snapshot():
     assert slideshow.subfolder_mode is False
     assert slideshow.navigation_node.name == "root\\branch"
     assert slideshow.scope_seen_folders == {"seen"}
-    assert slideshow._last_burst_memory_token is None
 
 
 def test_reset_parent_mode_restores_original_navigation_state():
@@ -209,7 +246,10 @@ def test_reset_parent_mode_restores_original_navigation_state():
     slideshow.original_folder_memory = SimpleNamespace(copy=lambda: "mem")
     slideshow.original_scope_seen_folders = {"seen"}
     slideshow.current_image_index = 0
-    slideshow._last_burst_memory_token = "token"
+    provider_clears: list[str] = []
+    slideshow.providers = SimpleNamespace(
+        clear_provider_runtime_state=lambda: provider_clears.append("clear")
+    )
     slideshow.update_slide_show = lambda image_paths, selection_weights: None
     slideshow.show_image = lambda image_path, record_history=False: None
 
@@ -219,7 +259,7 @@ def test_reset_parent_mode_restores_original_navigation_state():
     assert slideshow.subfolder_mode is False
     assert slideshow.navigation_mode == "branch"
     assert slideshow.navigation_node.name == "root\\branch"
-    assert slideshow._last_burst_memory_token is None
+    assert provider_clears == ["clear"]
 
 
 def test_toggle_navigation_mode_preserves_selected_basis_when_resetting_scope():
@@ -241,14 +281,12 @@ def test_toggle_navigation_mode_preserves_selected_basis_when_resetting_scope():
         scope_kind=ScopeKind.ROOT,
     )
     slideshow.current_image_index = 0
-    slideshow._last_burst_memory_token = None
     slideshow.original_tree = SimpleNamespace(
         resolve_node_for_image=lambda path: container_node if path == "root\\branch\\image.jpg" else None,
         resolve_container_node_for_image=lambda path: container_node if path == "root\\branch\\image.jpg" else None,
     )
     slideshow.update_slide_show = lambda image_paths, selection_weights: None
     slideshow.show_image = lambda image_path, record_history=False: None
-    slideshow.update_filename_display = lambda: None
 
     slideshow.toggle_navigation_mode()
 
@@ -294,7 +332,6 @@ def test_toggle_navigation_mode_allows_branch_mode_for_specific_image():
         scope_kind=ScopeKind.ROOT,
     )
     slideshow.current_image_index = 0
-    slideshow._last_burst_memory_token = None
     slideshow.original_tree = SimpleNamespace(
         virtual_image_lookup={"root\\retrobride\\image.jpg": virtual_node},
         resolve_node_for_image=lambda path: virtual_node if path == "root\\retrobride\\image.jpg" else None,
@@ -302,7 +339,6 @@ def test_toggle_navigation_mode_allows_branch_mode_for_specific_image():
     )
     slideshow.update_slide_show = lambda image_paths, selection_weights: None
     slideshow.show_image = lambda image_path, record_history=False: None
-    slideshow.update_filename_display = lambda: None
 
     slideshow.toggle_navigation_mode()
 
@@ -334,7 +370,6 @@ def test_reset_parent_mode_preserves_branch_basis_after_navigation_toggle():
         scope_kind=ScopeKind.ROOT,
     )
     slideshow.current_image_index = 0
-    slideshow._last_burst_memory_token = None
     slideshow.original_tree = SimpleNamespace(
         find_node=lambda path, lookup: SimpleNamespace(name=path),
         node_lookup={},
@@ -347,7 +382,6 @@ def test_reset_parent_mode_preserves_branch_basis_after_navigation_toggle():
     )
     slideshow.update_slide_show = lambda image_paths, selection_weights: None
     slideshow.show_image = lambda image_path, record_history=False: None
-    slideshow.update_filename_display = lambda: None
 
     slideshow.toggle_navigation_mode()
     slideshow.parent_mode = True
@@ -533,8 +567,14 @@ def test_delete_image_ignores_missing_history_entry(monkeypatch):
 def test_persist_rotation_to_exif_uses_file_op_result(monkeypatch):
     slideshow = ImageSlideshow.__new__(ImageSlideshow)
     slideshow.current_image_path = "image.jpg"
-    slideshow.rotation_angle = 90
-    slideshow.current_exif_orientation = 1
+    slideshow.zoompan = SimpleNamespace(
+        rotation_angle=90,
+        update_exif_orientation=lambda orientation: setattr(
+            slideshow.zoompan,
+            "updated_orientation",
+            orientation,
+        ),
+    )
     slideshow._confirm_action = lambda title, message: True
 
     warnings = []
@@ -557,15 +597,19 @@ def test_persist_rotation_to_exif_uses_file_op_result(monkeypatch):
 
     assert warnings == []
     assert invalidated == ["image.jpg"]
-    assert slideshow.rotation_angle == 0
-    assert slideshow.current_exif_orientation == 6
+    assert slideshow.zoompan.updated_orientation == 6
     assert shown == [("image.jpg", False)]
 
 
 def test_rotate_image_ignores_video_without_restarting(monkeypatch):
     slideshow = ImageSlideshow.__new__(ImageSlideshow)
     slideshow.current_image_path = "clip.mp4"
-    slideshow.rotation_angle = 0
+    slideshow.zoompan = SimpleNamespace(
+        rotation_angle=0,
+        rotate_display=lambda *_: (_ for _ in ()).throw(
+            AssertionError("video rotation should not touch image display")
+        ),
+    )
     slideshow.show_image = lambda *args, **kwargs: (_ for _ in ()).throw(
         AssertionError("video rotation should not restart playback")
     )
@@ -573,24 +617,20 @@ def test_rotate_image_ignores_video_without_restarting(monkeypatch):
     monkeypatch.setattr("enkan.mySlideshow.mySlideshow.utils.is_imagefile", lambda path: False)
 
     assert slideshow.rotate_image() == "break"
-    assert slideshow.rotation_angle == 0
+    assert slideshow.zoompan.rotation_angle == 0
 
 
 def test_rotate_image_still_rotates_images(monkeypatch):
     slideshow = ImageSlideshow.__new__(ImageSlideshow)
     slideshow.current_image_path = "image.jpg"
-    slideshow.rotation_angle = 0
-    shown: list[tuple[str, bool]] = []
-    slideshow.show_image = lambda path, record_history=False: shown.append(
-        (path, record_history)
-    )
+    rotations: list[int] = []
+    slideshow.zoompan = SimpleNamespace(rotate_display=lambda delta: rotations.append(delta))
     monkeypatch.setattr("enkan.mySlideshow.mySlideshow.utils.is_videofile", lambda path: False)
     monkeypatch.setattr("enkan.mySlideshow.mySlideshow.utils.is_imagefile", lambda path: True)
 
     assert slideshow.rotate_image() == "break"
 
-    assert slideshow.rotation_angle == 270
-    assert shown == [("image.jpg", False)]
+    assert rotations == [-90]
 
 
 def test_show_image_allows_history_item_outside_current_scope():
@@ -600,7 +640,6 @@ def test_show_image_allows_history_item_outside_current_scope():
     slideshow.current_image_path = "scope\\two.jpg"
     slideshow.current_exif_orientation = 1
     slideshow.rotation_angle = 0
-    slideshow.current_provider_status_payload = None
     slideshow.video_muted = False
     slideshow.screen_width = 100
     slideshow.screen_height = 100
@@ -609,12 +648,9 @@ def test_show_image_allows_history_item_outside_current_scope():
         get_current_provider_name=lambda: "weighted",
         get_current_provider_display_mode=lambda: "off",
     )
-    slideshow._record_memory_for_view = lambda image_path, record_history, provider_pick_meta=None: None
-    slideshow.zoompan = SimpleNamespace(set_image=lambda image: None)
+    slideshow.zoompan = SimpleNamespace(set_image=lambda image, **kwargs: None)
     slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
-    slideshow.filename_label = SimpleNamespace(tkraise=lambda: None)
-    slideshow.mode_label = SimpleNamespace(tkraise=lambda: None)
-    slideshow.update_filename_display = lambda: None
+    slideshow.status_bar = SimpleNamespace(raise_widgets=lambda: None)
     slideshow.root = SimpleNamespace(after=lambda *args, **kwargs: None)
     slideshow.manager = SimpleNamespace(
         get_next=lambda image_path=None, record_history=True: (
@@ -629,31 +665,28 @@ def test_show_image_allows_history_item_outside_current_scope():
     assert slideshow.current_image_index == 1
 
 
-def test_show_image_preserves_provider_payload_on_same_image_redisplay():
+def test_show_image_notifies_provider_on_same_image_redisplay():
     slideshow = ImageSlideshow.__new__(ImageSlideshow)
     slideshow.image_paths = ["scope\\one.jpg"]
     slideshow.current_image_index = 0
     slideshow.current_image_path = "scope\\one.jpg"
-    slideshow.current_provider_status_payload = {"kept": True}
     slideshow.current_exif_orientation = 1
     slideshow.rotation_angle = 0
     slideshow.video_muted = False
     slideshow.screen_width = 100
     slideshow.screen_height = 100
     slideshow._release_video_resources = lambda: None
+    provider_events = []
     slideshow.providers = SimpleNamespace(
         get_current_provider_name=lambda: "controlled_random_weighted",
         get_current_provider_display_mode=lambda: "useful",
-        get_current_provider_status_payload=lambda **kwargs: {"recomputed": True},
+        on_media_displayed=lambda event: provider_events.append(event),
     )
     slideshow.selection_weights = SimpleNamespace(weights=[1.0])
     slideshow.folder_memory = SimpleNamespace()
-    slideshow._record_memory_for_view = lambda image_path, record_history, provider_pick_meta=None: None
-    slideshow.zoompan = SimpleNamespace(set_image=lambda image: None)
+    slideshow.zoompan = SimpleNamespace(set_image=lambda image, **kwargs: None)
     slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
-    slideshow.filename_label = SimpleNamespace(tkraise=lambda: None)
-    slideshow.mode_label = SimpleNamespace(tkraise=lambda: None)
-    slideshow.update_filename_display = lambda: None
+    slideshow.status_bar = SimpleNamespace(raise_widgets=lambda: None)
     slideshow.root = SimpleNamespace(after=lambda *args, **kwargs: None)
     slideshow.manager = SimpleNamespace(
         get_next=lambda image_path=None, record_history=True: (
@@ -664,38 +697,17 @@ def test_show_image_preserves_provider_payload_on_same_image_redisplay():
 
     slideshow.show_image("scope\\one.jpg", record_history=False)
 
-    assert slideshow.current_provider_status_payload == {"kept": True}
+    assert len(provider_events) == 1
+    assert provider_events[0].image_path == "scope\\one.jpg"
+    assert provider_events[0].previous_image_path == "scope\\one.jpg"
+    assert provider_events[0].record_history is False
 
 
-def test_record_memory_for_weighted_view_syncs_memory_only():
-    slideshow = ImageSlideshow.__new__(ImageSlideshow)
-    slideshow.parent_mode = False
-    slideshow.subfolder_mode = False
-    slideshow.scope_seen_folders = set()
-    slideshow.providers = SimpleNamespace(get_current_provider_name=lambda: "weighted")
-    slideshow.folder_memory = SimpleNamespace(record_folder=lambda key: recorded.append(key))
-    slideshow._resolve_memory_key_for_image = lambda image_path, provider_pick_meta=None: "root\\folder"
-    slideshow._scope_records_once_per_folder = lambda: False
-    slideshow._sync_original_scope_memory = lambda: sync_calls.append("memory")
-    slideshow._sync_original_scope_state = lambda: (_ for _ in ()).throw(
-        AssertionError("full structural sync should not run for a weighted view record")
-    )
-
-    recorded: list[str] = []
-    sync_calls: list[str] = []
-
-    slideshow._record_memory_for_view("folder\\image.jpg", record_history=True)
-
-    assert recorded == ["root\\folder"]
-    assert sync_calls == ["memory"]
-
-
-def test_show_image_displays_before_recording_memory():
+def test_show_image_notifies_provider_after_display_and_status_raise():
     slideshow = ImageSlideshow.__new__(ImageSlideshow)
     slideshow.image_paths = ["scope\\one.jpg"]
     slideshow.current_image_index = 0
     slideshow.current_image_path = None
-    slideshow.current_provider_status_payload = None
     slideshow.current_exif_orientation = 1
     slideshow.rotation_angle = 0
     slideshow.video_muted = False
@@ -705,12 +717,20 @@ def test_show_image_displays_before_recording_memory():
     slideshow.providers = SimpleNamespace(
         get_current_provider_name=lambda: "weighted",
         get_current_provider_display_mode=lambda: "off",
+        on_media_displayed=lambda event: order.append(
+            (
+                "provider",
+                event.image_path,
+                event.record_history,
+                event.provider_pick_meta,
+            )
+        ),
     )
-    slideshow.zoompan = SimpleNamespace(set_image=lambda image: order.append("display"))
+    slideshow.zoompan = SimpleNamespace(set_image=lambda image, **kwargs: order.append("display"))
     slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
-    slideshow.filename_label = SimpleNamespace(tkraise=lambda: order.append("filename-raise"))
-    slideshow.mode_label = SimpleNamespace(tkraise=lambda: order.append("mode-raise"))
-    slideshow.update_filename_display = lambda: order.append("status")
+    slideshow.status_bar = SimpleNamespace(
+        raise_widgets=lambda: order.append("status-raise")
+    )
     slideshow.root = SimpleNamespace(after=lambda *args, **kwargs: None)
     slideshow.manager = SimpleNamespace(
         current_media_metadata={"index": 0, "memory_key": "root\\scope"},
@@ -719,15 +739,16 @@ def test_show_image_displays_before_recording_memory():
             Image.new("RGB", (1, 1)),
         ),
     )
-    slideshow._record_memory_for_view = (
-        lambda image_path, record_history, provider_pick_meta=None: order.append("memory")
-    )
 
     order: list[str] = []
 
     slideshow.show_image()
 
-    assert order == ["display", "filename-raise", "mode-raise", "status", "memory"]
+    assert order == [
+        "display",
+        "status-raise",
+        ("provider", "scope\\one.jpg", True, {"index": 0, "memory_key": "root\\scope"}),
+    ]
 
 
 def test_show_image_debounces_rapid_video_start_requests(monkeypatch):
@@ -735,7 +756,6 @@ def test_show_image_debounces_rapid_video_start_requests(monkeypatch):
     slideshow.image_paths = ["videos\\one.mp4", "videos\\two.mp4"]
     slideshow.current_image_index = 0
     slideshow.current_image_path = None
-    slideshow.current_provider_status_payload = None
     slideshow.current_exif_orientation = 1
     slideshow.rotation_angle = 0
     slideshow.video_muted = False
@@ -748,12 +768,9 @@ def test_show_image_debounces_rapid_video_start_requests(monkeypatch):
         get_current_provider_name=lambda: "weighted",
         get_current_provider_display_mode=lambda: "off",
     )
-    slideshow.zoompan = SimpleNamespace(orig_image=None)
+    slideshow.zoompan = SimpleNamespace(clear_image=lambda: None)
     slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
-    slideshow.filename_label = SimpleNamespace(tkraise=lambda: None)
-    slideshow.mode_label = SimpleNamespace(tkraise=lambda: None)
-    slideshow.update_filename_display = lambda: None
-    slideshow._record_memory_for_view = lambda image_path, record_history, provider_pick_meta=None: None
+    slideshow.status_bar = SimpleNamespace(raise_widgets=lambda: None)
     slideshow.runtime_status_text = ""
 
     scheduled = {}
@@ -1146,20 +1163,46 @@ def test_controller_replay_does_not_restart_while_paused():
 
 
 def test_controller_toggle_pause_updates_player_pause_state():
+    class _Sink:
+        def __init__(self):
+            self.contributions = []
+            self.cleared = []
+
+        def set_contribution(self, contribution):
+            self.contributions.append(contribution)
+
+        def set_contributions(self, contributions):
+            self.contributions.extend(contributions)
+
+        def clear_contribution(self, key):
+            self.cleared.append(key)
+
+    sink = _Sink()
     controller = VideoPlaybackController(
         root=SimpleNamespace(),
         screen_width=100,
         screen_height=100,
         logger=logging.getLogger("test"),
         debounce_ms=150,
+        status_sink=sink,
     )
     pause_values: list[int] = []
-    controller._video_player = SimpleNamespace(set_pause=lambda value: pause_values.append(value))
+    controller._video_player = SimpleNamespace(
+        set_pause=lambda value: pause_values.append(value),
+        get_time=lambda: 250,
+        get_length=lambda: 1000,
+    )
 
     assert controller.toggle_pause() is True
     assert controller.toggle_pause() is False
 
     assert pause_values == [1, 0]
+    assert [contribution.key for contribution in sink.contributions] == [
+        "video-timer",
+        "video-timer",
+    ]
+    assert sink.contributions[0].content.paused is True
+    assert sink.contributions[1].content.paused is False
 
 
 def test_controller_toggle_pause_failure_sets_status():
@@ -1202,12 +1245,27 @@ def test_controller_seek_to_ratio_clamps_and_uses_duration():
 
 
 def test_controller_seek_relative_clamps_to_current_duration():
+    class _Sink:
+        def __init__(self):
+            self.contributions = []
+
+        def set_contribution(self, contribution):
+            self.contributions.append(contribution)
+
+        def set_contributions(self, contributions):
+            self.contributions.extend(contributions)
+
+        def clear_contribution(self, key):
+            pass
+
+    sink = _Sink()
     controller = VideoPlaybackController(
         root=SimpleNamespace(),
         screen_width=100,
         screen_height=100,
         logger=logging.getLogger("test"),
         debounce_ms=150,
+        status_sink=sink,
     )
     set_times: list[int] = []
     controller._video_player = SimpleNamespace(
@@ -1220,6 +1278,10 @@ def test_controller_seek_relative_clamps_to_current_duration():
     assert controller.seek_relative_ms(-950) is True
 
     assert set_times == [1000, 0]
+    assert [contribution.key for contribution in sink.contributions] == [
+        "video-timer",
+        "video-timer",
+    ]
 
 
 def test_controller_seek_ignores_unknown_duration():
@@ -1240,12 +1302,28 @@ def test_controller_seek_ignores_unknown_duration():
 
 
 def test_controller_seek_failure_sets_status():
+    class _Sink:
+        def __init__(self):
+            self.contributions = []
+            self.cleared = []
+
+        def set_contribution(self, contribution):
+            self.contributions.append(contribution)
+
+        def set_contributions(self, contributions):
+            self.contributions.extend(contributions)
+
+        def clear_contribution(self, key):
+            self.cleared.append(key)
+
+    sink = _Sink()
     controller = VideoPlaybackController(
         root=SimpleNamespace(),
         screen_width=100,
         screen_height=100,
         logger=logging.getLogger("test"),
         debounce_ms=150,
+        status_sink=sink,
     )
     statuses: list[str] = []
     controller._on_status_changed = statuses.append
@@ -1257,12 +1335,15 @@ def test_controller_seek_failure_sets_status():
 
     assert controller.seek_relative_ms(5000) is False
     assert statuses == ["Video control failed"]
+    assert any(
+        contribution.key == "video-runtime-status"
+        and contribution.content == "VIDEO: Video control failed"
+        for contribution in sink.contributions
+    )
 
 
-def test_video_pause_hotkey_updates_status_for_active_player():
+def test_video_pause_hotkey_delegates_status_update_to_controller():
     slideshow = ImageSlideshow.__new__(ImageSlideshow)
-    updated: list[str] = []
-
     class _Controller:
         def __init__(self):
             self.active = True
@@ -1274,40 +1355,20 @@ def test_video_pause_hotkey_updates_status_for_active_player():
             return SimpleNamespace(active=self.active)
 
     slideshow.video_controller = _Controller()
-    slideshow.update_filename_display = lambda: updated.append("updated")
 
     assert slideshow.toggle_video_pause() == "break"
-    assert updated == ["updated"]
 
 
-def test_video_seek_hotkey_updates_status_when_seek_succeeds():
+def test_video_seek_hotkey_delegates_status_update_to_controller():
     slideshow = ImageSlideshow.__new__(ImageSlideshow)
-    updated: list[str] = []
     deltas: list[int] = []
     slideshow.video_controller = SimpleNamespace(
         seek_relative_ms=lambda delta: deltas.append(delta) or True
     )
-    slideshow.update_filename_display = lambda: updated.append("updated")
 
     assert slideshow.seek_video_by_ms(-5000) == "break"
 
     assert deltas == [-5000]
-    assert updated == ["updated"]
-
-
-def test_video_filename_meta_replaces_image_rotation_and_zoom():
-    slideshow = ImageSlideshow.__new__(ImageSlideshow)
-    slideshow.current_image_path = "clip.mp4"
-    slideshow.video_controller = SimpleNamespace(
-        playback_snapshot=lambda: SimpleNamespace(
-            current_time_ms=65000,
-            duration_ms=125000,
-            paused=True,
-            status_text="",
-        )
-    )
-
-    assert slideshow._format_filename_meta() == " { VIDEO 01:05 / 02:05 PAUSED }"
 
 
 def test_controller_playback_snapshot_handles_active_and_inactive_states():
@@ -1385,6 +1446,39 @@ def test_shutdown_stops_synchronously_releases_vlc_instance_and_destroys_frame()
     assert controller._video_frame is None
 
 
+def test_shutdown_detaches_status_sink_before_synchronous_cleanup():
+    class _Sink:
+        def set_contribution(self, contribution):
+            raise AssertionError("shutdown should not publish status")
+
+        def set_contributions(self, contributions):
+            raise AssertionError("shutdown should not publish status")
+
+        def clear_contribution(self, key):
+            raise AssertionError("shutdown should not clear status")
+
+    events: list[str] = []
+    controller = VideoPlaybackController(
+        root=SimpleNamespace(after_cancel=lambda ident: events.append(f"cancel:{ident}")),
+        screen_width=100,
+        screen_height=100,
+        logger=logging.getLogger("test"),
+        debounce_ms=150,
+        status_sink=_Sink(),
+    )
+    controller._status_refresh_id = "refresh"
+    controller._video_player = SimpleNamespace(
+        stop=lambda: events.append("stop"),
+        release=lambda: events.append("player-release"),
+    )
+    controller._current_media = SimpleNamespace(release=lambda: events.append("media-release"))
+
+    controller.shutdown()
+
+    assert events == ["cancel:refresh", "stop", "player-release", "media-release"]
+    assert controller.status_sink is None
+
+
 def test_toggle_mute_updates_preference_and_active_player():
     slideshow = ImageSlideshow.__new__(ImageSlideshow)
     slideshow.video_muted = False
@@ -1405,7 +1499,6 @@ def test_show_image_does_not_create_slideshow_vlc_state_for_images():
     slideshow.image_paths = ["scope\\one.jpg"]
     slideshow.current_image_index = 0
     slideshow.current_image_path = None
-    slideshow.current_provider_status_payload = None
     slideshow.current_exif_orientation = 1
     slideshow.rotation_angle = 0
     slideshow.video_muted = False
@@ -1416,11 +1509,9 @@ def test_show_image_does_not_create_slideshow_vlc_state_for_images():
         get_current_provider_name=lambda: "weighted",
         get_current_provider_display_mode=lambda: "off",
     )
-    slideshow.zoompan = SimpleNamespace(set_image=lambda image: None)
+    slideshow.zoompan = SimpleNamespace(set_image=lambda image, **kwargs: None)
     slideshow.label = SimpleNamespace(pack=lambda: None, config=lambda **kwargs: None, image=None)
-    slideshow.filename_label = SimpleNamespace(tkraise=lambda: None)
-    slideshow.mode_label = SimpleNamespace(tkraise=lambda: None)
-    slideshow.update_filename_display = lambda: None
+    slideshow.status_bar = SimpleNamespace(raise_widgets=lambda: None)
     slideshow.manager = SimpleNamespace(
         current_media_metadata=None,
         get_next=lambda image_path=None, record_history=True: (
@@ -1428,11 +1519,126 @@ def test_show_image_does_not_create_slideshow_vlc_state_for_images():
             Image.new("RGB", (1, 1)),
         ),
     )
-    slideshow._record_memory_for_view = (
-        lambda image_path, record_history, provider_pick_meta=None: None
-    )
 
     slideshow.show_image()
 
     assert not hasattr(slideshow, "current_vlc_media")
     assert not hasattr(slideshow, "current_video_payload")
+
+
+def test_runtime_status_publishes_to_status_sink():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.runtime_status_text = ""
+    events: list[tuple[str, str]] = []
+    slideshow.status_bar = SimpleNamespace(
+        set_contribution=lambda contribution: events.append(
+            ("set", contribution.content)
+        ),
+        clear_contribution=lambda key: events.append(("clear", key)),
+    )
+
+    slideshow._set_runtime_status("No displayable media")
+    slideshow._set_runtime_status("")
+
+    assert events == [
+        ("set", "No displayable media"),
+        ("clear", "runtime-status"),
+    ]
+
+
+def test_auto_advance_status_publishes_to_status_sink():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    events: list[tuple[str, str]] = []
+    slideshow.status_bar = SimpleNamespace(
+        set_contribution=lambda contribution: events.append(
+            ("set", contribution.content)
+        ),
+        clear_contribution=lambda key: events.append(("clear", key)),
+    )
+
+    slideshow.auto_advance_running = True
+    slideshow.auto_advance_interval = 5000
+    slideshow._publish_auto_advance_status()
+    slideshow.auto_advance_running = False
+    slideshow._publish_auto_advance_status()
+
+    assert events == [
+        ("set", "AUTO (5000ms)  "),
+        ("clear", "auto-advance"),
+    ]
+
+
+def test_count_status_publishes_to_status_sink():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.current_image_path = "two.jpg"
+    slideshow.image_paths = ["one.jpg", "two.jpg"]
+    slideshow.current_image_index = 0
+    events: list[tuple[str, str]] = []
+    slideshow.status_bar = SimpleNamespace(
+        set_contribution=lambda contribution: events.append(
+            ("set", contribution.content)
+        )
+    )
+
+    slideshow._publish_count_status()
+
+    assert events == [("set", "(2/2)")]
+
+
+def test_scope_status_publishes_to_status_sink():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    events: list[tuple[str, str]] = []
+    slideshow.status_bar = SimpleNamespace(
+        set_contribution=lambda contribution: events.append(
+            ("set", contribution.content)
+        ),
+        clear_contribution=lambda key: events.append(("clear", key)),
+    )
+
+    slideshow.subfolder_mode = True
+    slideshow.parent_mode = True
+    slideshow._publish_scope_status()
+    slideshow.subfolder_mode = False
+    slideshow.parent_mode = False
+    slideshow._publish_scope_status()
+
+    assert events == [
+        ("set", "SUB PAR"),
+        ("clear", "scope"),
+    ]
+
+
+def test_toggle_filename_display_sets_status_visibility_without_monolithic_refresh():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    slideshow.show_filename = False
+    slideshow.current_image_path = "two.jpg"
+    slideshow.image_paths = ["one.jpg", "two.jpg"]
+    slideshow.current_image_index = 1
+    slideshow.navigation_mode = "folder"
+    slideshow.parent_mode = False
+    slideshow.subfolder_mode = False
+    slideshow.navigation_node = None
+    visibility: list[bool] = []
+    contributions: list[str] = []
+    slideshow.status_bar = SimpleNamespace(
+        set_contribution=lambda contribution: contributions.append(contribution.key),
+        clear_contribution=lambda key: None,
+        set_base_contributions=lambda contributions, *, visible: visibility.append(visible),
+    )
+
+    slideshow.toggle_filename_display()
+    slideshow.toggle_filename_display()
+
+    assert visibility == [True, False]
+    assert contributions == ["filepath", "count"]
+
+
+def test_cache_dots_hotkey_toggles_status_contribution_visibility():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    toggled: list[str] = []
+    slideshow.status_bar = SimpleNamespace(
+        toggle_contribution_visibility=lambda key: toggled.append(key)
+    )
+
+    assert slideshow.toggle_cache_dots() == "break"
+    assert toggled == ["cache-dots"]

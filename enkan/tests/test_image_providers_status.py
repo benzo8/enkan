@@ -212,7 +212,7 @@ def test_image_providers_recomputes_crw_settings_on_same_provider_rebuild(monkey
 
     monkeypatch.setattr(
         "enkan.plugables.ImageProviders.ImageCacheManager",
-        lambda image_provider, current_image_index, background_preload=True: object(),
+        lambda image_provider, current_image_index, background_preload=True, **kwargs: object(),
     )
 
     providers.select_manager(
@@ -256,7 +256,7 @@ def test_image_providers_preserves_display_mode_when_rebuilding_same_provider(mo
 
     monkeypatch.setattr(
         "enkan.plugables.ImageProviders.ImageCacheManager",
-        lambda image_provider, current_image_index, background_preload=True: object(),
+        lambda image_provider, current_image_index, background_preload=True, **kwargs: object(),
     )
 
     providers.select_manager([], provider_name="test_provider")

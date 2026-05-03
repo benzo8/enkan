@@ -10,6 +10,20 @@ from enkan.cache.PreloadQueue import PreloadQueue, PreloadedMedia
 from enkan.plugables.ImageLoaders import ImageLoaders
 
 
+class _Sink:
+    def __init__(self):
+        self.contributions = []
+
+    def set_contribution(self, contribution):
+        self.contributions.append(contribution)
+
+    def set_contributions(self, contributions):
+        self.contributions.extend(contributions)
+
+    def clear_contribution(self, key):
+        pass
+
+
 def test_preload_queue_uses_typed_items():
     queue = PreloadQueue(2)
 
@@ -227,6 +241,23 @@ def test_cache_manager_returns_none_for_invalid_explicit_path(monkeypatch):
     assert image_path is None
     assert image_obj is None
     assert "missing.jpg" not in manager.lru_cache
+
+
+def test_cache_manager_publishes_cache_dots_status(monkeypatch):
+    monkeypatch.setattr(ImageCacheManager, "_load_media", lambda self, path: f"media:{path}")
+    sink = _Sink()
+
+    manager = ImageCacheManager(
+        iter(["one.jpg", "two.jpg"]),
+        0,
+        background_preload=False,
+        status_sink=sink,
+    )
+
+    assert sink.contributions[-1].key == "cache-dots"
+    assert sink.contributions[-1].zone.value == "center"
+    assert sink.contributions[-1].content.full == len(manager.preload_queue)
+    assert sink.contributions[-1].content.total == manager.preload_queue.max_size
 
 
 def test_cache_manager_skips_missing_image_when_loader_raises(monkeypatch):

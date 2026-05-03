@@ -8,6 +8,13 @@ from typing import Callable
 import vlc
 
 from enkan.cache.CachedVideoData import CachedVideoData
+from enkan.mySlideshow.StatusBar import (
+    StatusSink,
+    VIDEO_RUNTIME_STATUS_KEY,
+    VIDEO_TIMER_STATUS_KEY,
+    build_video_runtime_status_contribution,
+    build_video_timer_contribution,
+)
 
 
 @dataclass(frozen=True)
@@ -40,12 +47,14 @@ class VideoPlaybackController:
         screen_height: int,
         logger: logging.Logger,
         debounce_ms: int = 150,
+        status_sink: StatusSink | None = None,
     ) -> None:
         self.root = root
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.logger = logger
         self.debounce_ms = debounce_ms
+        self.status_sink = status_sink
 
         self._video_frame = None
         self._video_player = None
@@ -56,12 +65,14 @@ class VideoPlaybackController:
 
         self._pending_video_start_id = None
         self._pending_replay_id = None
+        self._status_refresh_id = None
         self._video_start_request_id = 0
         self._video_cleanup_done = threading.Event()
         self._video_cleanup_done.set()
         self._is_paused = False
         self._status_text = ""
         self._on_status_changed: Callable[[str], None] | None = None
+        self._shutting_down = False
 
     def _hide_video_frame(self) -> None:
         if self._video_frame is not None:
@@ -94,6 +105,21 @@ class VideoPlaybackController:
                     "Pending video replay was already cleared.", exc_info=True
                 )
         self._pending_replay_id = None
+
+    def _cancel_status_refresh(self) -> None:
+        refresh_id = self._status_refresh_id
+        if refresh_id is None:
+            return
+        after_cancel = getattr(self.root, "after_cancel", None)
+        if callable(after_cancel):
+            try:
+                after_cancel(refresh_id)
+            except tk.TclError:
+                self.logger.debug(
+                    "Pending video status refresh was already cleared.",
+                    exc_info=True,
+                )
+        self._status_refresh_id = None
 
     def _detach_video_end_handler(self) -> None:
         event_manager = self._video_event_manager
@@ -133,10 +159,16 @@ class VideoPlaybackController:
         finally:
             self._video_cleanup_done.set()
 
-    def stop(self, async_cleanup: bool = True, hide: bool = False) -> None:
+    def stop(
+        self,
+        async_cleanup: bool = True,
+        hide: bool = False,
+        clear_status: bool = True,
+    ) -> None:
         self._video_start_request_id += 1
         self._cancel_pending_video_start()
         self._cancel_pending_replay()
+        self._cancel_status_refresh()
         self._detach_video_end_handler()
         if hide:
             self._hide_video_frame()
@@ -147,6 +179,9 @@ class VideoPlaybackController:
         self._current_media = None
         self._current_video_payload = None
         self._is_paused = False
+        self._clear_video_timer_status()
+        if clear_status:
+            self._clear_video_runtime_status()
 
         if video_player is None and media is None:
             return
@@ -261,15 +296,17 @@ class VideoPlaybackController:
             result = self._video_player.play()
             if result == -1:
                 self._set_status("Video playback failed", on_status_changed)
-                self.stop(async_cleanup=True, hide=True)
+                self.stop(async_cleanup=True, hide=True, clear_status=False)
                 return
             if callable(on_video_started):
                 on_video_started()
             self._set_status("", on_status_changed)
+            self._publish_video_timer_status()
+            self._schedule_status_refresh()
         except Exception as exc:
             self.logger.warning("Failed to start video playback: %s", image_path, exc_info=exc)
             self._set_status("Video playback failed", on_status_changed)
-            self.stop(async_cleanup=True, hide=True)
+            self.stop(async_cleanup=True, hide=True, clear_status=False)
 
     def _attach_video_end_handler(self, request_id: int) -> None:
         if self._video_player is None:
@@ -314,10 +351,11 @@ class VideoPlaybackController:
             result = video_player.play()
             if result == -1:
                 raise RuntimeError("VLC replay failed.")
+            self._publish_video_timer_status()
         except Exception as exc:
             self.logger.warning("Video replay failed.", exc_info=exc)
             self._set_status("Video playback failed")
-            self.stop(async_cleanup=True, hide=True)
+            self.stop(async_cleanup=True, hide=True, clear_status=False)
 
     def set_muted(self, muted: bool) -> None:
         if self._video_player is not None:
@@ -337,6 +375,7 @@ class VideoPlaybackController:
             self._set_status("Video control failed")
             return False
         self._is_paused = paused
+        self._publish_video_timer_status()
         return paused
 
     def seek_to_ratio(self, ratio: float) -> bool:
@@ -352,6 +391,7 @@ class VideoPlaybackController:
             self.logger.warning("Failed to seek VLC video.", exc_info=True)
             self._set_status("Video control failed")
             return False
+        self._publish_video_timer_status()
         return True
 
     def seek_relative_ms(self, delta_ms: int) -> bool:
@@ -371,6 +411,7 @@ class VideoPlaybackController:
             self.logger.warning("Failed to seek VLC video.", exc_info=True)
             self._set_status("Video control failed")
             return False
+        self._publish_video_timer_status()
         return True
 
     def playback_snapshot(self) -> VideoPlaybackSnapshot:
@@ -412,9 +453,73 @@ class VideoPlaybackController:
         status_callback = on_status_changed or self._on_status_changed
         if callable(status_callback):
             status_callback(status_text)
+        self._publish_video_runtime_status(status_text)
+        self._publish_video_timer_status()
+
+    def _publish_video_runtime_status(self, status_text: str) -> None:
+        if self._shutting_down:
+            return
+        status_sink = self.status_sink
+        if status_sink is None:
+            return
+        if status_text:
+            status_sink.set_contribution(
+                build_video_runtime_status_contribution(status_text)
+            )
+        else:
+            status_sink.clear_contribution(VIDEO_RUNTIME_STATUS_KEY)
+
+    def _publish_video_timer_status(self) -> None:
+        if self._shutting_down:
+            return
+        status_sink = self.status_sink
+        if status_sink is None or self._video_player is None:
+            return
+        snapshot = self.playback_snapshot()
+        status_sink.set_contribution(
+            build_video_timer_contribution(
+                current_ms=snapshot.current_time_ms,
+                duration_ms=snapshot.duration_ms,
+                paused=snapshot.paused,
+                status_text=snapshot.status_text,
+            )
+        )
+
+    def _clear_video_timer_status(self) -> None:
+        if self._shutting_down:
+            return
+        status_sink = self.status_sink
+        if status_sink is None:
+            return
+        status_sink.clear_contribution(VIDEO_TIMER_STATUS_KEY)
+
+    def _clear_video_runtime_status(self) -> None:
+        if self._shutting_down:
+            return
+        status_sink = self.status_sink
+        if status_sink is None:
+            return
+        status_sink.clear_contribution(VIDEO_RUNTIME_STATUS_KEY)
+
+    def _schedule_status_refresh(self) -> None:
+        self._cancel_status_refresh()
+        root_after = getattr(self.root, "after", None)
+        if callable(root_after):
+            self._status_refresh_id = root_after(500, self._refresh_status)
+
+    def _refresh_status(self) -> None:
+        self._status_refresh_id = None
+        if self._video_player is None:
+            self._clear_video_timer_status()
+            return
+        self._publish_video_timer_status()
+        self._schedule_status_refresh()
 
     def shutdown(self) -> None:
-        self.stop(async_cleanup=False)
+        self._shutting_down = True
+        self.status_sink = None
+        self._on_status_changed = None
+        self.stop(async_cleanup=False, clear_status=False)
         if self._vlc_instance is not None:
             self._vlc_instance.release()
             self._vlc_instance = None
