@@ -22,7 +22,6 @@ class ZoomPan:
         widget: tk.Widget,
         screen_w: int,
         screen_h: int,
-        on_image_changed=None,
         allow_upscale: bool = False,
         easing: bool = False,
         fill_small: bool = True,
@@ -32,7 +31,6 @@ class ZoomPan:
         self.widget = widget
         self.screen_w = screen_w
         self.screen_h = screen_h
-        self.on_image_changed = on_image_changed
         self.status_sink = status_sink
         self.allow_upscale = allow_upscale  # governs whether user zoom can exceed 1:1 base
         self.fill_small = fill_small        # if True, smaller-than-screen images are fit (upscaled) initially
@@ -366,8 +364,6 @@ class ZoomPan:
         self.photo = ImageTk.PhotoImage(disp)
         self.widget.config(image=self.photo)
         self.widget.image = self.photo
-        if self.on_image_changed:
-            self.on_image_changed()
 
     # ---------- Event handlers ----------
 

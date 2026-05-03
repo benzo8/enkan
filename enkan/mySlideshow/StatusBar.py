@@ -15,6 +15,9 @@ AUTO_ADVANCE_STATUS_KEY = "auto-advance"
 COUNT_STATUS_KEY = "count"
 SCOPE_STATUS_KEY = "scope"
 CACHE_DOTS_STATUS_KEY = "cache-dots"
+PROVIDER_LABEL_STATUS_KEY = "provider-label"
+PROVIDER_DETAIL_STATUS_KEY = "provider-detail"
+PROVIDER_BURST_DOTS_STATUS_KEY = "provider-burst-dots"
 
 
 @dataclass(frozen=True)
@@ -34,11 +37,15 @@ class FilenameDisplay:
 class StatusDisplay:
     filename: FilenameDisplay
     center: "StatusZoneRender"
-    mode_text: str
+    right: "StatusZoneRender"
 
     @property
     def center_text(self) -> str:
         return self.center.text
+
+    @property
+    def mode_text(self) -> str:
+        return self.right.text
 
 
 class StatusSink(Protocol):
@@ -86,7 +93,16 @@ class StatusBar:
             highlightthickness=0,
         )
         self.center_label.config(state=tk.DISABLED)
-        self.mode_label = tk.Label(root, bg="black", fg="white", anchor="ne")
+        self.mode_label = tk.Text(
+            root,
+            bg="black",
+            fg="white",
+            height=1,
+            wrap="none",
+            bd=0,
+            highlightthickness=0,
+        )
+        self.mode_label.config(state=tk.DISABLED)
 
     def raise_widgets(self) -> None:
         self.status_band.tkraise()
@@ -213,10 +229,16 @@ class StatusBar:
         self.filename_label.config(height=1, width=filename_display.width, bg="black")
         self.filename_label.config(state=tk.DISABLED)
 
-        self.mode_label.config(
-            text=display.mode_text,
-            fg="white",
-        )
+        self.mode_label.config(state=tk.NORMAL)
+        self.mode_label.delete("1.0", tk.END)
+        for segment in display.right.segments:
+            self.mode_label.insert(tk.END, segment.text, segment.tag)
+        self.mode_label.tag_configure("normal", foreground="white")
+        self.mode_label.tag_configure("separator", foreground="white")
+        self.mode_label.tag_configure("dot-full", foreground="green")
+        self.mode_label.tag_configure("dot-empty", foreground="grey")
+        self.mode_label.tag_configure("dot-overflow", foreground="white")
+        self.mode_label.config(state=tk.DISABLED, bg="black")
         self.center_label.config(state=tk.NORMAL)
         self.center_label.delete("1.0", tk.END)
         for segment in display.center.segments:
@@ -242,12 +264,19 @@ class StatusBar:
             )
         else:
             self.center_label.place_forget()
-        self.mode_label.place(
-            x=self.root.winfo_screenwidth(),
-            y=0,
-            height=status_height,
-            anchor="ne",
-        )
+        if display.mode_text:
+            mode_width = tkfont.Font(font=self.mode_label.cget("font")).measure(
+                display.mode_text
+            )
+            self.mode_label.place(
+                x=self.root.winfo_screenwidth(),
+                y=0,
+                height=status_height,
+                width=max(mode_width + 8, 1),
+                anchor="ne",
+            )
+        else:
+            self.mode_label.place_forget()
         self.raise_widgets()
         self.root.update_idletasks()
 
@@ -419,11 +448,43 @@ def build_cache_dots_contribution(
     )
 
 
+def build_provider_label_contribution(label: str, *, priority: int = 100) -> "StatusContribution":
+    return StatusContribution(
+        PROVIDER_LABEL_STATUS_KEY,
+        StatusZone.RIGHT,
+        priority,
+        content=label or "-",
+    )
+
+
+def build_provider_detail_contribution(detail: str) -> "StatusContribution":
+    return StatusContribution(
+        PROVIDER_DETAIL_STATUS_KEY,
+        StatusZone.RIGHT,
+        90,
+        content=detail,
+    )
+
+
+def build_provider_burst_dots_contribution(
+    full: int,
+    total: int,
+) -> "StatusContribution":
+    return StatusContribution(
+        PROVIDER_BURST_DOTS_STATUS_KEY,
+        StatusZone.RIGHT,
+        95,
+        kind=StatusKind.DOTS,
+        content=StatusDots(full=full, total=total),
+    )
+
+
 @dataclass(frozen=True)
 class StatusDots:
     full: int
     total: int
     symbol: str = "●"
+    empty_symbol: str | None = None
     full_colour: str = "green"
     empty_colour: str = "grey"
     max_visible: int = 20
@@ -503,6 +564,7 @@ class StatusFacts:
     auto_advance_from_sink: bool = False
     count_from_sink: bool = False
     scope_from_sink: bool = False
+    provider_from_sink: bool = False
 
 
 def render_text(content: object, tag: str = "normal") -> tuple[StatusSegment, ...]:
@@ -565,7 +627,8 @@ def render_dots(dots: StatusDots) -> tuple[StatusSegment, ...]:
     if visible_full:
         segments.append(StatusSegment(dots.symbol * visible_full, "dot-full"))
     if visible_empty:
-        segments.append(StatusSegment(dots.symbol * visible_empty, "dot-empty"))
+        empty_symbol = dots.empty_symbol if dots.empty_symbol is not None else dots.symbol
+        segments.append(StatusSegment(empty_symbol * visible_empty, "dot-empty"))
     if overflow:
         segments.append(StatusSegment(f"+{overflow}", "dot-overflow"))
     return tuple(segments)
@@ -768,14 +831,9 @@ def build_status_contributions_from_facts(
                 facts.current_image_index,
             )
         )
-    if facts.provider_status_text:
+    if facts.provider_status_text and not facts.provider_from_sink:
         contributions.append(
-            StatusContribution(
-                "provider-status",
-                StatusZone.RIGHT,
-                20,
-                content=facts.provider_status_text,
-            )
+            build_provider_detail_contribution(facts.provider_status_text)
         )
     if facts.runtime_status_text and not facts.runtime_status_from_sink:
         contributions.append(build_runtime_status_contribution(facts.runtime_status_text))
@@ -783,14 +841,12 @@ def build_status_contributions_from_facts(
         contribution = build_scope_contribution(facts.subfolder_mode, facts.parent_mode)
         if contribution is not None:
             contributions.append(contribution)
-    contributions.append(
-        StatusContribution(
-            "provider-label",
-            StatusZone.RIGHT,
-            100,
-            content=facts.provider_label if facts.provider_enabled else "-",
+    if not facts.provider_from_sink:
+        contributions.append(
+            build_provider_label_contribution(
+                facts.provider_label if facts.provider_enabled else "-"
+            )
         )
-    )
     return tuple(contributions)
 
 
@@ -816,7 +872,7 @@ def build_status_display(
     return StatusDisplay(
         filename=filename_display,
         center=render_zone(contributions, StatusZone.CENTER),
-        mode_text=render_zone(contributions, StatusZone.RIGHT).text,
+        right=render_zone(contributions, StatusZone.RIGHT),
     )
 
 

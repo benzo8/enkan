@@ -16,7 +16,11 @@ from enkan.utils.Defaults import Defaults, resolve_mode, parse_mode_string
 from enkan.plugables.FolderSelectionMemory import FolderSelectionMemory
 from enkan.utils.Filters import Filters
 from enkan.utils.SelectionWeights import SelectionWeights
-from enkan.plugables.ImageProviders import ImageProviders
+from enkan.plugables.ImageProviders import (
+    ImageProviders,
+    ProviderDisplayEvent,
+    ProviderRuntimeContext,
+)
 from enkan.tree.tree_logic import (
     SelectionScope,
     apply_mode_and_recalculate_scope,
@@ -42,14 +46,11 @@ from enkan.mySlideshow.StatusBar import (
     RUNTIME_STATUS_KEY,
     SCOPE_STATUS_KEY,
     StatusBar,
-    StatusContribution,
-    StatusFacts,
     build_auto_advance_contribution,
     build_count_contribution,
     build_filepath_contribution,
     build_runtime_status_contribution,
     build_scope_contribution,
-    build_status_contributions_from_facts,
 )
 from enkan.mySlideshow.ScopeStack import ScopeStack, ScopeStackEntry
 from enkan.mySlideshow.VideoPlaybackController import VideoPlaybackController
@@ -115,8 +116,6 @@ class ImageSlideshow:
         self.navigation_mode = "folder"
         self.navigation_node = None
         self.show_filename = False
-        self._last_burst_memory_token = None
-        self.current_provider_status_payload = None
         self.runtime_status_text = ""
 
         self.screen_width: int = root.winfo_screenwidth()
@@ -149,7 +148,6 @@ class ImageSlideshow:
             self.label,
             self.screen_width,
             self.screen_height,
-            on_image_changed=self.update_filename_display,
             status_sink=self.status_bar,
         )
 
@@ -187,6 +185,7 @@ class ImageSlideshow:
         self.root.bind("<Control-b>", self.reset_burst_cycle)
         self.root.bind("<Control-d>", self.clear_memory)
         self.root.bind("<D>", self.toggle_provider_display_mode)
+        self.root.bind("<Shift-D>", self.toggle_provider_display_mode)
         self.root.bind("<a>", self.toggle_auto_advance)
         self.root.bind("<k>", self.toggle_cache_dots)
         self.root.bind("<Control-Shift-M>", self.open_mode_dialog)
@@ -320,7 +319,9 @@ class ImageSlideshow:
         self.folder_memory = scope_state.folder_memory.copy()
         self.scope_seen_folders = set(scope_state.seen_folders)
         self._apply_navigation_state(scope_state.navigation_state)
-        self._last_burst_memory_token = None
+        providers = getattr(self, "providers", None)
+        if providers is not None:
+            providers.clear_provider_runtime_state()
 
     def _sync_original_scope_structure(self) -> None:
         if self.parent_mode or self.subfolder_mode:
@@ -410,58 +411,11 @@ class ImageSlideshow:
         self.folder_memory.record_folder(memory_key)
         self._sync_original_scope_memory()
 
-    def _record_memory_for_view(
-        self,
-        image_path: str,
-        record_history: bool,
-        provider_pick_meta: dict[str, object] | None = None,
-    ) -> None:
-        if not record_history:
-            return
-
-        provider_name = self.providers.get_current_provider_name()
-        if provider_name == "sequential":
-            return
-
-        folder = os.path.dirname(image_path)
-        if not folder:
-            return
-
-        if provider_name == "burst":
-            burst_token = getattr(self.manager.image_provider, "current_burst_token", None)
-            if burst_token is not None and burst_token == self._last_burst_memory_token:
-                return
-            self._last_burst_memory_token = burst_token
-            burst_folder = getattr(self.manager.image_provider, "current_burst_folder", None)
-            memory_key = self._resolve_memory_key_for_scope(burst_folder or folder)
-            if not memory_key:
-                return
-            self.folder_memory.record_folder(memory_key)
-            self._sync_original_scope_memory()
-            return
-
-        memory_key = self._resolve_memory_key_for_image(image_path, provider_pick_meta)
-        if not memory_key:
-            return
-
-        if self._scope_records_once_per_folder():
-            if memory_key in self.scope_seen_folders:
-                return
-            self.scope_seen_folders.add(memory_key)
-
-        self.folder_memory.record_folder(memory_key)
-        self._sync_original_scope_memory()
-
     def show_image(self, image_path: str = None, record_history: bool = True) -> None:
         # Stop existing video playback and clean up resources
         self._release_video_resources()
 
         previous_image_path = getattr(self, "current_image_path", None)
-        previous_provider_status_payload = getattr(
-            self,
-            "current_provider_status_payload",
-            None,
-        )
 
         image_path, media_payload = self.manager.get_next(
             image_path, record_history=record_history
@@ -469,6 +423,7 @@ class ImageSlideshow:
         if not image_path:
             logger.warning("No displayable media available.")
             self._set_runtime_status("No displayable media")
+            self._publish_slideshow_status()
             return
         provider_pick_meta = getattr(self.manager, "current_media_metadata", None)
 
@@ -482,26 +437,6 @@ class ImageSlideshow:
             self.current_image_index = provider_pick_index
         elif image_path in self.image_paths:
             self.current_image_index = self.image_paths.index(image_path)
-        if not record_history and image_path == previous_image_path:
-            self.current_provider_status_payload = previous_provider_status_payload
-        elif (
-            self.providers.get_current_provider_name() == "controlled_random_weighted"
-            and self.providers.get_current_provider_display_mode() != "off"
-        ):
-            self.current_provider_status_payload = (
-                self.providers.get_current_provider_status_payload(
-                    image_paths=self.image_paths,
-                    weights=self.selection_weights.weights,
-                    selection_scope=getattr(self, "selection_scope", None),
-                    current_image_path=self.current_image_path,
-                    target_image_path=image_path,
-                    folder_memory=self.folder_memory,
-                    current_pick_meta=provider_pick_meta,
-                    tree=self.original_tree,
-                )
-            )
-        else:
-            self.current_provider_status_payload = None
         if not utils.is_videofile(image_path):
             self._set_runtime_status("")
             image = media_payload
@@ -524,13 +459,58 @@ class ImageSlideshow:
             )
 
         self.status_bar.raise_widgets()
-        self.update_filename_display()
-        self._record_memory_for_view(image_path, record_history, provider_pick_meta)
+        self._publish_slideshow_status()
+        self._notify_provider_media_displayed(
+            image_path=image_path,
+            record_history=record_history,
+            provider_pick_meta=provider_pick_meta,
+            previous_image_path=previous_image_path,
+        )
 
     def next_image(self, event=None) -> None:
         self.zoompan.reset_display_rotation()
         self.show_image()
         self.reset_auto_advance()
+
+    def _configure_provider_runtime_context(self) -> None:
+        configure_context = getattr(self.providers, "configure_runtime_context", None)
+        if not callable(configure_context):
+            return
+        configure_context(
+            ProviderRuntimeContext(
+                status_sink=self.status_bar,
+                image_paths=self.image_paths,
+                weights=self.selection_weights.weights,
+                selection_scope=getattr(self, "selection_scope", None),
+                tree=getattr(self, "original_tree", None),
+                folder_memory=self.folder_memory,
+                seen_folders=self.scope_seen_folders,
+                resolve_memory_key_for_image=self._resolve_memory_key_for_image,
+                resolve_memory_key_for_scope=self._resolve_memory_key_for_scope,
+                scope_records_once_per_folder=self._scope_records_once_per_folder,
+                sync_memory=self._sync_original_scope_memory,
+            )
+        )
+
+    def _notify_provider_media_displayed(
+        self,
+        *,
+        image_path: str,
+        record_history: bool,
+        provider_pick_meta: dict[str, object] | None,
+        previous_image_path: str | None,
+    ) -> None:
+        on_media_displayed = getattr(self.providers, "on_media_displayed", None)
+        if not callable(on_media_displayed):
+            return
+        on_media_displayed(
+            ProviderDisplayEvent(
+                image_path=image_path,
+                record_history=record_history,
+                provider_pick_meta=provider_pick_meta,
+                previous_image_path=previous_image_path,
+            )
+        )
 
     def _provider_kwargs(self) -> dict[str, object]:
         return {
@@ -571,7 +551,7 @@ class ImageSlideshow:
         )
         if not image_paths:
             self.current_image_path = None
-            self.update_filename_display()
+            self._publish_slideshow_status()
             return
         self.manager: ImageCacheManager = self.providers.reset_manager(
             image_paths=image_paths,
@@ -581,8 +561,7 @@ class ImageSlideshow:
             **self._provider_kwargs(),
         )
         self.manager.restore_history(history_snapshot)
-        self._last_burst_memory_token = None
-        self.current_provider_status_payload = None
+        self._configure_provider_runtime_context()
         self.show_image(
             self.image_paths[self.current_image_index],
             record_history=record_initial_history,
@@ -610,8 +589,8 @@ class ImageSlideshow:
             **provider_kwargs,
         )
         self.manager.restore_history(history_snapshot)
-        self._last_burst_memory_token = None
-        self.update_filename_display()
+        self._configure_provider_runtime_context()
+        self._refresh_provider_status_for_current_media()
 
     def toggle_provider_display_mode(self, event=None) -> None:
         current_mode = self.providers.cycle_current_provider_display_mode()
@@ -619,7 +598,17 @@ class ImageSlideshow:
             "Provider display mode set to %s.",
             current_mode,
         )
-        self.update_filename_display()
+
+    def _refresh_provider_status_for_current_media(self) -> None:
+        current_path = getattr(self, "current_image_path", None)
+        if not current_path:
+            return
+        self._notify_provider_media_displayed(
+            image_path=current_path,
+            record_history=False,
+            provider_pick_meta=None,
+            previous_image_path=current_path,
+        )
 
     def find_node_for_image(self, image_path: str) -> TreeNode | None:
         return self.original_tree.resolve_node_for_image(image_path)
@@ -745,7 +734,6 @@ class ImageSlideshow:
             self.mode, _ = resolve_mode(mode_dict, lowest)
         else:
             self.mode = None
-        self.update_filename_display()
 
     def _on_dialog_closed(self, _event=None) -> None:
         self.mode_dialog = None
@@ -877,7 +865,6 @@ class ImageSlideshow:
                         repeat_penalty=float(current_settings.get("repeat_penalty", 0.1)),
                         bucket_mode=next_bucket_mode,
                     )
-                    self.update_filename_display()
                 else:
                     self.set_provider(
                         "controlled_random_weighted",
@@ -1034,14 +1021,23 @@ class ImageSlideshow:
     def clear_memory(self, event=None) -> None:
         self.folder_memory.clear()
         self.scope_seen_folders.clear()
-        self._last_burst_memory_token = None
+        clear_provider_state = getattr(
+            getattr(self, "providers", None),
+            "clear_provider_runtime_state",
+            None,
+        )
+        if callable(clear_provider_state):
+            clear_provider_state()
         self.manager.refresh_provider()
         self._sync_original_scope_memory()
         logger.debug("Folder selection memory cleared for current scope.")
 
     def toggle_filename_display(self, event=None) -> None:
         self.show_filename: bool = not self.show_filename
-        self.update_filename_display()
+        if self.show_filename:
+            self._publish_slideshow_status()
+        else:
+            self.status_bar.set_base_contributions((), visible=False)
 
     # --- Scope Navigation ---
 
@@ -1323,7 +1319,13 @@ class ImageSlideshow:
             self.selection_scope = self.original_selection_scope.copy()
         self.folder_memory = self.original_folder_memory.copy()
         self.scope_seen_folders = set(self.original_scope_seen_folders)
-        self._last_burst_memory_token = None
+        clear_provider_state = getattr(
+            getattr(self, "providers", None),
+            "clear_provider_runtime_state",
+            None,
+        )
+        if callable(clear_provider_state):
+            clear_provider_state()
         if preserve_navigation_state:
             self._set_scope_kind(ScopeKind.ROOT)
             self._sync_original_navigation_state()
@@ -1375,57 +1377,6 @@ class ImageSlideshow:
 
         return fixed_path, fixed_colour
 
-    def _status_contributions(self) -> tuple[StatusContribution, ...]:
-        fixed_path, fixed_colour = self._status_fixed_path_and_colour()
-        provider_status_payload = (
-            self.current_provider_status_payload
-            or self.providers.get_current_provider_status_payload(
-                image_paths=self.image_paths,
-                weights=self.selection_weights.weights,
-                selection_scope=getattr(self, "selection_scope", None),
-                current_image_path=self.current_image_path,
-                folder_memory=self.folder_memory,
-                tree=self.original_tree,
-            )
-        )
-        is_video = utils.is_videofile(getattr(self, "current_image_path", "") or "")
-
-        return build_status_contributions_from_facts(
-            StatusFacts(
-                label_path=self._status_label_path(),
-                fixed_path=fixed_path,
-                fixed_colour=fixed_colour,
-                rotation_text="0°",
-                zoom_percent=100,
-                is_video=is_video,
-                video_current_ms=None,
-                video_duration_ms=None,
-                video_paused=False,
-                video_status_text="",
-                current_image_path=self.current_image_path,
-                image_paths=self.image_paths,
-                current_image_index=self.current_image_index,
-                provider_enabled=bool(self.mode),
-                provider_label=self.providers.get_current_provider_label(),
-                provider_status_text=self.providers.get_current_provider_status(
-                    display_mode=self.providers.get_current_provider_display_mode(),
-                    status_payload=provider_status_payload,
-                ),
-                runtime_status_text=getattr(self, "runtime_status_text", ""),
-                subfolder_mode=self.subfolder_mode,
-                parent_mode=self.parent_mode,
-                auto_advance_running=bool(getattr(self, "auto_advance_running", False)),
-                auto_advance_interval=getattr(self, "auto_advance_interval", None),
-                filepath_from_sink=True,
-                video_timer_from_sink=True,
-                image_meta_from_sink=True,
-                runtime_status_from_sink=True,
-                auto_advance_from_sink=True,
-                count_from_sink=True,
-                scope_from_sink=True,
-            )
-        )
-
     def _publish_filepath_status(self) -> None:
         fixed_path, fixed_colour = self._status_fixed_path_and_colour()
         self.status_bar.set_contribution(
@@ -1436,24 +1387,27 @@ class ImageSlideshow:
             )
         )
 
-    def update_filename_display(self) -> None:
-        if self.show_filename:
-            if not self.current_image_path or not self.image_paths:
-                self.status_bar.clear_contribution(FILEPATH_STATUS_KEY)
-                self.status_bar.clear_contribution(COUNT_STATUS_KEY)
-                self.status_bar.clear_contribution(SCOPE_STATUS_KEY)
-                self.status_bar.set_base_contributions((), visible=False)
-                return
+    def _publish_slideshow_status(self) -> None:
+        status_bar = getattr(self, "status_bar", None)
+        if status_bar is None or not callable(getattr(status_bar, "set_contribution", None)):
+            return
+        if not self.current_image_path or not self.image_paths:
+            clear_contribution = getattr(self.status_bar, "clear_contribution", None)
+            if callable(clear_contribution):
+                clear_contribution(FILEPATH_STATUS_KEY)
+                clear_contribution(COUNT_STATUS_KEY)
+                clear_contribution(SCOPE_STATUS_KEY)
+            set_base = getattr(self.status_bar, "set_base_contributions", None)
+            if callable(set_base):
+                set_base((), visible=False)
+            return
 
-            self._publish_filepath_status()
-            self._publish_count_status()
-            self._publish_scope_status()
-            self.status_bar.set_base_contributions(
-                self._status_contributions(),
-                visible=True,
-            )
-        else:
-            self.status_bar.set_base_contributions((), visible=False)
+        self._publish_filepath_status()
+        self._publish_count_status()
+        self._publish_scope_status()
+        set_base = getattr(self.status_bar, "set_base_contributions", None)
+        if callable(set_base):
+            set_base((), visible=self.show_filename)
 
     # --- Exit Method ---
 

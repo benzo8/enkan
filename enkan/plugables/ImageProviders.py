@@ -8,6 +8,14 @@ from itertools import accumulate
 from typing import Any, Callable
 
 from enkan.cache.ImageCacheManager import ImageCacheManager
+from enkan.mySlideshow.StatusBar import (
+    PROVIDER_BURST_DOTS_STATUS_KEY,
+    PROVIDER_DETAIL_STATUS_KEY,
+    StatusSink,
+    build_provider_burst_dots_contribution,
+    build_provider_detail_contribution,
+    build_provider_label_contribution,
+)
 from enkan.tree.selection_scope import SelectionScope, SelectionUnit
 from enkan.utils.utils import weighted_choice, images_from_path
 
@@ -28,6 +36,29 @@ class ControlledRandomIndex:
     bucket_to_memory_keys: dict[str, tuple[str, ...]]
     bucket_base_totals: dict[str, float]
     unit_to_bucket: dict[str, str]
+
+
+@dataclass
+class ProviderRuntimeContext:
+    status_sink: StatusSink
+    image_paths: list[str]
+    weights: list[float]
+    selection_scope: SelectionScope | None
+    tree: Any
+    folder_memory: Any
+    seen_folders: set[str]
+    resolve_memory_key_for_image: Callable[[str, dict[str, object] | None], str | None]
+    resolve_memory_key_for_scope: Callable[[str | None], str | None]
+    scope_records_once_per_folder: Callable[[], bool]
+    sync_memory: Callable[[], None]
+
+
+@dataclass(frozen=True)
+class ProviderDisplayEvent:
+    image_path: str
+    record_history: bool = True
+    provider_pick_meta: dict[str, object] | None = None
+    previous_image_path: str | None = None
 
 
 class _StatefulProviderIterator:
@@ -75,6 +106,10 @@ class ImageProviders:
         self.current_provider_display_mode_index = 0
         self.current_provider_settings: dict[str, float | int | str] = {}
         self.current_provider_setting_overrides: dict[str, float | int | str] = {}
+        self.runtime_context: ProviderRuntimeContext | None = None
+        self.current_provider_status_payload: dict[str, float | int | str] | None = None
+        self._last_burst_memory_token = None
+        self._last_display_event: ProviderDisplayEvent | None = None
         self._controlled_random_index_cache: dict[
             tuple[int, str, int],
             ControlledRandomIndex,
@@ -363,6 +398,158 @@ class ImageProviders:
         self.providers[name] = func
         self.provider_specs.setdefault(name, ProviderSpec(func.__name__, name[0:3].upper()))
 
+    def configure_runtime_context(self, context: ProviderRuntimeContext) -> None:
+        self.runtime_context = context
+        self.publish_current_provider_status()
+
+    def clear_provider_runtime_state(self) -> None:
+        self.current_provider_status_payload = None
+        self._last_burst_memory_token = None
+        self._last_display_event = None
+
+    def _status_sink(self) -> StatusSink | None:
+        context = self.runtime_context
+        return context.status_sink if context is not None else None
+
+    def publish_current_provider_status(self) -> None:
+        sink = self._status_sink()
+        if sink is None:
+            return
+        label = self.get_current_provider_label()
+        provider_name = self.current_provider_name
+        if provider_name == "burst":
+            sink.set_contribution(build_provider_label_contribution(label, priority=100))
+        else:
+            sink.set_contribution(build_provider_label_contribution(label))
+        if provider_name != "controlled_random_weighted":
+            sink.clear_contribution(PROVIDER_DETAIL_STATUS_KEY)
+        if provider_name != "burst":
+            sink.clear_contribution(PROVIDER_BURST_DOTS_STATUS_KEY)
+
+    def _publish_provider_detail(self, detail: str) -> None:
+        sink = self._status_sink()
+        if sink is None:
+            return
+        if detail:
+            sink.set_contribution(build_provider_detail_contribution(detail))
+        else:
+            sink.clear_contribution(PROVIDER_DETAIL_STATUS_KEY)
+
+    def _publish_burst_dots(self, full: int, total: int) -> None:
+        sink = self._status_sink()
+        if sink is None:
+            return
+        total = max(0, int(total))
+        remaining = max(0, total - int(full))
+        if remaining > 0:
+            sink.set_contribution(
+                build_provider_burst_dots_contribution(remaining, total)
+            )
+        else:
+            sink.clear_contribution(PROVIDER_BURST_DOTS_STATUS_KEY)
+
+    def on_media_displayed(self, event: ProviderDisplayEvent) -> None:
+        context = self.runtime_context
+        if context is None:
+            return
+        self._last_display_event = event
+        self.publish_current_provider_status()
+        provider_name = self.current_provider_name
+        if provider_name == "controlled_random_weighted":
+            self._handle_controlled_random_display(event, context)
+        elif provider_name == "burst":
+            self._handle_burst_display(event, context)
+        elif provider_name in {"random", "weighted"}:
+            self._record_display_memory(event, context)
+        else:
+            self._publish_provider_detail("")
+
+    def _handle_controlled_random_display(
+        self,
+        event: ProviderDisplayEvent,
+        context: ProviderRuntimeContext,
+    ) -> None:
+        payload = self._controlled_random_payload_for_event(event, context)
+        self._publish_controlled_random_detail(payload)
+        self._record_display_memory(event, context)
+
+    def _controlled_random_payload_for_event(
+        self,
+        event: ProviderDisplayEvent,
+        context: ProviderRuntimeContext,
+    ) -> dict[str, float | int | str] | None:
+        if (
+            not event.record_history
+            and event.image_path == event.previous_image_path
+            and self.current_provider_status_payload is not None
+        ):
+            return self.current_provider_status_payload
+        payload = self.get_current_provider_status_payload(
+            image_paths=context.image_paths,
+            weights=context.weights,
+            selection_scope=context.selection_scope,
+            current_image_path=event.image_path,
+            target_image_path=event.image_path,
+            folder_memory=context.folder_memory,
+            current_pick_meta=event.provider_pick_meta,
+            tree=context.tree,
+        )
+        self.current_provider_status_payload = payload
+        return payload
+
+    def _publish_controlled_random_detail(
+        self,
+        payload: dict[str, float | int | str] | None,
+    ) -> None:
+        self._publish_provider_detail(
+            self.get_current_provider_status(
+                display_mode=self.get_current_provider_display_mode(),
+                status_payload=payload,
+            )
+        )
+
+    def _handle_burst_display(
+        self,
+        event: ProviderDisplayEvent,
+        context: ProviderRuntimeContext,
+    ) -> None:
+        meta = event.provider_pick_meta or {}
+        burst_index = int(meta.get("burst_index", 0) or 0)
+        burst_size = int(meta.get("burst_size", 0) or 0)
+        self._publish_burst_dots(burst_index, burst_size)
+        if not event.record_history:
+            return
+        burst_token = meta.get("burst_token")
+        if burst_token is not None and burst_token == self._last_burst_memory_token:
+            return
+        self._last_burst_memory_token = burst_token
+        folder = str(meta.get("burst_folder") or os.path.dirname(event.image_path))
+        memory_key = context.resolve_memory_key_for_scope(folder)
+        if not memory_key:
+            return
+        context.folder_memory.record_folder(memory_key)
+        context.sync_memory()
+
+    def _record_display_memory(
+        self,
+        event: ProviderDisplayEvent,
+        context: ProviderRuntimeContext,
+    ) -> None:
+        if not event.record_history:
+            return
+        memory_key = context.resolve_memory_key_for_image(
+            event.image_path,
+            event.provider_pick_meta,
+        )
+        if not memory_key:
+            return
+        if context.scope_records_once_per_folder():
+            if memory_key in context.seen_folders:
+                return
+            context.seen_folders.add(memory_key)
+        context.folder_memory.record_folder(memory_key)
+        context.sync_memory()
+
     def select_manager(self, image_paths, provider_name="sequential", **kwargs):
         provider_func = self.providers.get(provider_name)
         if not provider_func:
@@ -385,6 +572,8 @@ class ImageProviders:
         self.current_provider_name = provider_name
         if not preserve_display_mode:
             self.current_provider_display_mode_index = 0
+        self.clear_provider_runtime_state()
+        self.publish_current_provider_status()
         return self.manager
 
     def get_current_provider_name(self):
@@ -404,6 +593,16 @@ class ImageProviders:
         self.current_provider_display_mode_index = (
             self.current_provider_display_mode_index + 1
         ) % len(modes)
+        self.publish_current_provider_status()
+        if self.current_provider_name == "controlled_random_weighted":
+            context = self.runtime_context
+            if self.current_provider_status_payload is None and context is not None:
+                last_event = self._last_display_event
+                if last_event is not None:
+                    self.current_provider_status_payload = (
+                        self._controlled_random_payload_for_event(last_event, context)
+                    )
+            self._publish_controlled_random_detail(self.current_provider_status_payload)
         return modes[self.current_provider_display_mode_index]
 
     def get_current_provider_label(self) -> str:
@@ -836,6 +1035,8 @@ class ImageProviders:
                 "reset_burst",
                 "current_burst_folder",
                 "current_burst_token",
+                "current_burst_index",
+                "current_burst_size",
                 "last_pick_meta",
             )
 
@@ -844,6 +1045,8 @@ class ImageProviders:
                 self.reset_burst = reset_func
                 self.current_burst_folder = None
                 self.current_burst_token = None
+                self.current_burst_index = 0
+                self.current_burst_size = 0
                 self.last_pick_meta = None
 
             def __iter__(self):
@@ -851,7 +1054,12 @@ class ImageProviders:
 
             def __next__(self):
                 path = next(self._gen)
-                self.last_pick_meta = None
+                self.last_pick_meta = {
+                    "burst_folder": self.current_burst_folder,
+                    "burst_token": self.current_burst_token,
+                    "burst_index": self.current_burst_index,
+                    "burst_size": self.current_burst_size,
+                }
                 return path
 
         if not image_paths:
@@ -868,6 +1076,7 @@ class ImageProviders:
         next_seed = None
         drop_first_seed = False
         burst_token = 0
+        current_burst_size = 0
         if isinstance(index, int) and 0 <= index < len(image_paths):
             next_seed = image_paths[index]
             drop_first_seed = True
@@ -902,7 +1111,7 @@ class ImageProviders:
         iterator = _BurstIterator(None, None)
 
         def burst_generator():
-            nonlocal next_seed, drop_first_seed, burst_token
+            nonlocal next_seed, drop_first_seed, burst_token, current_burst_size
             while True:
                 if not burst_queue:
                     if next_seed is None:
@@ -920,16 +1129,23 @@ class ImageProviders:
                         burst_items[0] if burst_items else ""
                     )
                     iterator.current_burst_token = burst_token
+                    current_burst_size = len(burst_items)
+                    iterator.current_burst_size = current_burst_size
+                    iterator.current_burst_index = 0
                     burst_queue.extend(burst_items)
+                iterator.current_burst_index = current_burst_size - len(burst_queue) + 1
                 yield burst_queue.popleft()
 
         def reset_burst():
-            nonlocal next_seed, drop_first_seed
+            nonlocal next_seed, drop_first_seed, current_burst_size
             burst_queue.clear()
             next_seed = None
             drop_first_seed = False
+            current_burst_size = 0
             iterator.current_burst_folder = None
             iterator.current_burst_token = None
+            iterator.current_burst_index = 0
+            iterator.current_burst_size = 0
             iterator.last_pick_meta = None
 
         iterator._gen = burst_generator()

@@ -9,6 +9,9 @@ from enkan.mySlideshow.StatusBar import (
     AUTO_ADVANCE_STATUS_KEY,
     CACHE_DOTS_STATUS_KEY,
     COUNT_STATUS_KEY,
+    PROVIDER_BURST_DOTS_STATUS_KEY,
+    PROVIDER_DETAIL_STATUS_KEY,
+    PROVIDER_LABEL_STATUS_KEY,
     RUNTIME_STATUS_KEY,
     SCOPE_STATUS_KEY,
     StatusBarContext,
@@ -18,6 +21,9 @@ from enkan.mySlideshow.StatusBar import (
     build_count_contribution,
     build_filename_display,
     build_mode_text,
+    build_provider_burst_dots_contribution,
+    build_provider_detail_contribution,
+    build_provider_label_contribution,
     build_runtime_status_contribution,
     build_scope_contribution,
     build_status_contributions,
@@ -179,7 +185,7 @@ def test_status_contributions_reproduce_image_status_display():
         " (90°, 125%)",
     ]
     assert display.filename.fixed_colour == "gold"
-    assert display.mode_text == "AUTO (5000ms)   (1/2) A7 SUB CRW"
+    assert display.mode_text == "AUTO (5000ms)   (1/2) SUB A7 CRW"
 
 
 def test_status_contributions_reproduce_video_timer_display():
@@ -235,7 +241,7 @@ def test_status_facts_surface_runtime_provider_scope_and_auto_advance():
         )
     )
 
-    assert display.mode_text == "AUTO (3000ms)   (1/2) A7 S2 B-10% VIDEO: failed SUB PAR CRW"
+    assert display.mode_text == "AUTO (3000ms)   (1/2) VIDEO: failed SUB PAR A7 S2 B-10% CRW"
 
 
 def test_status_facts_disable_provider_label_without_losing_other_status():
@@ -250,7 +256,7 @@ def test_status_facts_disable_provider_label_without_losing_other_status():
         )
     )
 
-    assert display.mode_text == "(1/2) A7 VIDEO: failed -"
+    assert display.mode_text == "(1/2) VIDEO: failed A7 -"
 
 
 def test_status_facts_video_degrades_cleanly_when_timing_is_unavailable():
@@ -359,6 +365,49 @@ def test_cache_dots_contribution_renders_in_center_zone():
 
     assert display.center_text == "●●●"
     assert display.mode_text == ""
+
+
+def test_provider_contributions_render_label_detail_and_burst_dots_in_order():
+    display = build_status_display(
+        (
+            build_provider_detail_contribution("BB NEW"),
+            build_provider_label_contribution("BUR"),
+            build_provider_burst_dots_contribution(2, 5),
+        )
+    )
+
+    assert display.mode_text == "BB NEW ●●●●● BUR"
+
+
+def test_provider_contribution_keys_are_stable():
+    assert build_provider_label_contribution("WGT").key == PROVIDER_LABEL_STATUS_KEY
+    assert build_provider_detail_contribution("BB NEW").key == PROVIDER_DETAIL_STATUS_KEY
+    assert (
+        build_provider_burst_dots_contribution(1, 3).key
+        == PROVIDER_BURST_DOTS_STATUS_KEY
+    )
+
+
+def test_provider_burst_dots_keep_stable_text_width_with_spaces():
+    contribution = build_provider_burst_dots_contribution(2, 5)
+
+    assert render_contribution(contribution)[0].text == "●●"
+    assert render_contribution(contribution)[1].text == "●●●"
+    assert render_contribution(contribution)[1].tag == "dot-empty"
+
+
+def test_provider_burst_dots_do_not_change_generic_cache_dot_rendering():
+    cache_segments = render_contribution(build_cache_dots_contribution(2, 5))
+    burst_segments = render_contribution(build_provider_burst_dots_contribution(2, 5))
+
+    assert [(segment.text, segment.tag) for segment in cache_segments] == [
+        ("●●", "dot-full"),
+        ("●●●", "dot-empty"),
+    ]
+    assert [(segment.text, segment.tag) for segment in burst_segments] == [
+        ("●●", "dot-full"),
+        ("●●●", "dot-empty"),
+    ]
 
 
 def test_count_contribution_uses_stable_key_and_index_fallback():
