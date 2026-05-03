@@ -188,6 +188,7 @@ A group definition stores graft level, proportion, and mode modifiers. Any line 
 | I | Step backwards through Parent Mode stack |
 | U | Reset Parent Mode |
 | Ctrl-D | Clear controlled-random selection memory for the current scope |
+| K | Toggle cache/preload dots in the information line |
 | M | Toggle mute |
 | V | Pause / resume active video |
 | , / . | Seek active video backward / forward by 5 seconds |
@@ -209,6 +210,9 @@ metadata are replaced by video state, for example
 Video playback failures are reported in the information line rather than through
 modal dialogs, and the slideshow should remain navigable so you can advance past
 a failed clip.
+
+When cache/preload dots are enabled, green dots indicate filled preload slots
+and grey dots indicate empty slots.
 
 ## Navigation and Parent Mode
 

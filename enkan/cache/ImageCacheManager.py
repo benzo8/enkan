@@ -192,23 +192,23 @@ class ImageCacheManager:
         return item
 
     def _wait_for_preloaded(self):
+        item = None
         with self._queue_state:
             if len(self.preload_queue) > 0:
                 item = self.preload_queue.pop()
-                self._publish_cache_dots_status()
-                return item
-            if not self._refill_active:
+            elif not self._refill_active:
                 return None
+            else:
+                logger.debug("Preload queue starved; waiting for refill to produce media.")
+                while len(self.preload_queue) == 0 and self._refill_active:
+                    self._queue_state.wait()
 
-            logger.debug("Preload queue starved; waiting for refill to produce media.")
-            while len(self.preload_queue) == 0 and self._refill_active:
-                self._queue_state.wait()
+                if len(self.preload_queue) > 0:
+                    item = self.preload_queue.pop()
 
-            if len(self.preload_queue) > 0:
-                item = self.preload_queue.pop()
-                self._publish_cache_dots_status()
-                return item
-            return None
+        if item is not None:
+            self._publish_cache_dots_status()
+        return item
 
     # -----------------------
     # Public API

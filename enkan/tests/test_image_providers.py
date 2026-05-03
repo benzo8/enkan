@@ -7,6 +7,7 @@ from enkan.plugables.ImageProviders import (
     ProviderDisplayEvent,
     ProviderRuntimeContext,
 )
+from enkan.mySlideshow.StatusBar import build_provider_detail_contribution
 from enkan.tree.selection_scope import SelectionScope, SelectionUnit
 from enkan.tree.diagnostics import _resolve_test_provider
 
@@ -221,6 +222,30 @@ def test_image_providers_publishes_burst_dots_and_records_once_per_token():
     assert dots.empty_symbol is None
 
 
+def test_image_providers_keeps_burst_dot_width_on_final_item():
+    providers = ImageProviders()
+    providers.current_provider_name = "burst"
+    sink = _Sink()
+    providers.configure_runtime_context(_runtime_context(sink=sink))
+
+    providers.on_media_displayed(
+        ProviderDisplayEvent(
+            image_path="root\\burst\\last.jpg",
+            record_history=False,
+            provider_pick_meta={
+                "burst_folder": "root\\burst",
+                "burst_token": 12,
+                "burst_index": 5,
+                "burst_size": 5,
+            },
+        )
+    )
+
+    dots = sink.contributions["provider-burst-dots"].content
+    assert dots.full == 0
+    assert dots.total == 5
+
+
 def test_image_providers_publishes_crw_status_before_recording_memory():
     providers = ImageProviders()
     providers.current_provider_name = "controlled_random_weighted"
@@ -270,6 +295,30 @@ def test_image_providers_refreshes_crw_detail_when_display_mode_changes():
     assert providers.cycle_current_provider_display_mode() == "friendly"
 
     assert sink.contributions["provider-detail"].content == "BB NEW"
+
+
+def test_image_providers_clears_provider_detail_and_burst_dots_with_runtime_state():
+    providers = ImageProviders()
+    providers.current_provider_name = "burst"
+    sink = _Sink()
+    providers.configure_runtime_context(_runtime_context(sink=sink))
+    providers.on_media_displayed(
+        ProviderDisplayEvent(
+            image_path="root\\burst\\one.jpg",
+            provider_pick_meta={
+                "burst_folder": "root\\burst",
+                "burst_token": 1,
+                "burst_index": 1,
+                "burst_size": 3,
+            },
+        )
+    )
+    sink.set_contribution(build_provider_detail_contribution("BB NEW"))
+
+    providers.clear_provider_runtime_state()
+
+    assert "provider-detail" not in sink.contributions
+    assert "provider-burst-dots" not in sink.contributions
 
 
 def test_controlled_random_weighted_penalises_recent_folders():

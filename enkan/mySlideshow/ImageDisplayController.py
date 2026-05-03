@@ -10,8 +10,8 @@ from enkan.mySlideshow.StatusBar import (
 )
 
 
-class ZoomPan:
-    """Interactive zoom & pan helper for a Tk image widget (Label or Canvas).
+class ImageDisplayController:
+    """Interactive image display helper for a Tk image widget (Label or Canvas).
 
     Parameters:
       easing (bool): enable animated eased zoom. If False, zoom applies instantly.

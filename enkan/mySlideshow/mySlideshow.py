@@ -54,7 +54,7 @@ from enkan.mySlideshow.StatusBar import (
 )
 from enkan.mySlideshow.ScopeStack import ScopeStack, ScopeStackEntry
 from enkan.mySlideshow.VideoPlaybackController import VideoPlaybackController
-from enkan.mySlideshow.ZoomPan import ZoomPan
+from enkan.mySlideshow.ImageDisplayController import ImageDisplayController
 
 # Configure logging
 logger: logging.Logger = logging.getLogger("enkan.ui")
@@ -143,8 +143,8 @@ class ImageSlideshow:
         self.mode_dialog: object | None = None
         self._ignore_user_proportion: bool = False
 
-        # Zoom/Pan controller (binds mouse events on the label)
-        self.zoompan = ZoomPan(
+        # Image display controller (binds mouse events on the label)
+        self.zoompan = ImageDisplayController(
             self.label,
             self.screen_width,
             self.screen_height,
@@ -191,7 +191,7 @@ class ImageSlideshow:
         self.root.bind("<Control-Shift-M>", self.open_mode_dialog)
         self.root.bind("<Control-Shift-T>", self.print_tree_to_console)
 
-        # Zoom/Pan key bindings (avoid clashing with existing navigation)
+        # Image display key bindings (avoid clashing with existing navigation)
         self.root.bind(
             "=", lambda e: self.zoompan.zoom_in()
         )  # '=' key (shift+'+' also triggers)
@@ -440,7 +440,7 @@ class ImageSlideshow:
         if not utils.is_videofile(image_path):
             self._set_runtime_status("")
             image = media_payload
-            # Provide full-resolution image to ZoomPan, which will fit & manage viewport
+            # Provide full-resolution image to the display controller.
             self.zoompan.set_image(
                 image,
                 exif_orientation=image.info.get("exif_orientation", 1),

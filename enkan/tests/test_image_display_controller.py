@@ -1,5 +1,5 @@
 from enkan.mySlideshow.StatusBar import IMAGE_META_STATUS_KEY
-from enkan.mySlideshow.ZoomPan import ZoomPan
+from enkan.mySlideshow.ImageDisplayController import ImageDisplayController
 
 
 class _Sink:
@@ -17,8 +17,8 @@ class _Sink:
         self.cleared.append(key)
 
 
-def _zoompan(**overrides):
-    zoompan = ZoomPan.__new__(ZoomPan)
+def _image_display_controller(**overrides):
+    controller = ImageDisplayController.__new__(ImageDisplayController)
     base = dict(
         status_sink=_Sink(),
         orig_image=object(),
@@ -29,32 +29,32 @@ def _zoompan(**overrides):
     )
     base.update(overrides)
     for key, value in base.items():
-        setattr(zoompan, key, value)
-    return zoompan
+        setattr(controller, key, value)
+    return controller
 
 
 def test_rotation_display_text_combines_exif_and_manual_rotation():
-    zoompan = _zoompan(current_exif_orientation=6, rotation_angle=270)
+    controller = _image_display_controller(current_exif_orientation=6, rotation_angle=270)
 
-    assert zoompan.rotation_display_text() == "180°"
+    assert controller.rotation_display_text() == "180°"
 
 
 def test_rotation_display_text_marks_unmodified_exif_rotation():
-    zoompan = _zoompan(current_exif_orientation=6, rotation_angle=0)
+    controller = _image_display_controller(current_exif_orientation=6, rotation_angle=0)
 
-    assert zoompan.rotation_display_text() == "90° [EXIF]"
+    assert controller.rotation_display_text() == "90° [EXIF]"
 
 
 def test_publish_image_meta_status_uses_zoom_and_rotation():
     sink = _Sink()
-    zoompan = _zoompan(
+    controller = _image_display_controller(
         status_sink=sink,
         current_exif_orientation=1,
         rotation_angle=270,
         zoom_factor=1.25,
     )
 
-    zoompan.publish_image_meta_status()
+    controller.publish_image_meta_status()
 
     assert sink.contributions[-1].key == IMAGE_META_STATUS_KEY
     assert sink.contributions[-1].content == " (90°, 125%)"
@@ -62,12 +62,12 @@ def test_publish_image_meta_status_uses_zoom_and_rotation():
 
 def test_clear_image_clears_image_meta_status():
     sink = _Sink()
-    zoompan = _zoompan(status_sink=sink)
-    zoompan.photo = object()
+    controller = _image_display_controller(status_sink=sink)
+    controller.photo = object()
 
-    zoompan.clear_image()
+    controller.clear_image()
 
-    assert zoompan.orig_image is None
-    assert zoompan.source_image is None
-    assert zoompan.photo is None
+    assert controller.orig_image is None
+    assert controller.source_image is None
+    assert controller.photo is None
     assert sink.cleared == [IMAGE_META_STATUS_KEY]

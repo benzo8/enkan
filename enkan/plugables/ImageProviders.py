@@ -406,6 +406,10 @@ class ImageProviders:
         self.current_provider_status_payload = None
         self._last_burst_memory_token = None
         self._last_display_event = None
+        sink = self._status_sink()
+        if sink is not None:
+            sink.clear_contribution(PROVIDER_DETAIL_STATUS_KEY)
+            sink.clear_contribution(PROVIDER_BURST_DOTS_STATUS_KEY)
 
     def _status_sink(self) -> StatusSink | None:
         context = self.runtime_context
@@ -441,7 +445,7 @@ class ImageProviders:
             return
         total = max(0, int(total))
         remaining = max(0, total - int(full))
-        if remaining > 0:
+        if total > 0:
             sink.set_contribution(
                 build_provider_burst_dots_contribution(remaining, total)
             )

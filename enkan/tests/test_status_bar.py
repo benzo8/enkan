@@ -1,7 +1,6 @@
 from enkan.mySlideshow.StatusBar import (
     StatusContribution,
     StatusDots,
-    StatusFacts,
     StatusFilePath,
     StatusKind,
     StatusTimer,
@@ -14,20 +13,18 @@ from enkan.mySlideshow.StatusBar import (
     PROVIDER_LABEL_STATUS_KEY,
     RUNTIME_STATUS_KEY,
     SCOPE_STATUS_KEY,
-    StatusBarContext,
     StatusBar,
     build_auto_advance_contribution,
     build_cache_dots_contribution,
     build_count_contribution,
-    build_filename_display,
-    build_mode_text,
+    build_filepath_contribution,
+    build_image_meta_contribution,
+    build_video_timer_contribution,
     build_provider_burst_dots_contribution,
     build_provider_detail_contribution,
     build_provider_label_contribution,
     build_runtime_status_contribution,
     build_scope_contribution,
-    build_status_contributions,
-    build_status_contributions_from_facts,
     build_status_display,
     render_contribution,
     render_dots,
@@ -36,146 +33,24 @@ from enkan.mySlideshow.StatusBar import (
 )
 
 
-def _context(**overrides) -> StatusBarContext:
-    base = dict(
-        label_path="root\\folder\\image.jpg",
-        fixed_path=None,
-        fixed_colour=None,
-        rotation_text="0°",
-        zoom_percent=100,
-        filename_meta_text=None,
-        current_image_path="root\\folder\\image.jpg",
-        image_paths=["root\\folder\\image.jpg", "root\\folder\\two.jpg"],
-        current_image_index=0,
-        provider_enabled=True,
-        provider_label="WGT",
-        provider_status_text="",
-        runtime_status_text="",
-        subfolder_mode=False,
-        parent_mode=False,
-        auto_advance_running=False,
-        auto_advance_interval=None,
-    )
-    base.update(overrides)
-    return StatusBarContext(**base)
-
-
-def _facts(**overrides) -> StatusFacts:
-    base = dict(
-        label_path="root\\folder\\image.jpg",
-        fixed_path=None,
-        fixed_colour=None,
-        rotation_text="0°",
-        zoom_percent=100,
-        is_video=False,
-        video_current_ms=None,
-        video_duration_ms=None,
-        video_paused=False,
-        video_status_text="",
-        current_image_path="root\\folder\\image.jpg",
-        image_paths=["root\\folder\\image.jpg", "root\\folder\\two.jpg"],
-        current_image_index=0,
-        provider_enabled=True,
-        provider_label="WGT",
-        provider_status_text="",
-        runtime_status_text="",
-        subfolder_mode=False,
-        parent_mode=False,
-        auto_advance_running=False,
-        auto_advance_interval=None,
-    )
-    base.update(overrides)
-    return StatusFacts(**base)
-
-
-def test_build_filename_display_splits_fixed_and_normal_segments():
-    display = build_filename_display(
-        _context(
-            fixed_path="root\\folder",
-            fixed_colour="gold",
-        )
-    )
-
-    assert [segment.text for segment in display.segments] == [
-        "root\\folder",
-        "\\image.jpg",
-        " (0°, 100%)",
-    ]
-    assert display.fixed_colour == "gold"
-
-
-def test_build_filename_display_uses_filename_meta_override():
-    display = build_filename_display(
-        _context(filename_meta_text=" { VIDEO 00:05 / 01:00 PAUSED }")
-    )
-
-    assert [segment.text for segment in display.segments] == [
-        "root\\folder\\image.jpg",
-        " { VIDEO 00:05 / 01:00 PAUSED }",
-    ]
-
-
-def test_build_mode_text_includes_scope_and_provider():
-    text = build_mode_text(
-        _context(
-            provider_label="CRW",
-            provider_status_text="A7 S2 B-10%",
-            subfolder_mode=True,
-            parent_mode=True,
-        )
-    )
-
-    assert text == "(1/2) A7 S2 B-10% SUB PAR CRW"
-
-
-def test_build_mode_text_includes_runtime_status():
-    text = build_mode_text(
-        _context(
-            provider_label="CRW",
-            provider_status_text="A7",
-            runtime_status_text="VIDEO: failed",
-            subfolder_mode=True,
-        )
-    )
-
-    assert text == "(1/2) A7 VIDEO: failed SUB CRW"
-
-
-def test_build_mode_text_prefixes_auto_advance():
-    text = build_mode_text(
-        _context(
-            auto_advance_running=True,
-            auto_advance_interval=5000,
-        )
-    )
-
-    assert text == "AUTO (5000ms)   (1/2) WGT"
-
-
-def test_status_contributions_reproduce_image_status_display():
+def test_status_display_renders_image_status_contributions():
     display = build_status_display(
-        build_status_contributions(
-            label_path="root\\folder\\image.jpg",
-            fixed_path="root\\folder",
-            fixed_colour="gold",
-            rotation_text="90°",
-            zoom_percent=125,
-            is_video=False,
-            video_current_ms=None,
-            video_duration_ms=None,
-            video_paused=False,
-            video_status_text="",
-            current_image_path="root\\folder\\image.jpg",
-            image_paths=["root\\folder\\image.jpg", "root\\folder\\two.jpg"],
-            current_image_index=0,
-            provider_enabled=True,
-            provider_label="CRW",
-            provider_status_text="A7",
-            runtime_status_text="",
-            subfolder_mode=True,
-            parent_mode=False,
-            auto_advance_running=True,
-            auto_advance_interval=5000,
+        (
+            build_filepath_contribution(
+                "root\\folder\\image.jpg",
+                "root\\folder",
+                "gold",
+            ),
+            build_image_meta_contribution("90°", 125),
+            build_auto_advance_contribution(True, 5000),
+            build_count_contribution(
+                "root\\folder\\image.jpg",
+                ["root\\folder\\image.jpg", "root\\folder\\two.jpg"],
+                0,
+            ),
+            build_scope_contribution(True, False),
+            build_provider_detail_contribution("A7"),
+            build_provider_label_contribution("CRW"),
         )
     )
 
@@ -188,30 +63,16 @@ def test_status_contributions_reproduce_image_status_display():
     assert display.mode_text == "AUTO (5000ms)   (1/2) SUB A7 CRW"
 
 
-def test_status_contributions_reproduce_video_timer_display():
+def test_status_display_renders_video_timer_contributions():
     display = build_status_display(
-        build_status_contributions(
-            label_path="clip.mp4",
-            fixed_path=None,
-            fixed_colour=None,
-            rotation_text="0°",
-            zoom_percent=100,
-            is_video=True,
-            video_current_ms=65_000,
-            video_duration_ms=125_000,
-            video_paused=True,
-            video_status_text="",
-            current_image_path="clip.mp4",
-            image_paths=["clip.mp4"],
-            current_image_index=0,
-            provider_enabled=True,
-            provider_label="WGT",
-            provider_status_text="",
-            runtime_status_text="",
-            subfolder_mode=False,
-            parent_mode=False,
-            auto_advance_running=False,
-            auto_advance_interval=None,
+        (
+            build_filepath_contribution("clip.mp4", None, None),
+            build_video_timer_contribution(
+                current_ms=65_000,
+                duration_ms=125_000,
+                paused=True,
+                status_text="",
+            ),
         )
     )
 
@@ -225,52 +86,15 @@ def test_status_contributions_reproduce_video_timer_display():
     ]
 
 
-def test_status_facts_surface_runtime_provider_scope_and_auto_advance():
+def test_status_display_renders_video_unknown_timing():
     display = build_status_display(
-        build_status_contributions_from_facts(
-            _facts(
-                provider_enabled=True,
-                provider_label="CRW",
-                provider_status_text="A7 S2 B-10%",
-                runtime_status_text="VIDEO: failed",
-                subfolder_mode=True,
-                parent_mode=True,
-                auto_advance_running=True,
-                auto_advance_interval=3000,
-            )
-        )
-    )
-
-    assert display.mode_text == "AUTO (3000ms)   (1/2) VIDEO: failed SUB PAR A7 S2 B-10% CRW"
-
-
-def test_status_facts_disable_provider_label_without_losing_other_status():
-    display = build_status_display(
-        build_status_contributions_from_facts(
-            _facts(
-                provider_enabled=False,
-                provider_label="CRW",
-                provider_status_text="A7",
-                runtime_status_text="VIDEO: failed",
-            )
-        )
-    )
-
-    assert display.mode_text == "(1/2) VIDEO: failed A7 -"
-
-
-def test_status_facts_video_degrades_cleanly_when_timing_is_unavailable():
-    display = build_status_display(
-        build_status_contributions_from_facts(
-            _facts(
-                label_path="clip.mp4",
-                is_video=True,
-                video_current_ms=None,
-                video_duration_ms=None,
-                video_paused=False,
-                video_status_text="buffering",
-                current_image_path="clip.mp4",
-                image_paths=["clip.mp4"],
+        (
+            build_filepath_contribution("clip.mp4", None, None),
+            build_video_timer_contribution(
+                current_ms=None,
+                duration_ms=None,
+                paused=False,
+                status_text="buffering",
             )
         )
     )
@@ -279,69 +103,6 @@ def test_status_facts_video_degrades_cleanly_when_timing_is_unavailable():
         "clip.mp4",
         " { VIDEO --:-- / --:-- BUFFERING }",
     ]
-
-
-def test_status_facts_video_sink_mode_does_not_show_image_meta():
-    display = build_status_display(
-        build_status_contributions_from_facts(
-            _facts(
-                label_path="clip.mp4",
-                is_video=True,
-                video_timer_from_sink=True,
-                rotation_text="90°",
-                zoom_percent=125,
-                current_image_path="clip.mp4",
-                image_paths=["clip.mp4"],
-            )
-        )
-    )
-
-    assert [segment.text for segment in display.filename.segments] == ["clip.mp4"]
-
-
-def test_status_facts_filepath_and_image_meta_sink_mode_omits_left_segments():
-    display = build_status_display(
-        build_status_contributions_from_facts(
-            _facts(
-                filepath_from_sink=True,
-                image_meta_from_sink=True,
-            )
-        )
-    )
-
-    assert display.filename.segments == ()
-    assert display.mode_text == "(1/2) WGT"
-
-
-def test_status_facts_runtime_and_auto_sink_mode_omits_right_segments():
-    display = build_status_display(
-        build_status_contributions_from_facts(
-            _facts(
-                runtime_status_text="No displayable media",
-                auto_advance_running=True,
-                auto_advance_interval=5000,
-                runtime_status_from_sink=True,
-                auto_advance_from_sink=True,
-            )
-        )
-    )
-
-    assert display.mode_text == "(1/2) WGT"
-
-
-def test_status_facts_count_and_scope_sink_mode_omits_readouts():
-    display = build_status_display(
-        build_status_contributions_from_facts(
-            _facts(
-                subfolder_mode=True,
-                parent_mode=True,
-                count_from_sink=True,
-                scope_from_sink=True,
-            )
-        )
-    )
-
-    assert display.mode_text == "WGT"
 
 
 def test_runtime_status_contribution_uses_stable_key():
@@ -388,7 +149,7 @@ def test_provider_contribution_keys_are_stable():
     )
 
 
-def test_provider_burst_dots_keep_stable_text_width_with_spaces():
+def test_provider_burst_dots_keep_stable_text_width_with_empty_colour():
     contribution = build_provider_burst_dots_contribution(2, 5)
 
     assert render_contribution(contribution)[0].text == "●●"
@@ -428,20 +189,6 @@ def test_scope_contribution_uses_stable_key_and_clears_when_empty():
     assert contribution.key == SCOPE_STATUS_KEY
     assert contribution.content == "SUB PAR"
     assert build_scope_contribution(False, False) is None
-
-
-def test_status_facts_uses_index_fallback_when_current_path_not_in_list():
-    display = build_status_display(
-        build_status_contributions_from_facts(
-            _facts(
-                current_image_path="outside.jpg",
-                image_paths=["one.jpg", "two.jpg"],
-                current_image_index=9,
-            )
-        )
-    )
-
-    assert display.mode_text == "(2/2) WGT"
 
 
 def test_status_bar_set_contribution_refreshes_visible_display():
