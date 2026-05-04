@@ -1,5 +1,6 @@
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from PIL import Image
@@ -7,7 +8,9 @@ from PIL import Image
 from enkan.cache.CachedVideoData import CachedVideoData
 from enkan.cache.ImageCacheManager import ImageCacheManager
 from enkan.cache.PreloadQueue import PreloadQueue, PreloadedMedia
+from enkan.config import AppConfig, VideoCacheConfig, set_current_app_config
 from enkan.plugables.ImageLoaders import ImageLoaders
+import pytest
 
 
 class _Sink:
@@ -22,6 +25,13 @@ class _Sink:
 
     def clear_contribution(self, key):
         pass
+
+
+@pytest.fixture(autouse=True)
+def reset_current_app_config():
+    set_current_app_config(AppConfig())
+    yield
+    set_current_app_config(AppConfig())
 
 
 def test_preload_queue_uses_typed_items():
@@ -100,12 +110,16 @@ def test_cache_manager_preloads_and_caches_videos(tmp_path: Path):
 
 
 def test_cache_manager_cache_all_policy_reads_oversized_videos(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path
 ):
     video_path = tmp_path / "large.mp4"
     video_path.write_bytes(b"video-bytes")
-    monkeypatch.setattr("enkan.cache.ImageCacheManager.constants.VIDEO_CACHE_MAX_BYTES", 1)
-    monkeypatch.setattr("enkan.cache.ImageCacheManager.constants.VIDEO_CACHE_POLICY", "cache-all")
+    set_current_app_config(
+        replace(
+            AppConfig(),
+            video_cache=VideoCacheConfig(policy="cache-all", max_bytes=1),
+        )
+    )
 
     manager = ImageCacheManager(iter([str(video_path)]), 0, background_preload=False)
 
@@ -124,14 +138,15 @@ def test_cache_manager_cache_all_policy_reads_oversized_videos(
 
 
 def test_cache_manager_bounded_bytes_policy_uses_path_backed_payload_for_oversized_videos(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path
 ):
     video_path = tmp_path / "large.mp4"
     video_path.write_bytes(b"video-bytes")
-    monkeypatch.setattr("enkan.cache.ImageCacheManager.constants.VIDEO_CACHE_MAX_BYTES", 1)
-    monkeypatch.setattr(
-        "enkan.cache.ImageCacheManager.constants.VIDEO_CACHE_POLICY",
-        "bounded-bytes",
+    set_current_app_config(
+        replace(
+            AppConfig(),
+            video_cache=VideoCacheConfig(policy="bounded-bytes", max_bytes=1),
+        )
     )
 
     manager = ImageCacheManager(iter([str(video_path)]), 0, background_preload=False)

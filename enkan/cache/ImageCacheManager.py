@@ -8,6 +8,7 @@ from .LRUCache import LRUCache
 from .PreloadQueue import PreloadQueue
 from .HistoryManager import HistoryManager
 from .CachedVideoData import CachedVideoData
+from enkan.config import get_current_app_config
 from enkan.plugables.ImageLoaders import ImageLoaders
 from enkan.utils.utils import is_videofile
 from enkan import constants
@@ -139,20 +140,22 @@ class ImageCacheManager:
             if not os.path.exists(image_path):
                 logger.info("Video path missing: %s", image_path)
                 return None
+            app_config = get_current_app_config()
+            video_cache_config = app_config.video_cache
             try:
-                if constants.VIDEO_CACHE_POLICY == "cache-all":
+                if video_cache_config.policy == "cache-all":
                     with open(image_path, "rb") as handle:
                         media = CachedVideoData(path=image_path, data=handle.read())
                 else:
                     video_size = os.path.getsize(image_path)
-                    if video_size <= constants.VIDEO_CACHE_MAX_BYTES:
+                    if video_size <= video_cache_config.max_bytes:
                         with open(image_path, "rb") as handle:
                             media = CachedVideoData(path=image_path, data=handle.read())
                     else:
                         logger.debug(
                             "Video exceeds byte-cache limit (%s > %s): %s",
                             video_size,
-                            constants.VIDEO_CACHE_MAX_BYTES,
+                            video_cache_config.max_bytes,
                             image_path,
                         )
                         media = CachedVideoData(path=image_path)

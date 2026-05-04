@@ -34,6 +34,12 @@ def get_arg_parser() -> argparse.ArgumentParser:
         help="Input file(s) and/or folder(s) to build or .lst file to load",
     )
     parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Optional path to an app-level TOML config file",
+    )
+    parser.add_argument(
         "--outputlist", "--ol", nargs="?", const=True, metavar="FILE", help="Output lst slideshow file (optionally specify FILE) and exit"
     )
     parser.add_argument(
@@ -51,6 +57,7 @@ def get_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--random", action="store_true", help="Start in Completely Random mode"
     )
+    parser.set_defaults(random=None)
     parser.add_argument(
         "--auto",
         "-a",
@@ -85,7 +92,7 @@ def get_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-background", "--nbg", action="store_true", help="Force queue/cache loading into foreground"
     )
-    parser.set_defaults(no_background=False)
+    parser.set_defaults(no_background=None)
     parser.add_argument(
         "--test", metavar="N", type=int, help="Run the test with N iterations"
     )
@@ -105,7 +112,7 @@ def get_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--quiet", "-q", action="store_true", help="Suppress non-error console output"
     )
-    parser.set_defaults(quiet=False)
+    parser.set_defaults(quiet=None)
     parser.add_argument(
         "--debug",
         type=int,

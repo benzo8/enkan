@@ -5,6 +5,7 @@ from typing import List
 from itertools import accumulate
 
 # ——— Local ———
+from enkan.config import load_app_config, merge_config_into_args, set_current_app_config
 from enkan.tree.Tree import Tree
 from enkan.tree.tree_logic import (
     extract_selection_scope_from_tree,
@@ -17,20 +18,23 @@ from enkan.utils.input.MultiSourceBuilder import MultiSourceBuilder
 logger = logging.getLogger("enkan.main")  
 
 def main_with_args(args) -> None:
-    
-    defaults: Defaults = Defaults(args=args)
+    app_config = load_app_config(getattr(args, "config", None))
+    set_current_app_config(app_config)
+    effective_args = merge_config_into_args(args, app_config)
+
+    defaults: Defaults = Defaults(args=effective_args)
     set_current_defaults(defaults)
     filters: Filters = Filters()
     filters.preprocess_ignored_files()
     tree: Tree = None
 
     # Normalize input_files to list
-    if not args.input_file:
+    if not effective_args.input_file:
         input_files: List[str] = []
-    elif isinstance(args.input_file, str):
-        input_files = [args.input_file]
+    elif isinstance(effective_args.input_file, str):
+        input_files = [effective_args.input_file]
     else:
-        input_files = list(args.input_file)
+        input_files = list(effective_args.input_file)
 
     # Build the tree from multiple sources
     builder = MultiSourceBuilder(defaults, filters)
@@ -45,18 +49,18 @@ def main_with_args(args) -> None:
         return
 
     # Print tree if requested
-    if args.printtree:
+    if effective_args.printtree:
         from enkan.tree.diagnostics import print_tree
-        print_tree(defaults, tree.root, max_depth=args.testdepth or 9999)
+        print_tree(defaults, tree.root, max_depth=effective_args.testdepth or 9999)
         return
 
     # Output tree to file if requested
-    if args.outputtree:
+    if effective_args.outputtree:
         from enkan.tree.tree_io import write_tree_to_file
-        if isinstance(args.outputtree, str):
-            output_path = os.path.abspath(args.outputtree)
+        if isinstance(effective_args.outputtree, str):
+            output_path = os.path.abspath(effective_args.outputtree)
         else:
-            base_names = [os.path.splitext(os.path.basename(f))[0] for f in args.input_file]
+            base_names = [os.path.splitext(os.path.basename(f))[0] for f in effective_args.input_file]
             output_name = "_".join(base_names) + ".tree"
             output_path = os.path.join(os.getcwd(), output_name)
         write_tree_to_file(tree, output_path)
@@ -65,21 +69,21 @@ def main_with_args(args) -> None:
 
     selection_scope = extract_selection_scope_from_tree(
         tree,
-        test_iterations=args.test,
+        test_iterations=effective_args.test,
     )
     images = selection_scope.image_paths
     weights = selection_scope.weights
         
-    if args.outputlist:
+    if effective_args.outputlist:
         from enkan.tree.tree_io import write_image_list
         # Build output filename
-        if isinstance(args.outputlist, str):
-            output_path = os.path.abspath(args.outputlist)
+        if isinstance(effective_args.outputlist, str):
+            output_path = os.path.abspath(effective_args.outputlist)
         else:
-            base_names = [os.path.splitext(os.path.basename(f))[0] for f in args.input_file]
+            base_names = [os.path.splitext(os.path.basename(f))[0] for f in effective_args.input_file]
             output_name = "_".join(base_names) + ".lst"
             output_path = os.path.join(os.getcwd(), output_name)
-        write_image_list(images, weights, args.input_file, args.mode, output_path)
+        write_image_list(images, weights, effective_args.input_file, effective_args.mode, output_path)
         logger.info("Output written to %s", output_path)
         return
 
@@ -87,17 +91,17 @@ def main_with_args(args) -> None:
     cum_weights = list(accumulate(weights))
 
     # Test or start the slideshow
-    if args.test:
+    if effective_args.test:
         from enkan.tree.diagnostics import test_distribution
         test_distribution(
             images,
             weights,
             cum_weights,
-            args.test,
-            args.testdepth,
-            args.histo,
+            effective_args.test,
+            effective_args.testdepth,
+            effective_args.histo,
             defaults,
-            test_models=args.test_model,
+            test_models=effective_args.test_model,
         )
         return
     
@@ -109,5 +113,5 @@ def main_with_args(args) -> None:
         selection_scope,
         defaults,
         filters,
-        args.interval,
+        effective_args.interval,
     )
