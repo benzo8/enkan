@@ -30,7 +30,6 @@ class ImageCacheManager:
         self,
         image_provider,
         current_image_index,
-        background_preload=True,
         status_sink: StatusSink | None = None,
         config: Config | None = None,
     ):
@@ -40,10 +39,10 @@ class ImageCacheManager:
         self.image_provider = image_provider
         self.image_loader = ImageLoaders()
         self.current_image_index = current_image_index
-        self.background_preload = background_preload
         self.current_media_metadata = None
         self.status_sink = status_sink
         self.config = config or Config()
+        self.background_preload = bool(self.config("cache.background_preload"))
 
         self._lock = threading.RLock()
         self._queue_state = threading.Condition(self._lock)
@@ -143,12 +142,12 @@ class ImageCacheManager:
                 logger.info("Video path missing: %s", image_path)
                 return None
             try:
-                if self.config("video_cache.policy") == "cache-all":
+                if self.config("cache.policy") == "cache-all":
                     with open(image_path, "rb") as handle:
                         media = CachedVideoData(path=image_path, data=handle.read())
                 else:
                     video_size = os.path.getsize(image_path)
-                    max_bytes = self.config("video_cache.max_bytes")
+                    max_bytes = self.config("cache.max_bytes")
                     if video_size <= max_bytes:
                         with open(image_path, "rb") as handle:
                             media = CachedVideoData(path=image_path, data=handle.read())

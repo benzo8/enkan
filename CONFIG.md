@@ -7,7 +7,8 @@ session-only runtime changes.
 The current `2.7.0.dev2` implementation is a first slice of that work. It
 loads a TOML app config file, applies command-line overrides for migrated
 settings, and exposes effective values through the internal `Config("item")`
-interface.
+interface. The migrated keys are defined in an internal registry that records
+their TOML location, parser, default, CLI binding, and current scope.
 
 ## Config File Discovery
 
@@ -31,11 +32,13 @@ random = false
 dont_recurse = false
 video = true
 mute = true
-quiet = false
-no_background = false
 navigation_basis = "folder"
 
-[video_cache]
+[progress]
+quiet = false
+
+[cache]
+background_preload = true
 policy = "cache-all"
 max_bytes = 104857600
 ```
@@ -45,7 +48,7 @@ Supported `navigation_basis` values:
 - `folder`
 - `branch`
 
-Supported `video_cache.policy` values:
+Supported `cache.policy` values:
 
 - `cache-all`
 - `bounded-bytes`
@@ -53,6 +56,10 @@ Supported `video_cache.policy` values:
 Invalid values for known keys are treated as missing and fall back to the sane
 built-in default. Unknown key names still raise an error, because they usually
 mean a typo.
+
+The legacy CLI flag `--no-background` maps to
+`cache.background_preload = false`. The `--quiet` flag maps to
+`progress.quiet = true`, which suppresses progress bars and progress toasts.
 
 ## Current Defaults
 
@@ -63,11 +70,11 @@ mean a typo.
 | `slideshow.dont_recurse` | `false` |
 | `slideshow.video` | `true` |
 | `slideshow.mute` | `true` |
-| `slideshow.quiet` | `false` |
-| `slideshow.no_background` | `false` |
 | `slideshow.navigation_basis` | `folder` |
-| `video_cache.policy` | `cache-all` |
-| `video_cache.max_bytes` | `104857600` |
+| `progress.quiet` | `false` |
+| `cache.background_preload` | `true` |
+| `cache.policy` | `cache-all` |
+| `cache.max_bytes` | `104857600` |
 
 The package-level fallback file may set a different value during development.
 It is useful for proving that `navigation_basis = "branch"` propagates into

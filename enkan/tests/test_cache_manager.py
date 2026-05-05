@@ -7,7 +7,7 @@ from PIL import Image
 from enkan.cache.CachedVideoData import CachedVideoData
 from enkan.cache.ImageCacheManager import ImageCacheManager
 from enkan.cache.PreloadQueue import PreloadQueue, PreloadedMedia
-from enkan.config import AppConfig, Config, VideoCacheConfig
+from enkan.config import AppConfig, Config
 from enkan.plugables.ImageLoaders import ImageLoaders
 
 
@@ -23,6 +23,14 @@ class _Sink:
 
     def clear_contribution(self, key):
         pass
+
+
+def _cache_config(**values):
+    return Config(app_config=AppConfig(values=values))
+
+
+def _foreground_config(**values):
+    return _cache_config(**{**values, "cache.background_preload": False})
 
 
 def test_preload_queue_uses_typed_items():
@@ -55,7 +63,11 @@ def test_cache_manager_skips_invalid_provider_media(monkeypatch):
         return None
 
     monkeypatch.setattr(ImageLoaders, "load_image", fake_load)
-    manager = ImageCacheManager(iter(["bad.jpg", "good.jpg"]), 0, background_preload=False)
+    manager = ImageCacheManager(
+        iter(["bad.jpg", "good.jpg"]),
+        0,
+        config=_foreground_config(),
+    )
 
     image_path, image_obj = manager.get_next(record_history=False)
 
@@ -70,7 +82,7 @@ def test_cache_manager_preload_refill_preserves_duplicate_provider_picks(monkeyp
     manager = ImageCacheManager(
         iter(["dup.jpg", "dup.jpg", "other.jpg"]),
         0,
-        background_preload=False,
+        config=_foreground_config(),
     )
 
     queued = manager.preload_queue.items()
@@ -82,7 +94,11 @@ def test_cache_manager_preloads_and_caches_videos(tmp_path: Path):
     video_path = tmp_path / "clip.mp4"
     video_path.write_bytes(b"video-bytes")
 
-    manager = ImageCacheManager(iter([str(video_path)]), 0, background_preload=False)
+    manager = ImageCacheManager(
+        iter([str(video_path)]),
+        0,
+        config=_foreground_config(),
+    )
 
     queued = manager.preload_queue.items()
     assert len(queued) == 1
@@ -105,14 +121,12 @@ def test_cache_manager_cache_all_policy_reads_oversized_videos(
 ):
     video_path = tmp_path / "large.mp4"
     video_path.write_bytes(b"video-bytes")
-    config = Config(
-        app_config=AppConfig(
-            video_cache=VideoCacheConfig(policy="cache-all", max_bytes=1),
-        )
+    config = _foreground_config(
+        **{"cache.policy": "cache-all", "cache.max_bytes": 1}
     )
 
     manager = ImageCacheManager(
-        iter([str(video_path)]), 0, background_preload=False, config=config
+        iter([str(video_path)]), 0, config=config
     )
 
     queued = manager.preload_queue.items()
@@ -134,14 +148,12 @@ def test_cache_manager_bounded_bytes_policy_uses_path_backed_payload_for_oversiz
 ):
     video_path = tmp_path / "large.mp4"
     video_path.write_bytes(b"video-bytes")
-    config = Config(
-        app_config=AppConfig(
-            video_cache=VideoCacheConfig(policy="bounded-bytes", max_bytes=1),
-        )
+    config = _foreground_config(
+        **{"cache.policy": "bounded-bytes", "cache.max_bytes": 1}
     )
 
     manager = ImageCacheManager(
-        iter([str(video_path)]), 0, background_preload=False, config=config
+        iter([str(video_path)]), 0, config=config
     )
 
     queued = manager.preload_queue.items()
@@ -156,6 +168,20 @@ def test_cache_manager_bounded_bytes_policy_uses_path_backed_payload_for_oversiz
     assert image_path == str(video_path)
     assert isinstance(media_obj, CachedVideoData)
     assert media_obj.data is None
+
+
+def test_cache_manager_uses_config_background_preload_when_not_explicit():
+    config = _foreground_config()
+
+    manager = ImageCacheManager(iter(()), 0, config=config)
+
+    assert manager.background_preload is False
+
+
+def test_cache_manager_uses_config_default_background_preload():
+    manager = ImageCacheManager(iter(()), 0)
+
+    assert manager.background_preload is True
 
 
 def test_cache_manager_waits_for_starved_background_refill(monkeypatch):
@@ -175,7 +201,6 @@ def test_cache_manager_waits_for_starved_background_refill(monkeypatch):
     manager = ImageCacheManager(
         iter(["slow.mp4", "second.jpg"]),
         0,
-        background_preload=True,
     )
 
     assert load_started.wait(timeout=1.0)
@@ -217,7 +242,6 @@ def test_cache_manager_serves_ready_items_while_refill_is_busy(monkeypatch):
     manager = ImageCacheManager(
         iter(["ready.jpg", "slow.mp4"]),
         0,
-        background_preload=True,
     )
 
     deadline = time.monotonic() + 1.0
@@ -242,7 +266,7 @@ def test_cache_manager_serves_ready_items_while_refill_is_busy(monkeypatch):
 
 def test_cache_manager_returns_none_for_invalid_explicit_path(monkeypatch):
     monkeypatch.setattr(ImageLoaders, "load_image", lambda self, path, *args, **kwargs: None)
-    manager = ImageCacheManager(iter(()), 0, background_preload=False)
+    manager = ImageCacheManager(iter(()), 0, config=_foreground_config())
 
     image_path, image_obj = manager.get_next("missing.jpg", record_history=False)
 
@@ -258,8 +282,8 @@ def test_cache_manager_publishes_cache_dots_status(monkeypatch):
     manager = ImageCacheManager(
         iter(["one.jpg", "two.jpg"]),
         0,
-        background_preload=False,
         status_sink=sink,
+        config=_foreground_config(),
     )
 
     assert sink.contributions[-1].key == "cache-dots"
@@ -274,7 +298,7 @@ def test_cache_manager_skips_missing_image_when_loader_raises(monkeypatch):
         "load_image",
         lambda self, path, *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError(path)),
     )
-    manager = ImageCacheManager(iter(()), 0, background_preload=False)
+    manager = ImageCacheManager(iter(()), 0, config=_foreground_config())
 
     image_path, image_obj = manager.get_next("missing.jpg", record_history=False)
 

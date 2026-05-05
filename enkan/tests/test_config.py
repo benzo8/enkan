@@ -8,6 +8,9 @@ import pytest
 from enkan.config import (
     AppConfig,
     Config,
+    CONFIG_KEYS,
+    CONFIG_KEYS_BY_NAME,
+    CONFIG_KEYS_BY_TOML_TABLE,
     ConfigError,
     DEFAULT_CONFIG_FILENAME,
     discover_config_path,
@@ -22,14 +25,74 @@ def test_load_app_config_falls_back_to_app_folder_config(tmp_path, monkeypatch):
     app_config = load_app_config()
     config = Config(app_config=app_config)
 
-    assert app_config.mode is None
-    assert app_config.random is None
+    assert app_config.values.get("mode") is None
+    assert app_config.values.get("random") is None
     assert config("navigation_basis") in {"folder", "branch"}
-    assert config("video_cache.policy") == "cache-all"
-    assert config("video_cache.max_bytes") == 100 * 1024 * 1024
+    assert config("cache.policy") == "cache-all"
+    assert config("cache.max_bytes") == 100 * 1024 * 1024
 
 
-def test_load_app_config_reads_slideshow_and_video_cache_sections(tmp_path):
+def test_config_registry_keys_are_complete():
+    assert CONFIG_KEYS
+    assert set(CONFIG_KEYS_BY_NAME) == {key.name for key in CONFIG_KEYS}
+
+    for key in CONFIG_KEYS:
+        assert key.name
+        assert key.toml_table
+        assert key.toml_key
+        assert callable(key.parser)
+        assert key.scope in {"build", "runtime", "both"}
+        assert key.parser(key.default) == key.default or key.default is None
+
+
+def test_config_registry_groups_toml_keys_by_table():
+    grouped = {
+        table: {key.toml_key for key in keys}
+        for table, keys in CONFIG_KEYS_BY_TOML_TABLE.items()
+    }
+
+    assert grouped["slideshow"] >= {
+        "mode",
+        "random",
+        "dont_recurse",
+        "video",
+        "mute",
+        "navigation_basis",
+    }
+    assert grouped["progress"] == {"quiet"}
+    assert grouped["cache"] == {"background_preload", "policy", "max_bytes"}
+
+
+def test_load_app_config_accepts_every_registered_toml_key(tmp_path):
+    config_path = tmp_path / "enkan.toml"
+    config_path.write_text(
+        """
+[slideshow]
+mode = "b2"
+random = true
+dont_recurse = true
+video = false
+mute = false
+navigation_basis = "branch"
+
+[progress]
+quiet = true
+
+[cache]
+background_preload = true
+policy = "bounded-bytes"
+max_bytes = 4096
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = Config(app_config=load_app_config(str(config_path)))
+
+    for key in CONFIG_KEYS:
+        assert config(key.name) is not None or key.default is None
+
+
+def test_load_app_config_reads_slideshow_and_cache_sections(tmp_path):
     config_path = tmp_path / "enkan.toml"
     config_path.write_text(
         """
@@ -37,10 +100,12 @@ def test_load_app_config_reads_slideshow_and_video_cache_sections(tmp_path):
 mode = "B2"
 random = true
 video = false
-quiet = true
 navigation_basis = "folder"
 
-[video_cache]
+[progress]
+quiet = true
+
+[cache]
 policy = "bounded-bytes"
 max_bytes = 2048
 """.strip(),
@@ -53,10 +118,10 @@ max_bytes = 2048
     assert config("mode") == "b2"
     assert config("random") is True
     assert config("video") is False
-    assert config("quiet") is True
+    assert config("progress.quiet") is True
     assert config("navigation_basis") == "folder"
-    assert config("video_cache.policy") == "bounded-bytes"
-    assert config("video_cache.max_bytes") == 2048
+    assert config("cache.policy") == "bounded-bytes"
+    assert config("cache.max_bytes") == 2048
 
 
 def test_config_facade_uses_explicit_branch_navigation_basis(tmp_path):
@@ -86,6 +151,20 @@ unexpected = true
     )
 
     with pytest.raises(ConfigError, match="Unknown slideshow key"):
+        load_app_config(str(config_path))
+
+
+def test_load_app_config_rejects_unknown_root_table(tmp_path):
+    config_path = tmp_path / "enkan.toml"
+    config_path.write_text(
+        """
+[other]
+value = true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="Unknown root key"):
         load_app_config(str(config_path))
 
 
@@ -126,9 +205,12 @@ def test_load_app_config_falls_back_for_invalid_known_values(tmp_path):
 [slideshow]
 random = "yes"
 video = 12
+
+[progress]
 quiet = ["nope"]
 
-[video_cache]
+[cache]
+background_preload = "sure"
 policy = "forever"
 max_bytes = -1
 """.strip(),
@@ -139,9 +221,10 @@ max_bytes = -1
 
     assert config("random") is False
     assert config("video") is True
-    assert config("quiet") is False
-    assert config("video_cache.policy") == "cache-all"
-    assert config("video_cache.max_bytes") == 100 * 1024 * 1024
+    assert config("progress.quiet") is False
+    assert config("cache.background_preload") is True
+    assert config("cache.policy") == "cache-all"
+    assert config("cache.max_bytes") == 100 * 1024 * 1024
 
 
 def test_load_app_config_falls_back_for_missing_known_values(tmp_path):
@@ -151,18 +234,20 @@ def test_load_app_config_falls_back_for_missing_known_values(tmp_path):
     config = Config(app_config=load_app_config(str(config_path)))
 
     assert config("navigation_basis") == "folder"
-    assert config("video_cache.policy") == "cache-all"
-    assert config("video_cache.max_bytes") == 100 * 1024 * 1024
+    assert config("cache.policy") == "cache-all"
+    assert config("cache.max_bytes") == 100 * 1024 * 1024
 
 
 def test_config_facade_preserves_cli_precedence():
     app_config = AppConfig(
-        mode="b1",
-        random=True,
-        video=False,
-        quiet=False,
-        no_background=True,
-        navigation_basis="branch",
+        values={
+            "mode": "b1",
+            "random": True,
+            "video": False,
+            "progress.quiet": False,
+            "cache.background_preload": True,
+            "navigation_basis": "branch",
+        }
     )
     args = Namespace(
         mode="b3",
@@ -171,7 +256,7 @@ def test_config_facade_preserves_cli_precedence():
         video=None,
         mute=None,
         quiet=True,
-        no_background=None,
+        no_background=True,
         navigation_basis="folder",
     )
 
@@ -180,14 +265,16 @@ def test_config_facade_preserves_cli_precedence():
     assert config("mode") == "b3"
     assert config("random") is True
     assert config("video") is False
-    assert config("quiet") is True
-    assert config("no_background") is True
+    assert config("progress.quiet") is True
+    assert config("cache.background_preload") is False
     assert config("navigation_basis") == "folder"
 
 
 def test_config_facade_applies_runtime_overrides_last():
-    config = Config(app_config=AppConfig(navigation_basis="branch")).with_runtime_overrides(
-        navigation_basis="folder"
+    config = Config(
+        app_config=AppConfig(values={"navigation_basis": "branch"})
+    ).with_runtime_overrides(
+        navigation_basis="folder",
     )
 
     assert config("navigation_basis") == "folder"

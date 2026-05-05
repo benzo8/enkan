@@ -571,7 +571,6 @@ class ImageProviders:
         self.manager = ImageCacheManager(
             image_provider,
             kwargs.get("index", 0),
-            background_preload=kwargs.get("background_preload", True),
             status_sink=status_sink,
             config=config,
         )

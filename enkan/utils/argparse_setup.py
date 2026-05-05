@@ -90,7 +90,7 @@ def get_arg_parser() -> argparse.ArgumentParser:
     )
     parser.set_defaults(mute=None)
     parser.add_argument(
-        "--no-background", "--nbg", action="store_true", help="Force queue/cache loading into foreground"
+        "--no-background", "--nbg", action="store_true", help="Disable background cache/preload refill"
     )
     parser.set_defaults(no_background=None)
     parser.add_argument(
@@ -117,7 +117,7 @@ def get_arg_parser() -> argparse.ArgumentParser:
         "--histo", action="store_true", help="Show distribution histogram"
     )
     parser.add_argument(
-        "--quiet", "-q", action="store_true", help="Suppress non-error console output"
+        "--quiet", "-q", action="store_true", help="Suppress progress bars and progress toasts"
     )
     parser.set_defaults(quiet=None)
     parser.add_argument(

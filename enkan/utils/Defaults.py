@@ -37,7 +37,6 @@ class Defaults:
         args: Any | None = None,
         video: bool = True,
         mute: bool = True,
-        no_background: bool | None = None,
         quiet: bool | None = None,
         config: "Config | None" = None,
     ):
@@ -51,10 +50,8 @@ class Defaults:
             dont_recurse = bool(config("dont_recurse"))
             video = bool(config("video"))
             mute = bool(config("mute"))
-            if no_background is None:
-                no_background = bool(config("no_background"))
             if quiet is None:
-                quiet = bool(config("quiet"))
+                quiet = bool(config("progress.quiet"))
 
         # Base values
         self._weight_modifier = weight_modifier
@@ -75,7 +72,6 @@ class Defaults:
         self.args_video = getattr(args, "video", None) if args else None
         self.args_mute = getattr(args, "mute", None) if args else None
         self.args_quiet = getattr(args, "quiet", None) if args else None
-        self.args_no_background = getattr(args, "no_background", None) if args else None
 
         # Global (runtime) overrides (set later via setters)
         self.global_mode: ModeMap | None = None
@@ -85,15 +81,6 @@ class Defaults:
         self.global_mute: bool | None = None
 
         # Derived flags
-        self.background: bool = not (
-            no_background
-            if no_background is not None
-            else (
-                bool(self.args_no_background)
-                if self.args_no_background is not None
-                else False
-            )
-        )
         self.quiet: bool = (
             quiet
             if quiet is not None
@@ -119,7 +106,6 @@ class Defaults:
             args=self.args,
             video=self._video,
             mute=self._mute,
-            no_background=not self.background,
             quiet=self.quiet,
             config=self.config,
         )

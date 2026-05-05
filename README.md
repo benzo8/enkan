@@ -67,7 +67,7 @@ still fail loudly so typos are visible.
 
 The config system is being expanded during the 2.7 development line. The
 current migrated settings include slideshow startup defaults such as
-`navigation_basis` and video cache settings. See [CONFIG.md](CONFIG.md) for the
+`navigation_basis` and cache settings. See [CONFIG.md](CONFIG.md) for the
 current format.
 
 ## Runtime Providers
@@ -174,7 +174,8 @@ A group definition stores graft level, proportion, and mode modifiers. Any line 
 | `--no-recurse` | Treat every supplied folder as non-recursive. |
 | `--video` / `--no-video` | Force-enable or disable video globally. |
 | `--no-mute` | Keep audio tracks unmuted (video default is muted). |
-| `--no-background` | Run loaders in the foreground (useful when debugging). |
+| `--no-background` | Disable background cache/preload refill (useful when debugging). |
+| `--quiet` | Suppress progress bars and progress toasts. |
 | `--test N` | Run `N` randomised draws and report the observed distribution. Combine with `--histo` for a matplotlib histogram. |
 | `--test_model`, `--tm` | Comma-separated provider suffixes to compare during `--test`, for example `weighted,controlled_random_weighted`. |
 | `--printtree` | Emit a text representation of the computed tree. |

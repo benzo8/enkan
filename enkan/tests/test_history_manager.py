@@ -1,5 +1,6 @@
 from enkan.cache.HistoryManager import HistoryManager
 from enkan.cache.ImageCacheManager import ImageCacheManager
+from enkan.config import AppConfig, Config
 
 
 def test_history_manager_snapshot_restore_preserves_navigation():
@@ -20,7 +21,10 @@ def test_history_manager_snapshot_restore_preserves_navigation():
 
 
 def test_image_cache_manager_restore_history_round_trip():
-    cache_manager = ImageCacheManager(iter(()), 0, background_preload=False)
+    config = Config(
+        app_config=AppConfig(values={"cache.background_preload": False})
+    )
+    cache_manager = ImageCacheManager(iter(()), 0, config=config)
     cache_manager.history_manager.add("scope_a\\one.jpg")
     cache_manager.history_manager.add("scope_a\\two.jpg")
     cache_manager.history_manager.add("scope_b\\three.jpg")

@@ -597,7 +597,6 @@ class ImageSlideshow:
         self.manager: ImageCacheManager = self.providers.select_manager(
             image_paths=self.image_paths,
             provider_name=provider_name,
-            background_preload=self.defaults.background,
             status_sink=self.status_bar,
             config=getattr(self, "config", None),
             **provider_kwargs,
