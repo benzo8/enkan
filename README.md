@@ -5,6 +5,7 @@ A not-so-simple slideshow application for building rich, weighted photo and vide
 Of course, enkan can show you images completely at random, but its real power comes as you delve deeper into weighting and grafting, giving you complete control over the balance of images you see.
 
 For release history, see [CHANGELOG.md](CHANGELOG.md).
+For app-level TOML configuration, see [CONFIG.md](CONFIG.md).
 
 ## Requirements
 
@@ -53,6 +54,21 @@ enkan --input_file shows/summer-show.txt --run
 ```
 
 enkan will parse the file, build an in-memory tree, and open the slideshow window. Use the keyboard controls to navigate and switch providers. Add `--auto 8` to advance every eight seconds, or `--random` to start in completely random mode.
+
+## Configuration
+
+enkan can read an app-level `enkan.toml` before command-line overrides are
+applied. Config discovery currently checks the launch directory, then the user
+config folder, then the enkan package folder. The first file found wins.
+
+Use `--config path\to\enkan.toml` to load an explicit config file. Invalid
+values for known config keys fall back to built-in defaults; unknown key names
+still fail loudly so typos are visible.
+
+The config system is being expanded during the 2.7 development line. The
+current migrated settings include slideshow startup defaults such as
+`navigation_basis` and video cache settings. See [CONFIG.md](CONFIG.md) for the
+current format.
 
 ## Runtime Providers
 
@@ -148,6 +164,7 @@ A group definition stores graft level, proportion, and mode modifiers. Any line 
 | Option | Purpose |
 | --- | --- |
 | `-i`, `--input_file` | One or more `.txt`, `.lst` or `.tree` files, or folder and/or file paths (including [modifiers] if desired) to process. |
+| `--config FILE` | Load an explicit app-level TOML config file instead of using discovery. |
 | `--run` | Explicitly launch the slideshow (optional when you omit `--output*`). |
 | `--outputlist [filename]` | Write a weighted `.lst` file instead of launching the GUI. |
 | `--outputtree [filename]` | Persist the computed tree to a `.tree` file for fast reloads instead of lauching the GUI. |

@@ -1,0 +1,7 @@
+# enkan default configuration
+# This file lives in the enkan package folder and is the lowest-priority fallback
+# in the config discovery chain (app folder).
+# Override by placing enkan.toml in your start folder or %APPDATA%\enkan\.
+
+[slideshow]
+navigation_basis = "branch"  # default navigation basis: 'folder' or 'branch'

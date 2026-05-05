@@ -1,7 +1,10 @@
 from __future__ import annotations
 import copy
 import re
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Tuple, Optional, Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from enkan.config import Config
 
 # Mode type: level -> (mode_char, [slope1, slope2])
 ModeMap = Dict[int, Tuple[str, List[int]]]
@@ -36,8 +39,22 @@ class Defaults:
         mute: bool = True,
         no_background: bool | None = None,
         quiet: bool | None = None,
+        config: "Config | None" = None,
     ):
         self.args = args
+        self.config = config
+
+        if config is not None:
+            if mode is None:
+                mode = config("mode")
+            is_random = bool(config("random"))
+            dont_recurse = bool(config("dont_recurse"))
+            video = bool(config("video"))
+            mute = bool(config("mute"))
+            if no_background is None:
+                no_background = bool(config("no_background"))
+            if quiet is None:
+                quiet = bool(config("quiet"))
 
         # Base values
         self._weight_modifier = weight_modifier
@@ -104,6 +121,7 @@ class Defaults:
             mute=self._mute,
             no_background=not self.background,
             quiet=self.quiet,
+            config=self.config,
         )
         clone.global_mode = _copy_mode_map(self.global_mode)
         clone.global_is_random = self.global_is_random

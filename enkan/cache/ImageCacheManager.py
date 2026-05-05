@@ -8,7 +8,7 @@ from .LRUCache import LRUCache
 from .PreloadQueue import PreloadQueue
 from .HistoryManager import HistoryManager
 from .CachedVideoData import CachedVideoData
-from enkan.config import get_current_app_config
+from enkan.config import Config
 from enkan.plugables.ImageLoaders import ImageLoaders
 from enkan.utils.utils import is_videofile
 from enkan import constants
@@ -32,6 +32,7 @@ class ImageCacheManager:
         current_image_index,
         background_preload=True,
         status_sink: StatusSink | None = None,
+        config: Config | None = None,
     ):
         self.lru_cache = LRUCache(constants.CACHE_SIZE)
         self.preload_queue = PreloadQueue(constants.PRELOAD_QUEUE_LENGTH)
@@ -42,6 +43,7 @@ class ImageCacheManager:
         self.background_preload = background_preload
         self.current_media_metadata = None
         self.status_sink = status_sink
+        self.config = config or Config()
 
         self._lock = threading.RLock()
         self._queue_state = threading.Condition(self._lock)
@@ -140,22 +142,21 @@ class ImageCacheManager:
             if not os.path.exists(image_path):
                 logger.info("Video path missing: %s", image_path)
                 return None
-            app_config = get_current_app_config()
-            video_cache_config = app_config.video_cache
             try:
-                if video_cache_config.policy == "cache-all":
+                if self.config("video_cache.policy") == "cache-all":
                     with open(image_path, "rb") as handle:
                         media = CachedVideoData(path=image_path, data=handle.read())
                 else:
                     video_size = os.path.getsize(image_path)
-                    if video_size <= video_cache_config.max_bytes:
+                    max_bytes = self.config("video_cache.max_bytes")
+                    if video_size <= max_bytes:
                         with open(image_path, "rb") as handle:
                             media = CachedVideoData(path=image_path, data=handle.read())
                     else:
                         logger.debug(
                             "Video exceeds byte-cache limit (%s > %s): %s",
                             video_size,
-                            video_cache_config.max_bytes,
+                            max_bytes,
                             image_path,
                         )
                         media = CachedVideoData(path=image_path)

@@ -3,6 +3,7 @@ import logging
 
 from PIL import Image
 
+from enkan.config import AppConfig, Config
 from enkan.cache.CachedVideoData import CachedVideoData
 from enkan.mySlideshow.MediaFileOps import ExifWriteResult
 from enkan.mySlideshow.NavigationTypes import NavigationBasis, NavigationState, ScopeKind
@@ -81,6 +82,36 @@ def test_navigation_state_reports_basis_and_scope_kind():
     assert state.basis is NavigationBasis.BRANCH
     assert state.scope_kind is ScopeKind.PARENT
     assert state.branch_anchor == "root\\branch"
+
+
+def test_initial_navigation_basis_uses_config_branch():
+    config = Config(app_config=AppConfig(navigation_basis="branch"))
+
+    basis = ImageSlideshow._initial_navigation_basis(config)
+
+    assert basis is NavigationBasis.BRANCH
+
+
+def test_initial_navigation_basis_uses_config_folder():
+    config = Config(app_config=AppConfig(navigation_basis="folder"))
+
+    basis = ImageSlideshow._initial_navigation_basis(config)
+
+    assert basis is NavigationBasis.FOLDER
+
+
+def test_initial_navigation_mode_matches_original_navigation_state():
+    slideshow = ImageSlideshow.__new__(ImageSlideshow)
+    config = Config(app_config=AppConfig(navigation_basis="branch"))
+    basis = ImageSlideshow._initial_navigation_basis(config)
+    slideshow.original_navigation_state = NavigationState(
+        basis=basis,
+        scope_kind=ScopeKind.ROOT,
+    )
+    slideshow.navigation_mode = slideshow.original_navigation_state.basis.value
+
+    assert slideshow.original_navigation_state.basis is NavigationBasis.BRANCH
+    assert slideshow.navigation_mode == "branch"
 
 
 def test_select_mode_enables_crw_when_not_active():

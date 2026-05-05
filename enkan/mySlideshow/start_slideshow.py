@@ -1,5 +1,6 @@
 import tkinter as tk
 
+from enkan.config import Config
 from enkan.utils.Defaults import Defaults
 from enkan.utils.Filters import Filters
 from enkan.utils.SelectionWeights import SelectionWeights
@@ -17,6 +18,7 @@ def start_slideshow(
     defaults: Defaults, 
     filters: Filters, 
     interval: int | float | None = None,
+    config: Config | None = None,
 ) -> None:
     """
     Start the slideshow using the given paths and weights.
@@ -38,5 +40,6 @@ def start_slideshow(
         defaults,
         filters,
         interval,
+        config,
     )
     root.mainloop()

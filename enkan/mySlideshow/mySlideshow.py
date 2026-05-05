@@ -7,6 +7,7 @@ from typing import Optional
 
 # ——— Local ———
 from enkan import constants
+from enkan.config import Config
 from enkan.cache.CachedVideoData import CachedVideoData
 from enkan.cache.ImageCacheManager import ImageCacheManager
 from enkan.tree import Tree
@@ -80,6 +81,7 @@ class ImageSlideshow:
         defaults: Defaults,
         filters: Filters,
         interval: int | float | None = None,
+        config: Config | None = None,
     ) -> None:
         self.root: TreeNode = root
         self.original_tree: Tree = tree
@@ -100,8 +102,14 @@ class ImageSlideshow:
         self.original_folder_memory: FolderSelectionMemory = self.folder_memory.copy()
         self.scope_seen_folders: set[str] = set()
         self.original_scope_seen_folders: set[str] = set()
+        self.config: Config = (
+            config
+            or getattr(defaults, "config", None)
+            or Config(args=getattr(defaults, "args", None))
+        )
+        _nav_basis = self._initial_navigation_basis(self.config)
         self.original_navigation_state = NavigationState(
-            basis=NavigationBasis.FOLDER,
+            basis=_nav_basis,
             scope_kind=ScopeKind.ROOT,
         )
         self.original_image_paths: list = image_paths
@@ -113,7 +121,7 @@ class ImageSlideshow:
         )
         self.subfolder_mode = False
         self.parent_mode = False
-        self.navigation_mode = "folder"
+        self.navigation_mode = self.original_navigation_state.basis.value
         self.navigation_node = None
         self.show_filename = False
         self.runtime_status_text = ""
@@ -220,6 +228,10 @@ class ImageSlideshow:
             self._schedule_next_image()
             self.auto_advance_running = True
             self._publish_auto_advance_status()
+
+    @staticmethod
+    def _initial_navigation_basis(config: Config) -> NavigationBasis:
+        return NavigationBasis(config("navigation_basis"))
 
     def _reset_zoom(self, event=None) -> None:
         self.zoompan.reset_view()
@@ -558,6 +570,7 @@ class ImageSlideshow:
             provider_name=self.providers.get_current_provider_name(),
             index=self.current_image_index,
             status_sink=self.status_bar,
+            config=getattr(self, "config", None),
             **self._provider_kwargs(),
         )
         self.manager.restore_history(history_snapshot)
@@ -586,6 +599,7 @@ class ImageSlideshow:
             provider_name=provider_name,
             background_preload=self.defaults.background,
             status_sink=self.status_bar,
+            config=getattr(self, "config", None),
             **provider_kwargs,
         )
         self.manager.restore_history(history_snapshot)

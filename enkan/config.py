@@ -12,6 +12,7 @@ from enkan.constants import CX_PATTERN
 
 DEFAULT_CONFIG_FILENAME = "enkan.toml"
 VIDEO_CACHE_POLICIES = {"cache-all", "bounded-bytes"}
+NAVIGATION_BASIS_VALUES = {"folder", "branch"}
 
 
 class ConfigError(ValueError):
@@ -20,8 +21,8 @@ class ConfigError(ValueError):
 
 @dataclass(frozen=True)
 class VideoCacheConfig:
-    policy: Literal["cache-all", "bounded-bytes"] = "cache-all"
-    max_bytes: int = 100 * 1024 * 1024
+    policy: Literal["cache-all", "bounded-bytes"] | None = None
+    max_bytes: int | None = None
 
 
 @dataclass(frozen=True)
@@ -33,19 +34,75 @@ class AppConfig:
     mute: bool | None = None
     quiet: bool | None = None
     no_background: bool | None = None
+    navigation_basis: Literal["folder", "branch"] | None = None
     video_cache: VideoCacheConfig = field(default_factory=VideoCacheConfig)
 
 
-_current_app_config: AppConfig | None = None
+BUILTIN_DEFAULTS: dict[str, Any] = {
+    "mode": None,
+    "random": False,
+    "dont_recurse": False,
+    "video": True,
+    "mute": True,
+    "quiet": False,
+    "no_background": False,
+    "navigation_basis": "folder",
+    "video_cache.policy": "cache-all",
+    "video_cache.max_bytes": 100 * 1024 * 1024,
+}
 
 
-def set_current_app_config(config: AppConfig | None) -> None:
-    global _current_app_config
-    _current_app_config = config
+class Config:
+    """Effective configuration facade for persisted, CLI, and runtime layers."""
 
+    def __init__(
+        self,
+        app_config: AppConfig | None = None,
+        args: Namespace | SimpleNamespace | None = None,
+        runtime_overrides: dict[str, Any] | None = None,
+    ) -> None:
+        self.app_config = app_config or AppConfig()
+        self.args = args
+        self.runtime_overrides: dict[str, Any] = dict(runtime_overrides or {})
 
-def get_current_app_config() -> AppConfig:
-    return _current_app_config if _current_app_config is not None else AppConfig()
+    @classmethod
+    def from_args(
+        cls,
+        args: Namespace | SimpleNamespace,
+        *,
+        start_folder: Path | None = None,
+    ) -> "Config":
+        app_config = load_app_config(getattr(args, "config", None), start_folder=start_folder)
+        return cls(app_config=app_config, args=args)
+
+    def __call__(self, key: str) -> Any:
+        if key not in BUILTIN_DEFAULTS:
+            raise KeyError(f"Unknown config key: {key}")
+        if key in self.runtime_overrides:
+            return self.runtime_overrides[key]
+        cli_value = self._cli_value(key)
+        if cli_value is not None:
+            return cli_value
+        app_value = self._app_value(key)
+        if app_value is not None:
+            return app_value
+        return BUILTIN_DEFAULTS[key]
+
+    def with_runtime_overrides(self, **overrides: Any) -> "Config":
+        merged = {**self.runtime_overrides, **overrides}
+        return Config(self.app_config, self.args, merged)
+
+    def _cli_value(self, key: str) -> Any:
+        if self.args is None or "." in key:
+            return None
+        return getattr(self.args, key, None)
+
+    def _app_value(self, key: str) -> Any:
+        if key == "video_cache.policy":
+            return self.app_config.video_cache.policy
+        if key == "video_cache.max_bytes":
+            return self.app_config.video_cache.max_bytes
+        return getattr(self.app_config, key)
 
 
 def discover_config_path(start_folder: Path | None = None) -> Path | None:
@@ -112,42 +169,19 @@ def load_app_config(config_path: str | None = None, start_folder: Path | None = 
     return _parse_app_config(raw, source=path)
 
 
-def merge_config_into_args(args: Namespace | SimpleNamespace, config: AppConfig):
-    merged = SimpleNamespace(**vars(args))
-    cli_overridable_fields = (
-        "mode",
-        "random",
-        "dont_recurse",
-        "video",
-        "mute",
-        "quiet",
-        "no_background",
-    )
-
-    for field_name in cli_overridable_fields:
-        if getattr(merged, field_name, None) is None:
-            config_value = getattr(config, field_name)
-            if config_value is not None:
-                setattr(merged, field_name, config_value)
-
-    return merged
-
-
 def _parse_app_config(raw: dict[str, Any], *, source: Path) -> AppConfig:
     _require_table(raw, source=source, label="root")
     _reject_unknown_keys(raw, {"slideshow", "video_cache"}, source=source, label="root")
 
-    slideshow = raw.get("slideshow", {})
-    _require_table(slideshow, source=source, label="slideshow")
+    slideshow = _optional_table(raw.get("slideshow", {}))
     _reject_unknown_keys(
         slideshow,
-        {"mode", "random", "dont_recurse", "video", "mute", "quiet", "no_background"},
+        {"mode", "random", "dont_recurse", "video", "mute", "quiet", "no_background", "navigation_basis"},
         source=source,
         label="slideshow",
     )
 
-    video_cache = raw.get("video_cache", {})
-    _require_table(video_cache, source=source, label="video_cache")
+    video_cache = _optional_table(raw.get("video_cache", {}))
     _reject_unknown_keys(
         video_cache,
         {"policy", "max_bytes"},
@@ -157,11 +191,12 @@ def _parse_app_config(raw: dict[str, Any], *, source: Path) -> AppConfig:
 
     mode = slideshow.get("mode")
     if mode is not None:
-        if not isinstance(mode, str) or not CX_PATTERN.fullmatch(mode):
-            raise ConfigError(
-                f"Invalid slideshow.mode in {source}: expected CX pattern string."
-            )
-        mode = mode.lower()
+        mode = mode.lower() if isinstance(mode, str) and CX_PATTERN.fullmatch(mode) else None
+
+    navigation_basis = slideshow.get("navigation_basis")
+    if navigation_basis is not None:
+        if not isinstance(navigation_basis, str) or navigation_basis not in NAVIGATION_BASIS_VALUES:
+            navigation_basis = None
 
     return AppConfig(
         mode=mode,
@@ -171,6 +206,7 @@ def _parse_app_config(raw: dict[str, Any], *, source: Path) -> AppConfig:
         mute=_optional_bool(slideshow, "mute", source=source, label="slideshow"),
         quiet=_optional_bool(slideshow, "quiet", source=source, label="slideshow"),
         no_background=_optional_bool(slideshow, "no_background", source=source, label="slideshow"),
+        navigation_basis=navigation_basis,
         video_cache=VideoCacheConfig(
             policy=_video_cache_policy(video_cache, source=source),
             max_bytes=_video_cache_max_bytes(video_cache, source=source),
@@ -181,6 +217,10 @@ def _parse_app_config(raw: dict[str, Any], *, source: Path) -> AppConfig:
 def _require_table(raw: Any, *, source: Path, label: str) -> None:
     if not isinstance(raw, dict):
         raise ConfigError(f"Invalid {label} table in {source}: expected TOML table.")
+
+
+def _optional_table(raw: Any) -> dict[str, Any]:
+    return raw if isinstance(raw, dict) else {}
 
 
 def _reject_unknown_keys(
@@ -199,24 +239,23 @@ def _optional_bool(
     if value is None:
         return None
     if not isinstance(value, bool):
-        raise ConfigError(f"Invalid {label}.{key} in {source}: expected boolean.")
+        return None
     return value
 
 
-def _video_cache_policy(raw: dict[str, Any], *, source: Path) -> str:
-    value = raw.get("policy", VideoCacheConfig().policy)
+def _video_cache_policy(raw: dict[str, Any], *, source: Path) -> str | None:
+    value = raw.get("policy")
+    if value is None:
+        return None
     if not isinstance(value, str) or value not in VIDEO_CACHE_POLICIES:
-        allowed = ", ".join(sorted(VIDEO_CACHE_POLICIES))
-        raise ConfigError(
-            f"Invalid video_cache.policy in {source}: expected one of {allowed}."
-        )
+        return None
     return value
 
 
-def _video_cache_max_bytes(raw: dict[str, Any], *, source: Path) -> int:
-    value = raw.get("max_bytes", VideoCacheConfig().max_bytes)
+def _video_cache_max_bytes(raw: dict[str, Any], *, source: Path) -> int | None:
+    value = raw.get("max_bytes")
+    if value is None:
+        return None
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
-        raise ConfigError(
-            f"Invalid video_cache.max_bytes in {source}: expected positive integer."
-        )
+        return None
     return value

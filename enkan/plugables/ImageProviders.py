@@ -559,6 +559,7 @@ class ImageProviders:
         if not provider_func:
             raise ValueError(f"No such provider: {provider_name}")
         status_sink = kwargs.pop("status_sink", None)
+        config = kwargs.pop("config", None)
         preserve_display_mode = provider_name == self.current_provider_name
         kwargs = self._resolve_provider_kwargs(
             image_paths=image_paths,
@@ -572,6 +573,7 @@ class ImageProviders:
             kwargs.get("index", 0),
             background_preload=kwargs.get("background_preload", True),
             status_sink=status_sink,
+            config=config,
         )
         self.current_provider_name = provider_name
         if not preserve_display_mode:

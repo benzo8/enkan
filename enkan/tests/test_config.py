@@ -7,23 +7,26 @@ import pytest
 
 from enkan.config import (
     AppConfig,
+    Config,
     ConfigError,
     DEFAULT_CONFIG_FILENAME,
     discover_config_path,
     load_app_config,
-    merge_config_into_args,
 )
 
 
-def test_load_app_config_uses_defaults_when_default_file_missing(tmp_path, monkeypatch):
+def test_load_app_config_falls_back_to_app_folder_config(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata_empty"))
 
-    config = load_app_config()
+    app_config = load_app_config()
+    config = Config(app_config=app_config)
 
-    assert config.mode is None
-    assert config.random is None
-    assert config.video_cache.policy == "cache-all"
-    assert config.video_cache.max_bytes == 100 * 1024 * 1024
+    assert app_config.mode is None
+    assert app_config.random is None
+    assert config("navigation_basis") in {"folder", "branch"}
+    assert config("video_cache.policy") == "cache-all"
+    assert config("video_cache.max_bytes") == 100 * 1024 * 1024
 
 
 def test_load_app_config_reads_slideshow_and_video_cache_sections(tmp_path):
@@ -35,6 +38,7 @@ mode = "B2"
 random = true
 video = false
 quiet = true
+navigation_basis = "folder"
 
 [video_cache]
 policy = "bounded-bytes"
@@ -43,14 +47,31 @@ max_bytes = 2048
         encoding="utf-8",
     )
 
-    config = load_app_config(str(config_path))
+    app_config = load_app_config(str(config_path))
+    config = Config(app_config=app_config)
 
-    assert config.mode == "b2"
-    assert config.random is True
-    assert config.video is False
-    assert config.quiet is True
-    assert config.video_cache.policy == "bounded-bytes"
-    assert config.video_cache.max_bytes == 2048
+    assert config("mode") == "b2"
+    assert config("random") is True
+    assert config("video") is False
+    assert config("quiet") is True
+    assert config("navigation_basis") == "folder"
+    assert config("video_cache.policy") == "bounded-bytes"
+    assert config("video_cache.max_bytes") == 2048
+
+
+def test_config_facade_uses_explicit_branch_navigation_basis(tmp_path):
+    config_path = tmp_path / "enkan.toml"
+    config_path.write_text(
+        """
+[slideshow]
+navigation_basis = "branch"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = Config(app_config=load_app_config(str(config_path)))
+
+    assert config("navigation_basis") == "branch"
 
 
 def test_load_app_config_rejects_unknown_keys(tmp_path):
@@ -68,7 +89,7 @@ unexpected = true
         load_app_config(str(config_path))
 
 
-def test_load_app_config_rejects_invalid_mode(tmp_path):
+def test_load_app_config_falls_back_for_invalid_mode(tmp_path):
     config_path = tmp_path / "enkan.toml"
     config_path.write_text(
         """
@@ -78,11 +99,71 @@ mode = "not-a-mode"
         encoding="utf-8",
     )
 
-    with pytest.raises(ConfigError, match="Invalid slideshow.mode"):
-        load_app_config(str(config_path))
+    config = Config(app_config=load_app_config(str(config_path)))
+
+    assert config("mode") is None
 
 
-def test_merge_config_into_args_preserves_cli_precedence():
+def test_load_app_config_falls_back_for_invalid_navigation_basis(tmp_path):
+    config_path = tmp_path / "enkan.toml"
+    config_path.write_text(
+        """
+[slideshow]
+navigation_basis = "node"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = Config(app_config=load_app_config(str(config_path)))
+
+    assert config("navigation_basis") == "folder"
+
+
+def test_load_app_config_falls_back_for_invalid_known_values(tmp_path):
+    config_path = tmp_path / "enkan.toml"
+    config_path.write_text(
+        """
+[slideshow]
+random = "yes"
+video = 12
+quiet = ["nope"]
+
+[video_cache]
+policy = "forever"
+max_bytes = -1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = Config(app_config=load_app_config(str(config_path)))
+
+    assert config("random") is False
+    assert config("video") is True
+    assert config("quiet") is False
+    assert config("video_cache.policy") == "cache-all"
+    assert config("video_cache.max_bytes") == 100 * 1024 * 1024
+
+
+def test_load_app_config_falls_back_for_missing_known_values(tmp_path):
+    config_path = tmp_path / "enkan.toml"
+    config_path.write_text("[slideshow]\n", encoding="utf-8")
+
+    config = Config(app_config=load_app_config(str(config_path)))
+
+    assert config("navigation_basis") == "folder"
+    assert config("video_cache.policy") == "cache-all"
+    assert config("video_cache.max_bytes") == 100 * 1024 * 1024
+
+
+def test_config_facade_preserves_cli_precedence():
+    app_config = AppConfig(
+        mode="b1",
+        random=True,
+        video=False,
+        quiet=False,
+        no_background=True,
+        navigation_basis="branch",
+    )
     args = Namespace(
         mode="b3",
         random=None,
@@ -91,47 +172,60 @@ def test_merge_config_into_args_preserves_cli_precedence():
         mute=None,
         quiet=True,
         no_background=None,
-    )
-    config = AppConfig(
-        mode="b1",
-        random=True,
-        video=False,
-        quiet=False,
-        no_background=True,
+        navigation_basis="folder",
     )
 
-    merged = merge_config_into_args(args, config)
+    config = Config(app_config=app_config, args=args)
 
-    assert merged.mode == "b3"
-    assert merged.random is True
-    assert merged.video is False
-    assert merged.quiet is True
-    assert merged.no_background is True
+    assert config("mode") == "b3"
+    assert config("random") is True
+    assert config("video") is False
+    assert config("quiet") is True
+    assert config("no_background") is True
+    assert config("navigation_basis") == "folder"
 
 
-# ---------------------------------------------------------------------------
-# Config discovery order tests
-# ---------------------------------------------------------------------------
+def test_config_facade_applies_runtime_overrides_last():
+    config = Config(app_config=AppConfig(navigation_basis="branch")).with_runtime_overrides(
+        navigation_basis="folder"
+    )
 
-def _write_minimal_config(directory: Path, mode: str = "b1") -> Path:
-    """Write a minimal valid enkan.toml to directory and return the path."""
+    assert config("navigation_basis") == "folder"
+
+
+def test_config_facade_rejects_unknown_lookup_key():
+    config = Config()
+
+    with pytest.raises(KeyError):
+        config("missing")
+
+
+def _write_minimal_config(
+    directory: Path, mode: str = "b1", navigation_basis: str | None = None
+) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / DEFAULT_CONFIG_FILENAME
-    path.write_text(f'[slideshow]\nmode = "{mode}"\n', encoding="utf-8")
+    lines = ["[slideshow]", f'mode = "{mode}"']
+    if navigation_basis is not None:
+        lines.append(f'navigation_basis = "{navigation_basis}"')
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
 
-def test_discover_config_path_returns_none_when_no_file_exists(tmp_path, monkeypatch):
-    """Returns None when enkan.toml is absent from all search locations."""
-    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+def test_discover_config_finds_app_folder_as_final_fallback(tmp_path, monkeypatch):
+    from enkan import config as config_module
 
-    result = discover_config_path(start_folder=tmp_path / "start")
+    start = tmp_path / "start"
+    start.mkdir()
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata_empty"))
+    expected = Path(config_module.__file__).resolve().parent / DEFAULT_CONFIG_FILENAME
 
-    assert result is None
+    result = discover_config_path(start_folder=start)
+
+    assert result == expected
 
 
 def test_discover_config_finds_start_folder_first(tmp_path, monkeypatch):
-    """Start folder is checked before user config and app folder."""
     start = tmp_path / "start"
     user = tmp_path / "appdata" / "enkan"
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
@@ -144,7 +238,6 @@ def test_discover_config_finds_start_folder_first(tmp_path, monkeypatch):
 
 
 def test_discover_config_falls_back_to_user_config(tmp_path, monkeypatch):
-    """User config folder is used when start folder has no config."""
     start = tmp_path / "start"
     start.mkdir()
     user = tmp_path / "appdata" / "enkan"
@@ -157,7 +250,6 @@ def test_discover_config_falls_back_to_user_config(tmp_path, monkeypatch):
 
 
 def test_discover_config_uses_cwd_as_default_start_folder(tmp_path, monkeypatch):
-    """When start_folder is not supplied, CWD is used as the start folder."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata_empty"))
     expected = _write_minimal_config(tmp_path, mode="b3")
@@ -168,7 +260,6 @@ def test_discover_config_uses_cwd_as_default_start_folder(tmp_path, monkeypatch)
 
 
 def test_discover_config_explicit_path_bypasses_discovery(tmp_path, monkeypatch):
-    """--config explicit path is used directly; discovery is skipped."""
     start = tmp_path / "start"
     start.mkdir()
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata_empty"))
@@ -176,13 +267,12 @@ def test_discover_config_explicit_path_bypasses_discovery(tmp_path, monkeypatch)
     explicit.parent.mkdir()
     explicit.write_text('[slideshow]\nmode = "b4"\n', encoding="utf-8")
 
-    config = load_app_config(str(explicit), start_folder=start)
+    config = Config(app_config=load_app_config(str(explicit), start_folder=start))
 
-    assert config.mode == "b4"
+    assert config("mode") == "b4"
 
 
 def test_discover_config_explicit_path_missing_raises(tmp_path):
-    """Explicit --config path that does not exist raises ConfigError."""
     missing = tmp_path / "nonexistent" / "enkan.toml"
 
     with pytest.raises(ConfigError, match="not found"):

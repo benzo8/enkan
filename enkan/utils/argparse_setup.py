@@ -97,6 +97,13 @@ def get_arg_parser() -> argparse.ArgumentParser:
         "--test", metavar="N", type=int, help="Run the test with N iterations"
     )
     parser.add_argument(
+        "--navigation_basis",
+        "--nb",
+        choices=["branch", "folder"],
+        default=None,
+        help="Default navigation basis: 'folder' (default) or 'branch'",
+    )
+    parser.add_argument(
         "--test_model",
         "--tm",
         type=str,
