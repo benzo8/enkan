@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from argparse import Namespace
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -47,18 +48,59 @@ def get_current_app_config() -> AppConfig:
     return _current_app_config if _current_app_config is not None else AppConfig()
 
 
-def resolve_config_path(config_path: str | None = None) -> Path | None:
-    if config_path:
-        return Path(config_path).expanduser().resolve()
+def discover_config_path(start_folder: Path | None = None) -> Path | None:
+    """
+    Search for enkan.toml in order: start folder -> user config -> app folder.
 
-    candidate = Path.cwd() / DEFAULT_CONFIG_FILENAME
-    if candidate.is_file():
-        return candidate.resolve()
+    Discovery order:
+      1. start_folder (defaults to CWD if not supplied)
+      2. %APPDATA%\\enkan on Windows; ~/.config/enkan on non-Windows / APPDATA unset
+      3. The enkan package directory (directory containing this file)
+
+    Returns the resolved path of the first match, or None if no file is found.
+    This function is the single source of truth for config discovery behavior.
+    """
+    search_dirs: list[Path] = []
+
+    # 1. Start folder (project-local override)
+    search_dirs.append((start_folder or Path.cwd()).resolve())
+
+    # 2. User config folder
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        search_dirs.append(Path(appdata) / "enkan")
+    else:
+        search_dirs.append(Path.home() / ".config" / "enkan")
+
+    # 3. App folder (enkan package directory — same directory as this file)
+    search_dirs.append(Path(__file__).resolve().parent)
+
+    for directory in search_dirs:
+        candidate = directory / DEFAULT_CONFIG_FILENAME
+        if candidate.is_file():
+            return candidate.resolve()
+
     return None
 
 
-def load_app_config(config_path: str | None = None) -> AppConfig:
-    path = resolve_config_path(config_path)
+def resolve_config_path(config_path: str | None = None, start_folder: Path | None = None) -> Path | None:
+    """
+    Return the config path to use.
+
+    If config_path is given (explicit --config), resolve and return it directly;
+    discovery is skipped entirely.  If the explicit path does not exist, callers
+    must raise ConfigError — this function returns the path without validating it.
+
+    Otherwise delegate to discover_config_path() using the discovery contract.
+    """
+    if config_path:
+        return Path(config_path).expanduser().resolve()
+
+    return discover_config_path(start_folder=start_folder)
+
+
+def load_app_config(config_path: str | None = None, start_folder: Path | None = None) -> AppConfig:
+    path = resolve_config_path(config_path, start_folder=start_folder)
     if path is None:
         return AppConfig()
     if not path.is_file():
