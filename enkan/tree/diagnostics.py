@@ -4,6 +4,7 @@ from collections import defaultdict
 from itertools import zip_longest
 
 from enkan.constants import TOTAL_WEIGHT
+from enkan.config import get_current_config
 from enkan.plugables.FolderSelectionMemory import FolderSelectionMemory
 from enkan.plugables.ImageProviders import ImageProviders
 from enkan.utils.Defaults import resolve_mode
@@ -52,7 +53,7 @@ def print_tree(
 
 def _normalise_test_models(test_models, defaults):
     if not test_models:
-        return ["random" if defaults.is_random else "weighted"]
+        return [get_current_config()("slideshow.provider")]
     if isinstance(test_models, str):
         items = [item.strip() for item in test_models.split(",")]
     else:

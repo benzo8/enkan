@@ -32,12 +32,9 @@ class Defaults:
         self,
         weight_modifier: int = 100,
         mode: Any | None = None,
-        is_random: bool = False,
         dont_recurse: bool = False,
         args: Any | None = None,
         video: bool = True,
-        mute: bool = True,
-        quiet: bool | None = None,
         config: "Config | None" = None,
     ):
         self.args = args
@@ -46,20 +43,14 @@ class Defaults:
         if config is not None:
             if mode is None:
                 mode = config("slideshow.mode")
-            is_random = bool(config("slideshow.random"))
             dont_recurse = bool(config("slideshow.dont_recurse"))
             video = bool(config("slideshow.video"))
-            mute = bool(config("slideshow.mute"))
-            if quiet is None:
-                quiet = bool(config("progress.quiet"))
 
         # Base values
         self._weight_modifier = weight_modifier
         self._mode: ModeMap = _ensure_mode_map(mode)
-        self._is_random: bool = is_random
         self._dont_recurse: bool = dont_recurse
         self._video: bool = video
-        self._mute: bool = mute
 
         # CLI-sourced overrides (stored separately so properties can resolve precedence)
         self.args_mode: ModeMap | None = (
@@ -67,25 +58,13 @@ class Defaults:
             if args and getattr(args, "mode", None) is not None
             else None
         )
-        self.args_is_random = getattr(args, "random", None) if args else None
         self.args_dont_recurse = getattr(args, "dont_recurse", None) if args else None
         self.args_video = getattr(args, "video", None) if args else None
-        self.args_mute = getattr(args, "mute", None) if args else None
-        self.args_quiet = getattr(args, "quiet", None) if args else None
 
         # Global (runtime) overrides (set later via setters)
         self.global_mode: ModeMap | None = None
-        self.global_is_random: bool | None = None
         self.global_dont_recurse: bool | None = None
         self.global_video: bool | None = None
-        self.global_mute: bool | None = None
-
-        # Derived flags
-        self.quiet: bool = (
-            quiet
-            if quiet is not None
-            else bool(self.args_quiet) if self.args_quiet is not None else False
-        )
 
         # Group metadata container
         self.groups: dict[str, Any] = {}
@@ -101,19 +80,14 @@ class Defaults:
         clone = Defaults(
             weight_modifier=self._weight_modifier,
             mode=_copy_mode_map(self._mode),
-            is_random=self._is_random,
             dont_recurse=self._dont_recurse,
             args=self.args,
             video=self._video,
-            mute=self._mute,
-            quiet=self.quiet,
             config=self.config,
         )
         clone.global_mode = _copy_mode_map(self.global_mode)
-        clone.global_is_random = self.global_is_random
         clone.global_dont_recurse = self.global_dont_recurse
         clone.global_video = self.global_video
-        clone.global_mute = self.global_mute
         clone.groups = copy.deepcopy(self.groups)
         return clone
 
@@ -128,14 +102,6 @@ class Defaults:
         if self.global_mode is not None:
             return self.global_mode
         return self._mode
-
-    @property
-    def is_random(self) -> bool:
-        if self.args_is_random is not None:
-            return self.args_is_random
-        if self.global_is_random is not None:
-            return self.global_is_random
-        return self._is_random
 
     @property
     def dont_recurse(self) -> bool:
@@ -153,34 +119,19 @@ class Defaults:
             return self.global_video
         return self._video
 
-    @property
-    def mute(self) -> bool:
-        if self.args_mute is not None:
-            return self.args_mute
-        if self.global_mute is not None:
-            return self.global_mute
-        return self._mute
-
     def set_global_defaults(
         self,
         mode: Any | None = None,
-        is_random: bool | None = None,
         dont_recurse: bool | None = None,
     ) -> None:
         if mode is not None:
             self.global_mode = _ensure_mode_map(mode)
-        if is_random is not None:
-            self.global_is_random = is_random
         if dont_recurse is not None:
             self.global_dont_recurse = dont_recurse
 
-    def set_global_video(
-        self, video: bool | None = None, mute: bool | None = None
-    ) -> None:
+    def set_global_video(self, video: bool | None = None) -> None:
         if video is not None:
             self.global_video = video
-        if mute is not None:
-            self.global_mute = mute
 
 
 class Mode:

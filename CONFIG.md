@@ -30,12 +30,13 @@ path does not exist, startup fails.
 ```toml
 [slideshow]
 mode = "b1"
-random = false
+provider = "weighted"
 dont_recurse = false
 video = true
 mute = true
 navigation_basis = "folder"
 interval = 10000
+auto = false
 
 [progress]
 quiet = false
@@ -54,6 +55,13 @@ Supported `navigation_basis` values:
 - `folder`
 - `branch`
 
+Supported `slideshow.provider` values:
+
+- `weighted`
+- `controlled_random_weighted` (`CRW` is accepted as an alias in config and CLI)
+- `burst`
+- `random`
+
 Supported `cache.policy` values:
 
 - `cache-all`
@@ -65,24 +73,30 @@ mean a typo.
 
 Registry-backed command-line flags now use the same validation as TOML values.
 For example, `--navigation-basis branch` and `--nb branch` map to
-`slideshow.navigation_basis = "branch"`. The legacy negative flag
+`slideshow.navigation_basis = "branch"`. `--provider burst` maps to
+`slideshow.provider = "burst"`, `--provider CRW` maps to
+`slideshow.provider = "controlled_random_weighted"`, and the legacy `--random`
+flag maps to `slideshow.provider = "random"`. `--interval 7500` sets
+`slideshow.interval = 7500` without starting auto-advance, `--auto` starts
+auto-advance with the configured interval, and `--auto 7500` does both. The
+legacy negative flag
 `--no-background` and alias `--nbg` map to the positive key
 `cache.background_preload = false`; `--background-preload` maps it to `true`.
-The `--interval`, `--auto`, and `-a` flags map to `slideshow.interval`, in
-milliseconds. The `--quiet` flag maps to `progress.quiet = true`, which
-suppresses progress bars and progress toasts.
+The `--quiet` flag maps to `progress.quiet = true`, which suppresses progress
+bars and progress toasts.
 
 ## Current Defaults
 
 | Key | Built-in default |
 | --- | --- |
 | `slideshow.mode` | weighted mode, equivalent to internal `w1` behavior |
-| `slideshow.random` | `false` |
+| `slideshow.provider` | `weighted` |
 | `slideshow.dont_recurse` | `false` |
 | `slideshow.video` | `true` |
 | `slideshow.mute` | `true` |
 | `slideshow.navigation_basis` | `folder` |
 | `slideshow.interval` | `10000` |
+| `slideshow.auto` | `false` |
 | `progress.quiet` | `false` |
 | `cache.background_preload` | `true` |
 | `cache.policy` | `cache-all` |

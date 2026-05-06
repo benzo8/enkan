@@ -144,7 +144,10 @@ class InputProcessor:
         self, line, recdepth, graft_offset: int = 0, apply_global_mode: bool = True
     ):
         if line.startswith("[r]"):
-            self.defaults.set_global_defaults(is_random=True)
+            logger.warning(
+                "Ignoring legacy [r] input modifier; use slideshow.provider = "
+                '"random" or --random instead.'
+            )
             return None, None
 
         # Handle filters
@@ -266,8 +269,8 @@ class InputProcessor:
                     "mode_modifier": state["mode_modifier"] or (),
                 }
                 return None, None
-            if state["video"] is not None or state["mute"] is not None:
-                self.defaults.set_global_video(video=state["video"], mute=state["mute"])
+            if state["video"] is not None:
+                self.defaults.set_global_video(video=state["video"])
             if state["mode_modifier"]:
                 self.detected_mode = state["mode_modifier"]
                 self.detected_lowest = min(state["mode_modifier"].keys())

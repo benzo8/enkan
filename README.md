@@ -53,7 +53,7 @@ If you install into a fresh environment, remember to install VLC separately so t
 enkan --input_file shows/summer-show.txt --run
 ```
 
-enkan will parse the file, build an in-memory tree, and open the slideshow window. Use the keyboard controls to navigate and switch providers. Add `--auto 8` to advance every eight seconds, or `--random` to start in completely random mode.
+enkan will parse the file, build an in-memory tree, and open the slideshow window. Use the keyboard controls to navigate and switch providers. Add `--auto 8000` to advance every eight seconds, or `--random` to start in completely random mode.
 
 ## Configuration
 
@@ -115,7 +115,7 @@ Text files let you describe complex shows declaratively. General rules:
 
 | Syntax | Meaning |
 | --- | --- |
-| `[r]` | Set the entire show to run in fully random mode. |
+| `[r]` | Legacy random-provider modifier. Prefer `slideshow.provider = "random"` or `--random`. |
 | `[+]keyword` | Only include files whose path contains `keyword`. Repeat for multiple must-match terms. |
 | `[-]keyword` | Exclude any path containing `keyword`. If you give an absolute file or folder, that path is skipped entirely. |
 | `[NN%]` | Multiply a branch's weight by `NN%` relative to its siblings (e.g. `[150%]` gives that branch 1.5x the default share). |
@@ -169,8 +169,10 @@ A group definition stores graft level, proportion, and mode modifiers. Any line 
 | `--outputlist [filename]` | Write a weighted `.lst` file instead of launching the GUI. |
 | `--outputtree [filename]` | Persist the computed tree to a `.tree` file for fast reloads instead of lauching the GUI. |
 | `--mode` | Provide a global mode string such as `b1w2` to override file defaults. |
-| `--random` | Start in fully random mode (same as `[r]` in a file). |
-| `--auto N` | Advance automatically every `N` seconds. |
+| `--provider NAME` | Start with `weighted` / `WGT`, `controlled_random_weighted` / `CRW`, `burst` / `BUR`, or `random` / `RND`. |
+| `--random` | Compatibility shortcut for `--provider random`. |
+| `--auto [N]` | Start automatic advance, optionally setting interval in milliseconds. |
+| `--interval N` | Set automatic advance interval in milliseconds without starting automatic advance. |
 | `--no-recurse` | Treat every supplied folder as non-recursive. |
 | `--video` / `--no-video` | Force-enable or disable video globally. |
 | `--no-mute` | Keep audio tracks unmuted (video default is muted). |

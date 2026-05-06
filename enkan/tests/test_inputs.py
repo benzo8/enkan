@@ -27,10 +27,8 @@ def defaults():
     return Defaults(
         args=SimpleNamespace(
             mode=None,
-            random=None,
             dont_recurse=None,
             video=None,
-            mute=None,
             debug=2,
             no_background=False,
         )
@@ -67,10 +65,8 @@ def _make_defaults(mode_str: str | None = None) -> Defaults:
     return Defaults(
         args=SimpleNamespace(
             mode=mode_str,
-            random=None,
             dont_recurse=None,
             video=None,
-            mute=None,
             debug=2,
             no_background=False,
         )
@@ -688,29 +684,27 @@ def test_source_scope_preserves_cli_precedence_and_isolates_defaults_mutation():
     defaults = Defaults(
         args=SimpleNamespace(
             mode="b2",
-            random=False,
             dont_recurse=False,
             video=True,
-            mute=True,
             debug=2,
             no_background=False,
             quiet=False,
         )
     )
-    defaults.set_global_defaults(mode={3: ("w", [0, 0])}, is_random=True)
-    defaults.set_global_video(video=False, mute=False)
+    defaults.set_global_defaults(mode={3: ("w", [0, 0])}, dont_recurse=True)
+    defaults.set_global_video(video=False)
     defaults.groups["shared"] = {"proportion": 10}
 
     source_scope = SourceScope.from_runtime(defaults, Filters())
 
     assert resolve_mode(source_scope.defaults.mode, 2)[0] == "b"
     assert source_scope.defaults.video is True
-    source_scope.defaults.set_global_defaults(mode={4: ("b", [1, 2])}, is_random=False)
-    source_scope.defaults.set_global_defaults(is_random=False)
+    source_scope.defaults.set_global_defaults(mode={4: ("b", [1, 2])})
+    source_scope.defaults.set_global_defaults(dont_recurse=False)
     source_scope.defaults.groups["shared"]["proportion"] = 99
 
     assert defaults.global_mode == {3: ("w", [0, 0])}
-    assert defaults.global_is_random is True
+    assert defaults.global_dont_recurse is True
     assert defaults.groups["shared"]["proportion"] == 10
 
 

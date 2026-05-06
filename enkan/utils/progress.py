@@ -10,7 +10,7 @@ import logging
 import threading
 from typing import Any, Callable, Iterable, Iterator, Optional, Protocol
 
-from enkan.utils.Defaults import get_current_defaults
+from enkan.config import get_current_config
 
 from tqdm import tqdm
 
@@ -278,8 +278,8 @@ class Progress:
         tk_enabled: bool = True,
         **tqdm_kwargs: Any,
     ) -> None:
-        self.defaults = get_current_defaults()
-        quiet = self.defaults.quiet
+        self.config = get_current_config()
+        quiet = bool(self.config("progress.quiet"))
         self._iterable = iterable
         self._tqdm_kwargs = tqdm_kwargs
         self._console = (

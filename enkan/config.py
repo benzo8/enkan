@@ -37,6 +37,23 @@ def parse_choice(*choices: str) -> ConfigParser:
     return parser
 
 
+def parse_provider(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalised = value.lower()
+    aliases = {
+        "crw": "controlled_random_weighted",
+        "controlled_random_weighted": "controlled_random_weighted",
+        "wgt": "weighted",
+        "weighted": "weighted",
+        "bur": "burst",
+        "burst": "burst",
+        "rnd": "random",
+        "random": "random",
+    }
+    return aliases.get(normalised)
+
+
 def parse_positive_int(value: Any) -> int | None:
     if isinstance(value, bool):
         return None
@@ -51,10 +68,13 @@ def parse_positive_int(value: Any) -> int | None:
 @dataclass(frozen=True)
 class ArgparseEntry:
     flags: tuple[str, ...]
-    action: str | None = None
+    dest: str | None = None
+    action: Any = None
     const: Any = None
+    choices: tuple[str, ...] = ()
     help: str | None = None
     metavar: str | None = None
+    nargs: str | int | None = None
 
 
 def entries(*names: str, **kwargs: Any) -> tuple[ArgparseEntry, ...]:
@@ -65,6 +85,25 @@ def _argparse_flag(name: str) -> str:
     if name.startswith("-"):
         return name
     return f"--{name.replace('_', '-')}"
+
+
+class AutoAdvanceAction(argparse.Action):
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: Namespace,
+        values: Any,
+        option_string: str | None = None,
+    ) -> None:
+        setattr(namespace, "slideshow.auto", True)
+        if values is None:
+            return
+        parsed = parse_positive_int(values)
+        if parsed is None:
+            raise argparse.ArgumentTypeError(
+                f"invalid slideshow.interval value: {values!r}"
+            )
+        setattr(namespace, "slideshow.interval", parsed)
 
 
 @dataclass(frozen=True)
@@ -108,14 +147,23 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
     ),
     ConfigKey(
         "slideshow",
-        "random",
-        False,
-        parse_bool,
-        argparse_entries=entries(
-            "random",
-            action="store_true",
-            help="Start in Completely Random mode",
+        "provider",
+        "weighted",
+        parse_provider,
+        argparse_entries=(
+            ArgparseEntry(
+                ("--provider",),
+                metavar="PROVIDER",
+                help="Initial image provider: weighted, CRW, burst, or random",
+            ),
+            ArgparseEntry(
+                ("--random",),
+                action="store_const",
+                const="random",
+                help="Start with the random image provider",
+            ),
         ),
+        choices=("weighted", "controlled_random_weighted", "burst", "random"),
         scope="both",
     ),
     ConfigKey(
@@ -175,10 +223,27 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         parse_positive_int,
         argparse_entries=entries(
             "interval",
-            "auto",
-            "-a",
             metavar="INTERVAL",
             help="Time in milliseconds for automated slide changes",
+        ),
+        scope="both",
+    ),
+    ConfigKey(
+        "slideshow",
+        "auto",
+        False,
+        parse_bool,
+        argparse_entries=(
+            ArgparseEntry(
+                ("--auto", "-a"),
+                action=AutoAdvanceAction,
+                nargs="?",
+                metavar="INTERVAL",
+                help=(
+                    "Start automatic slide changes, optionally with interval "
+                    "in milliseconds"
+                ),
+            ),
         ),
         scope="both",
     ),
@@ -262,6 +327,8 @@ CONFIG_KEYS_BY_TOML_TABLE: dict[str, tuple[ConfigKey, ...]] = {
     for table in sorted(TOML_TABLE_NAMES)
 }
 
+_current_config: "Config | None" = None
+
 
 def _require_config_key(key: str) -> ConfigKey:
     config_key = CONFIG_KEYS_BY_NAME.get(key)
@@ -289,7 +356,10 @@ class Config:
         start_folder: Path | None = None,
     ) -> "Config":
         app_config = load_app_config(getattr(args, "config", None), start_folder=start_folder)
-        return cls(app_config=app_config, args=args)
+        config = cls(app_config=app_config, args=args)
+        global _current_config
+        _current_config = config
+        return config
 
     def __call__(self, key: str) -> Any:
         config_key = _require_config_key(key)
@@ -317,7 +387,7 @@ def add_config_arguments(parser: argparse.ArgumentParser) -> None:
         parser.set_defaults(**{config_key.name: None})
         for entry in config_key.argparse_entries:
             kwargs: dict[str, Any] = {
-                "dest": config_key.name,
+                "dest": entry.dest or config_key.name,
                 "default": None,
             }
             if entry.help is not None:
@@ -328,8 +398,11 @@ def add_config_arguments(parser: argparse.ArgumentParser) -> None:
                 kwargs["type"] = _argparse_type(config_key)
                 if entry.metavar is not None:
                     kwargs["metavar"] = entry.metavar
-                if config_key.choices:
-                    kwargs["choices"] = config_key.choices
+                choices = entry.choices or config_key.choices
+                if choices:
+                    kwargs["choices"] = choices
+            if entry.nargs is not None:
+                kwargs["nargs"] = entry.nargs
             if entry.const is not None:
                 kwargs["const"] = entry.const
             parser.add_argument(*entry.flags, **kwargs)
@@ -345,6 +418,10 @@ def _argparse_type(config_key: ConfigKey) -> Callable[[str], Any]:
         return parsed
 
     return parser
+
+
+def get_current_config() -> Config:
+    return _current_config if _current_config is not None else Config()
 
 
 def discover_config_path(start_folder: Path | None = None) -> Path | None:

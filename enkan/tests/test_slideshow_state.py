@@ -120,6 +120,14 @@ def test_initial_navigation_mode_matches_original_navigation_state():
     assert slideshow.navigation_mode == "branch"
 
 
+def test_initial_provider_uses_config_provider():
+    config = Config(app_config=AppConfig(values={"slideshow.provider": "burst"}))
+
+    provider = ImageSlideshow._initial_provider(config)
+
+    assert provider == "burst"
+
+
 def test_select_mode_enables_crw_when_not_active():
     slideshow = ImageSlideshow.__new__(ImageSlideshow)
     slideshow.current_image_index = 4

@@ -27,7 +27,7 @@ def test_load_app_config_falls_back_to_app_folder_config(tmp_path, monkeypatch):
     config = Config(app_config=app_config)
 
     assert app_config.values.get("slideshow.mode") is None
-    assert app_config.values.get("slideshow.random") is None
+    assert app_config.values.get("slideshow.provider") == "weighted"
     assert config("slideshow.navigation_basis") in {"folder", "branch"}
     assert config("cache.policy") == "cache-all"
     assert config("cache.max_bytes") == 100 * 1024 * 1024
@@ -54,11 +54,13 @@ def test_config_registry_groups_toml_keys_by_table():
 
     assert grouped["slideshow"] >= {
         "mode",
-        "random",
+        "provider",
         "dont_recurse",
         "video",
         "mute",
         "navigation_basis",
+        "interval",
+        "auto",
     }
     assert grouped["progress"] == {"quiet"}
     assert grouped["cache"] == {
@@ -77,11 +79,13 @@ def test_load_app_config_accepts_every_registered_toml_key(tmp_path):
         """
 [slideshow]
 mode = "b2"
-random = true
+provider = "CRW"
 dont_recurse = true
 video = false
 mute = false
 navigation_basis = "branch"
+interval = 7500
+auto = true
 
 [progress]
 quiet = true
@@ -109,7 +113,7 @@ def test_load_app_config_reads_slideshow_and_cache_sections(tmp_path):
         """
 [slideshow]
 mode = "B2"
-random = true
+provider = "random"
 video = false
 navigation_basis = "folder"
 
@@ -127,7 +131,7 @@ max_bytes = 2048
     config = Config(app_config=app_config)
 
     assert config("slideshow.mode") == "b2"
-    assert config("slideshow.random") is True
+    assert config("slideshow.provider") == "random"
     assert config("slideshow.video") is False
     assert config("progress.quiet") is True
     assert config("slideshow.navigation_basis") == "folder"
@@ -214,7 +218,7 @@ def test_load_app_config_falls_back_for_invalid_known_values(tmp_path):
     config_path.write_text(
         """
 [slideshow]
-random = "yes"
+provider = "shuffle"
 video = 12
 
 [progress]
@@ -233,7 +237,7 @@ history_queue_length = false
 
     config = Config(app_config=load_app_config(str(config_path)))
 
-    assert config("slideshow.random") is False
+    assert config("slideshow.provider") == "weighted"
     assert config("slideshow.video") is True
     assert config("progress.quiet") is False
     assert config("cache.background_preload") is True
@@ -251,6 +255,7 @@ def test_load_app_config_falls_back_for_missing_known_values(tmp_path):
     config = Config(app_config=load_app_config(str(config_path)))
 
     assert config("slideshow.navigation_basis") == "folder"
+    assert config("slideshow.provider") == "weighted"
     assert config("cache.policy") == "cache-all"
     assert config("cache.max_bytes") == 100 * 1024 * 1024
     assert config("cache.preload_queue_length") == 3
@@ -262,7 +267,7 @@ def test_config_facade_preserves_cli_precedence():
     app_config = AppConfig(
         values={
             "slideshow.mode": "b1",
-            "slideshow.random": True,
+            "slideshow.provider": "random",
             "slideshow.video": False,
             "progress.quiet": False,
             "cache.background_preload": True,
@@ -272,7 +277,7 @@ def test_config_facade_preserves_cli_precedence():
     args = Namespace(
         **{
             "slideshow.mode": "b3",
-            "slideshow.random": None,
+            "slideshow.provider": None,
             "slideshow.dont_recurse": None,
             "slideshow.video": None,
             "slideshow.mute": None,
@@ -285,7 +290,7 @@ def test_config_facade_preserves_cli_precedence():
     config = Config(app_config=app_config, args=args)
 
     assert config("slideshow.mode") == "b3"
-    assert config("slideshow.random") is True
+    assert config("slideshow.provider") == "random"
     assert config("slideshow.video") is False
     assert config("progress.quiet") is True
     assert config("cache.background_preload") is False
@@ -329,6 +334,27 @@ def test_argparse_navigation_basis_short_alias_feeds_config():
     assert config("slideshow.navigation_basis") == "branch"
 
 
+def test_argparse_provider_feeds_config():
+    args = get_arg_parser().parse_args(["--provider", "burst"])
+    config = Config(args=args)
+
+    assert config("slideshow.provider") == "burst"
+
+
+def test_argparse_provider_accepts_crw_alias():
+    args = get_arg_parser().parse_args(["--provider", "CRW"])
+    config = Config(args=args)
+
+    assert config("slideshow.provider") == "controlled_random_weighted"
+
+
+def test_argparse_random_feeds_provider_config():
+    args = get_arg_parser().parse_args(["--random"])
+    config = Config(args=args)
+
+    assert config("slideshow.provider") == "random"
+
+
 def test_argparse_rejects_invalid_registry_value():
     parser = get_arg_parser()
 
@@ -355,16 +381,35 @@ def test_argparse_interval_feeds_config_as_positive_int():
     config = Config(args=args)
 
     assert config("slideshow.interval") == 7500
+    assert config("slideshow.auto") is False
 
 
-def test_argparse_interval_legacy_aliases_feed_config():
+def test_argparse_auto_starts_with_default_interval():
+    args = get_arg_parser().parse_args(["--auto"])
+    config = Config(args=args)
+
+    assert config("slideshow.auto") is True
+    assert config("slideshow.interval") == 10000
+
+
+def test_argparse_auto_optional_interval_feeds_config():
     parser = get_arg_parser()
 
     auto_config = Config(args=parser.parse_args(["--auto", "7500"]))
     short_config = Config(args=parser.parse_args(["-a", "7500"]))
 
+    assert auto_config("slideshow.auto") is True
+    assert short_config("slideshow.auto") is True
     assert auto_config("slideshow.interval") == 7500
     assert short_config("slideshow.interval") == 7500
+
+
+def test_argparse_interval_and_auto_are_composable():
+    args = get_arg_parser().parse_args(["--interval", "7500", "--auto"])
+    config = Config(args=args)
+
+    assert config("slideshow.auto") is True
+    assert config("slideshow.interval") == 7500
 
 
 def test_argparse_does_not_generate_cache_sizing_flags():

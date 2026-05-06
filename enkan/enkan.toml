@@ -5,6 +5,9 @@
 
 [slideshow]
 navigation_basis = "branch"  # default navigation basis: 'folder' or 'branch'
+provider = "weighted"        # initial image provider: weighted, controlled_random_weighted, burst, random
+auto = false                 # whether to start automatic slide changes
+interval = 10000              # interval for automatic slide changes in milliseconds
 
 [cache]
 background_preload = true # whether to preload images in the background

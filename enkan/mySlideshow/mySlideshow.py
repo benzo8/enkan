@@ -132,6 +132,7 @@ class ImageSlideshow:
         self.filters: Filters = filters
         self.video_muted: bool = self.config("slideshow.mute")
         self.auto_advance_interval: int | float | None = self.config("slideshow.interval")
+        self.auto_advance_running: bool = False
 
         self.root.configure(background="black")  # Set root background to black
         self.label = tk.Label(root, bg="black")  # Set label background to black
@@ -215,17 +216,21 @@ class ImageSlideshow:
         self.gui = Gui(use_customtkinter=True)
         self.providers = ImageProviders()
         
-        if self.defaults.is_random:
-            self.set_provider("random")
-        else:
-            self.set_provider("weighted")
+        self.set_provider(self._initial_provider(self.config))
         self.mode, _ = resolve_mode(self.defaults.mode, min(self.defaults.mode.keys()))
 
         self.show_image()
+        if self.config("slideshow.auto"):
+            self._schedule_next_image()
+            self._publish_auto_advance_status()
 
     @staticmethod
     def _initial_navigation_basis(config: Config) -> NavigationBasis:
         return NavigationBasis(config("slideshow.navigation_basis"))
+
+    @staticmethod
+    def _initial_provider(config: Config) -> str:
+        return config("slideshow.provider")
 
     def _reset_zoom(self, event=None) -> None:
         self.zoompan.reset_view()
