@@ -30,7 +30,6 @@ class Defaults:
 
     def __init__(
         self,
-        weight_modifier: int = 100,
         mode: Any | None = None,
         dont_recurse: bool = False,
         args: Any | None = None,
@@ -47,7 +46,6 @@ class Defaults:
             video = bool(config("slideshow.video"))
 
         # Base values
-        self._weight_modifier = weight_modifier
         self._mode: ModeMap = _ensure_mode_map(mode)
         self._dont_recurse: bool = dont_recurse
         self._video: bool = video
@@ -78,7 +76,6 @@ class Defaults:
         txt-file globals and group definitions from the shared runtime Defaults.
         """
         clone = Defaults(
-            weight_modifier=self._weight_modifier,
             mode=_copy_mode_map(self._mode),
             dont_recurse=self._dont_recurse,
             args=self.args,
@@ -90,10 +87,6 @@ class Defaults:
         clone.global_video = self.global_video
         clone.groups = copy.deepcopy(self.groups)
         return clone
-
-    @property
-    def weight_modifier(self) -> int:
-        return self._weight_modifier
 
     @property
     def mode(self) -> ModeMap:
