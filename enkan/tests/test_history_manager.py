@@ -4,7 +4,7 @@ from enkan.config import AppConfig, Config
 
 
 def test_history_manager_snapshot_restore_preserves_navigation():
-    manager = HistoryManager()
+    manager = HistoryManager(max_length=25)
     manager.add("a.jpg")
     manager.add("b.jpg")
     manager.add("c.jpg")
@@ -12,7 +12,7 @@ def test_history_manager_snapshot_restore_preserves_navigation():
     assert manager.back() == "b.jpg"
     snapshot = manager.snapshot()
 
-    restored = HistoryManager()
+    restored = HistoryManager(max_length=25)
     restored.restore(snapshot)
 
     assert restored.current() == "b.jpg"

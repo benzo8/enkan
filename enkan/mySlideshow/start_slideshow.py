@@ -17,7 +17,6 @@ def start_slideshow(
     selection_scope: SelectionScope | None,
     defaults: Defaults, 
     filters: Filters, 
-    interval: int | float | None = None,
     config: Config | None = None,
 ) -> None:
     """
@@ -39,7 +38,6 @@ def start_slideshow(
         selection_scope,
         defaults,
         filters,
-        interval,
         config,
     )
     root.mainloop()

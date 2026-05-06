@@ -10,12 +10,7 @@ except PackageNotFoundError:
     VERSION = "2.7.0.dev2"
 TOTAL_WEIGHT = 100
 PARENT_STACK_MAX = 5
-HISTORY_QUEUE_LENGTH = 25
-CACHE_SIZE = 10
-PRELOAD_QUEUE_LENGTH = 3
 VIDEO_START_DEBOUNCE_MS = 150
-VIDEO_CACHE_MAX_BYTES = 100 * 1024 * 1024
-VIDEO_CACHE_POLICY = "cache-all"
 ROOT_NODE_NAME = "root"
 IMAGE_FILES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff")
 VIDEO_FILES = (".mp4", ".mkv", ".webm", ".avi", ".mov", ".wmv")

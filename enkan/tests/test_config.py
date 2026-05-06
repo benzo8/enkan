@@ -16,6 +16,7 @@ from enkan.config import (
     discover_config_path,
     load_app_config,
 )
+from enkan.utils.argparse_setup import get_arg_parser
 
 
 def test_load_app_config_falls_back_to_app_folder_config(tmp_path, monkeypatch):
@@ -25,9 +26,9 @@ def test_load_app_config_falls_back_to_app_folder_config(tmp_path, monkeypatch):
     app_config = load_app_config()
     config = Config(app_config=app_config)
 
-    assert app_config.values.get("mode") is None
-    assert app_config.values.get("random") is None
-    assert config("navigation_basis") in {"folder", "branch"}
+    assert app_config.values.get("slideshow.mode") is None
+    assert app_config.values.get("slideshow.random") is None
+    assert config("slideshow.navigation_basis") in {"folder", "branch"}
     assert config("cache.policy") == "cache-all"
     assert config("cache.max_bytes") == 100 * 1024 * 1024
 
@@ -37,7 +38,7 @@ def test_config_registry_keys_are_complete():
     assert set(CONFIG_KEYS_BY_NAME) == {key.name for key in CONFIG_KEYS}
 
     for key in CONFIG_KEYS:
-        assert key.name
+        assert key.name == f"{key.toml_table}.{key.toml_key}"
         assert key.toml_table
         assert key.toml_key
         assert callable(key.parser)
@@ -60,7 +61,14 @@ def test_config_registry_groups_toml_keys_by_table():
         "navigation_basis",
     }
     assert grouped["progress"] == {"quiet"}
-    assert grouped["cache"] == {"background_preload", "policy", "max_bytes"}
+    assert grouped["cache"] == {
+        "background_preload",
+        "policy",
+        "max_bytes",
+        "preload_queue_length",
+        "cache_size",
+        "history_queue_length",
+    }
 
 
 def test_load_app_config_accepts_every_registered_toml_key(tmp_path):
@@ -82,6 +90,9 @@ quiet = true
 background_preload = true
 policy = "bounded-bytes"
 max_bytes = 4096
+preload_queue_length = 4
+cache_size = 12
+history_queue_length = 30
 """.strip(),
         encoding="utf-8",
     )
@@ -115,11 +126,11 @@ max_bytes = 2048
     app_config = load_app_config(str(config_path))
     config = Config(app_config=app_config)
 
-    assert config("mode") == "b2"
-    assert config("random") is True
-    assert config("video") is False
+    assert config("slideshow.mode") == "b2"
+    assert config("slideshow.random") is True
+    assert config("slideshow.video") is False
     assert config("progress.quiet") is True
-    assert config("navigation_basis") == "folder"
+    assert config("slideshow.navigation_basis") == "folder"
     assert config("cache.policy") == "bounded-bytes"
     assert config("cache.max_bytes") == 2048
 
@@ -136,7 +147,7 @@ navigation_basis = "branch"
 
     config = Config(app_config=load_app_config(str(config_path)))
 
-    assert config("navigation_basis") == "branch"
+    assert config("slideshow.navigation_basis") == "branch"
 
 
 def test_load_app_config_rejects_unknown_keys(tmp_path):
@@ -180,7 +191,7 @@ mode = "not-a-mode"
 
     config = Config(app_config=load_app_config(str(config_path)))
 
-    assert config("mode") is None
+    assert config("slideshow.mode") is None
 
 
 def test_load_app_config_falls_back_for_invalid_navigation_basis(tmp_path):
@@ -195,7 +206,7 @@ navigation_basis = "node"
 
     config = Config(app_config=load_app_config(str(config_path)))
 
-    assert config("navigation_basis") == "folder"
+    assert config("slideshow.navigation_basis") == "folder"
 
 
 def test_load_app_config_falls_back_for_invalid_known_values(tmp_path):
@@ -213,18 +224,24 @@ quiet = ["nope"]
 background_preload = "sure"
 policy = "forever"
 max_bytes = -1
+preload_queue_length = 0
+cache_size = "large"
+history_queue_length = false
 """.strip(),
         encoding="utf-8",
     )
 
     config = Config(app_config=load_app_config(str(config_path)))
 
-    assert config("random") is False
-    assert config("video") is True
+    assert config("slideshow.random") is False
+    assert config("slideshow.video") is True
     assert config("progress.quiet") is False
     assert config("cache.background_preload") is True
     assert config("cache.policy") == "cache-all"
     assert config("cache.max_bytes") == 100 * 1024 * 1024
+    assert config("cache.preload_queue_length") == 3
+    assert config("cache.cache_size") == 10
+    assert config("cache.history_queue_length") == 25
 
 
 def test_load_app_config_falls_back_for_missing_known_values(tmp_path):
@@ -233,51 +250,46 @@ def test_load_app_config_falls_back_for_missing_known_values(tmp_path):
 
     config = Config(app_config=load_app_config(str(config_path)))
 
-    assert config("navigation_basis") == "folder"
+    assert config("slideshow.navigation_basis") == "folder"
     assert config("cache.policy") == "cache-all"
     assert config("cache.max_bytes") == 100 * 1024 * 1024
+    assert config("cache.preload_queue_length") == 3
+    assert config("cache.cache_size") == 10
+    assert config("cache.history_queue_length") == 25
 
 
 def test_config_facade_preserves_cli_precedence():
     app_config = AppConfig(
         values={
-            "mode": "b1",
-            "random": True,
-            "video": False,
+            "slideshow.mode": "b1",
+            "slideshow.random": True,
+            "slideshow.video": False,
             "progress.quiet": False,
             "cache.background_preload": True,
-            "navigation_basis": "branch",
+            "slideshow.navigation_basis": "branch",
         }
     )
     args = Namespace(
-        mode="b3",
-        random=None,
-        dont_recurse=None,
-        video=None,
-        mute=None,
-        quiet=True,
-        no_background=True,
-        navigation_basis="folder",
+        **{
+            "slideshow.mode": "b3",
+            "slideshow.random": None,
+            "slideshow.dont_recurse": None,
+            "slideshow.video": None,
+            "slideshow.mute": None,
+            "progress.quiet": True,
+            "cache.background_preload": False,
+            "slideshow.navigation_basis": "folder",
+        }
     )
 
     config = Config(app_config=app_config, args=args)
 
-    assert config("mode") == "b3"
-    assert config("random") is True
-    assert config("video") is False
+    assert config("slideshow.mode") == "b3"
+    assert config("slideshow.random") is True
+    assert config("slideshow.video") is False
     assert config("progress.quiet") is True
     assert config("cache.background_preload") is False
-    assert config("navigation_basis") == "folder"
-
-
-def test_config_facade_applies_runtime_overrides_last():
-    config = Config(
-        app_config=AppConfig(values={"navigation_basis": "branch"})
-    ).with_runtime_overrides(
-        navigation_basis="folder",
-    )
-
-    assert config("navigation_basis") == "folder"
+    assert config("slideshow.navigation_basis") == "folder"
 
 
 def test_config_facade_rejects_unknown_lookup_key():
@@ -285,6 +297,83 @@ def test_config_facade_rejects_unknown_lookup_key():
 
     with pytest.raises(KeyError):
         config("missing")
+
+
+def test_config_facade_rejects_old_unqualified_lookup_key():
+    config = Config()
+
+    with pytest.raises(KeyError):
+        config("navigation_basis")
+
+
+def test_argparse_generation_includes_registered_config_flags():
+    parser = get_arg_parser()
+    option_strings = set(parser._option_string_actions)
+
+    for key in CONFIG_KEYS:
+        for entry in key.argparse_entries:
+            assert set(entry.flags) <= option_strings
+
+
+def test_argparse_navigation_basis_feeds_config():
+    args = get_arg_parser().parse_args(["--navigation-basis", "branch"])
+    config = Config(args=args)
+
+    assert config("slideshow.navigation_basis") == "branch"
+
+
+def test_argparse_navigation_basis_short_alias_feeds_config():
+    args = get_arg_parser().parse_args(["--nb", "branch"])
+    config = Config(args=args)
+
+    assert config("slideshow.navigation_basis") == "branch"
+
+
+def test_argparse_rejects_invalid_registry_value():
+    parser = get_arg_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--navigation-basis", "node"])
+
+
+def test_argparse_no_background_feeds_positive_config_key():
+    args = get_arg_parser().parse_args(["--no-background"])
+    config = Config(args=args)
+
+    assert config("cache.background_preload") is False
+
+
+def test_argparse_background_preload_feeds_positive_config_key():
+    args = get_arg_parser().parse_args(["--background-preload"])
+    config = Config(args=args)
+
+    assert config("cache.background_preload") is True
+
+
+def test_argparse_interval_feeds_config_as_positive_int():
+    args = get_arg_parser().parse_args(["--interval", "7500"])
+    config = Config(args=args)
+
+    assert config("slideshow.interval") == 7500
+
+
+def test_argparse_interval_legacy_aliases_feed_config():
+    parser = get_arg_parser()
+
+    auto_config = Config(args=parser.parse_args(["--auto", "7500"]))
+    short_config = Config(args=parser.parse_args(["-a", "7500"]))
+
+    assert auto_config("slideshow.interval") == 7500
+    assert short_config("slideshow.interval") == 7500
+
+
+def test_argparse_does_not_generate_cache_sizing_flags():
+    parser = get_arg_parser()
+    option_strings = set(parser._option_string_actions)
+
+    assert "--cache-size" not in option_strings
+    assert "--preload-queue-length" not in option_strings
+    assert "--history-queue-length" not in option_strings
 
 
 def _write_minimal_config(
@@ -356,7 +445,7 @@ def test_discover_config_explicit_path_bypasses_discovery(tmp_path, monkeypatch)
 
     config = Config(app_config=load_app_config(str(explicit), start_folder=start))
 
-    assert config("mode") == "b4"
+    assert config("slideshow.mode") == "b4"
 
 
 def test_discover_config_explicit_path_missing_raises(tmp_path):

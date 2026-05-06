@@ -67,8 +67,8 @@ still fail loudly so typos are visible.
 
 The config system is being expanded during the 2.7 development line. The
 current migrated settings include slideshow startup defaults such as
-`navigation_basis` and cache settings. See [CONFIG.md](CONFIG.md) for the
-current format.
+`slideshow.navigation_basis`, `slideshow.mute`, `slideshow.interval`, and cache
+settings. See [CONFIG.md](CONFIG.md) for the current format.
 
 ## Runtime Providers
 

@@ -81,7 +81,13 @@ def main_with_args(args) -> None:
             base_names = [os.path.splitext(os.path.basename(f))[0] for f in args.input_file]
             output_name = "_".join(base_names) + ".lst"
             output_path = os.path.join(os.getcwd(), output_name)
-        write_image_list(images, weights, args.input_file, config("mode"), output_path)
+        write_image_list(
+            images,
+            weights,
+            args.input_file,
+            config("slideshow.mode"),
+            output_path,
+        )
         logger.info("Output written to %s", output_path)
         return
 
@@ -111,6 +117,5 @@ def main_with_args(args) -> None:
         selection_scope,
         defaults,
         filters,
-        args.interval,
         config,
     )

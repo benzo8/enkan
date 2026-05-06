@@ -1,14 +1,16 @@
 # enkan Configuration
 
 enkan is moving toward one effective configuration source that combines built-in
-defaults, `enkan.toml`, command-line options, input-file modifiers, and
-session-only runtime changes.
+defaults, `enkan.toml`, command-line options, and input-file modifiers. Runtime
+UI state is seeded from config but remains owned by the runtime component that
+changes it.
 
 The current `2.7.0.dev2` implementation is a first slice of that work. It
 loads a TOML app config file, applies command-line overrides for migrated
-settings, and exposes effective values through the internal `Config("item")`
-interface. The migrated keys are defined in an internal registry that records
-their TOML location, parser, default, CLI binding, and current scope.
+settings, and exposes effective values through fully qualified internal lookups
+such as `Config("slideshow.navigation_basis")`. The migrated keys are defined
+in an internal registry that records their TOML location, parser, default, CLI
+binding, and current scope.
 
 ## Config File Discovery
 
@@ -33,6 +35,7 @@ dont_recurse = false
 video = true
 mute = true
 navigation_basis = "folder"
+interval = 10000
 
 [progress]
 quiet = false
@@ -41,6 +44,9 @@ quiet = false
 background_preload = true
 policy = "cache-all"
 max_bytes = 104857600
+preload_queue_length = 3
+cache_size = 10
+history_queue_length = 25
 ```
 
 Supported `navigation_basis` values:
@@ -57,9 +63,14 @@ Invalid values for known keys are treated as missing and fall back to the sane
 built-in default. Unknown key names still raise an error, because they usually
 mean a typo.
 
-The legacy CLI flag `--no-background` maps to
-`cache.background_preload = false`. The `--quiet` flag maps to
-`progress.quiet = true`, which suppresses progress bars and progress toasts.
+Registry-backed command-line flags now use the same validation as TOML values.
+For example, `--navigation-basis branch` and `--nb branch` map to
+`slideshow.navigation_basis = "branch"`. The legacy negative flag
+`--no-background` and alias `--nbg` map to the positive key
+`cache.background_preload = false`; `--background-preload` maps it to `true`.
+The `--interval`, `--auto`, and `-a` flags map to `slideshow.interval`, in
+milliseconds. The `--quiet` flag maps to `progress.quiet = true`, which
+suppresses progress bars and progress toasts.
 
 ## Current Defaults
 
@@ -71,10 +82,14 @@ The legacy CLI flag `--no-background` maps to
 | `slideshow.video` | `true` |
 | `slideshow.mute` | `true` |
 | `slideshow.navigation_basis` | `folder` |
+| `slideshow.interval` | `10000` |
 | `progress.quiet` | `false` |
 | `cache.background_preload` | `true` |
 | `cache.policy` | `cache-all` |
 | `cache.max_bytes` | `104857600` |
+| `cache.preload_queue_length` | `3` |
+| `cache.cache_size` | `10` |
+| `cache.history_queue_length` | `25` |
 
 The package-level fallback file may set a different value during development.
 It is useful for proving that `navigation_basis = "branch"` propagates into
@@ -91,6 +106,5 @@ The intended long-term precedence is:
 5. Input-file local modifiers.
 6. Session-only runtime changes.
 
-Only the first three layers plus an internal runtime-override hook are wired for
-migrated settings in `2.7.0.dev2`. Input-file modifier normalisation is planned
-for the next slices.
+Only the first three layers are wired for migrated settings in `2.7.0.dev2`.
+Input-file modifier normalisation is planned for the next slices.

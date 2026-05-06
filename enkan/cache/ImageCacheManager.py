@@ -11,7 +11,6 @@ from .CachedVideoData import CachedVideoData
 from enkan.config import Config
 from enkan.plugables.ImageLoaders import ImageLoaders
 from enkan.utils.utils import is_videofile
-from enkan import constants
 from enkan.mySlideshow.StatusBar import (
     StatusSink,
     build_cache_dots_contribution,
@@ -33,16 +32,16 @@ class ImageCacheManager:
         status_sink: StatusSink | None = None,
         config: Config | None = None,
     ):
-        self.lru_cache = LRUCache(constants.CACHE_SIZE)
-        self.preload_queue = PreloadQueue(constants.PRELOAD_QUEUE_LENGTH)
-        self.history_manager = HistoryManager(constants.HISTORY_QUEUE_LENGTH)
+        self.config = config or Config()
+
+        self.lru_cache = LRUCache(self.config("cache.cache_size"))
+        self.preload_queue = PreloadQueue(self.config("cache.preload_queue_length"))
+        self.history_manager = HistoryManager(self.config("cache.history_queue_length"))
         self.image_provider = image_provider
         self.image_loader = ImageLoaders()
         self.current_image_index = current_image_index
         self.current_media_metadata = None
         self.status_sink = status_sink
-        self.config = config or Config()
-        self.background_preload = bool(self.config("cache.background_preload"))
 
         self._lock = threading.RLock()
         self._queue_state = threading.Condition(self._lock)
@@ -50,7 +49,8 @@ class ImageCacheManager:
         self._refill_active = False
         self._provider_lock = threading.Lock()
 
-        # Initial preload (async if background=True)
+        # Initial preload
+        self.background_preload = bool(self.config("cache.background_preload"))
         if self.background_preload:
             self._background_refill()
         else:

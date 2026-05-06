@@ -80,7 +80,6 @@ class ImageSlideshow:
         selection_scope: SelectionScope | None,
         defaults: Defaults,
         filters: Filters,
-        interval: int | float | None = None,
         config: Config | None = None,
     ) -> None:
         self.root: TreeNode = root
@@ -131,8 +130,8 @@ class ImageSlideshow:
 
         self.defaults: Defaults = defaults
         self.filters: Filters = filters
-        self.video_muted: bool = self.defaults.mute
-        self.interval: int | float | None = interval
+        self.video_muted: bool = self.config("slideshow.mute")
+        self.auto_advance_interval: int | float | None = self.config("slideshow.interval")
 
         self.root.configure(background="black")  # Set root background to black
         self.label = tk.Label(root, bg="black")  # Set label background to black
@@ -223,15 +222,10 @@ class ImageSlideshow:
         self.mode, _ = resolve_mode(self.defaults.mode, min(self.defaults.mode.keys()))
 
         self.show_image()
-        if interval:
-            self.auto_advance_interval: int | float = interval
-            self._schedule_next_image()
-            self.auto_advance_running = True
-            self._publish_auto_advance_status()
 
     @staticmethod
     def _initial_navigation_basis(config: Config) -> NavigationBasis:
-        return NavigationBasis(config("navigation_basis"))
+        return NavigationBasis(config("slideshow.navigation_basis"))
 
     def _reset_zoom(self, event=None) -> None:
         self.zoompan.reset_view()

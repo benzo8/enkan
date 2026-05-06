@@ -1,5 +1,4 @@
 from collections import deque
-from enkan import constants
 
 class HistoryManager:
     """
@@ -7,7 +6,7 @@ class HistoryManager:
     Maintains a deque of visited paths with a current index pointer.
     """
 
-    def __init__(self, max_length=constants.HISTORY_QUEUE_LENGTH):
+    def __init__(self, max_length):
         self.history = deque(maxlen=max_length)
         self.current_index = -1  # -1 = no current item
         self.max_length = max_length

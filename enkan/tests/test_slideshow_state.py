@@ -85,7 +85,9 @@ def test_navigation_state_reports_basis_and_scope_kind():
 
 
 def test_initial_navigation_basis_uses_config_branch():
-    config = Config(app_config=AppConfig(values={"navigation_basis": "branch"}))
+    config = Config(
+        app_config=AppConfig(values={"slideshow.navigation_basis": "branch"})
+    )
 
     basis = ImageSlideshow._initial_navigation_basis(config)
 
@@ -93,7 +95,9 @@ def test_initial_navigation_basis_uses_config_branch():
 
 
 def test_initial_navigation_basis_uses_config_folder():
-    config = Config(app_config=AppConfig(values={"navigation_basis": "folder"}))
+    config = Config(
+        app_config=AppConfig(values={"slideshow.navigation_basis": "folder"})
+    )
 
     basis = ImageSlideshow._initial_navigation_basis(config)
 
@@ -102,7 +106,9 @@ def test_initial_navigation_basis_uses_config_folder():
 
 def test_initial_navigation_mode_matches_original_navigation_state():
     slideshow = ImageSlideshow.__new__(ImageSlideshow)
-    config = Config(app_config=AppConfig(values={"navigation_basis": "branch"}))
+    config = Config(
+        app_config=AppConfig(values={"slideshow.navigation_basis": "branch"})
+    )
     basis = ImageSlideshow._initial_navigation_basis(config)
     slideshow.original_navigation_state = NavigationState(
         basis=basis,

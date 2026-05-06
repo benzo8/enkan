@@ -45,11 +45,11 @@ class Defaults:
 
         if config is not None:
             if mode is None:
-                mode = config("mode")
-            is_random = bool(config("random"))
-            dont_recurse = bool(config("dont_recurse"))
-            video = bool(config("video"))
-            mute = bool(config("mute"))
+                mode = config("slideshow.mode")
+            is_random = bool(config("slideshow.random"))
+            dont_recurse = bool(config("slideshow.dont_recurse"))
+            video = bool(config("slideshow.video"))
+            mute = bool(config("slideshow.mute"))
             if quiet is None:
                 quiet = bool(config("progress.quiet"))
 

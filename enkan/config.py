@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import argparse
 from argparse import Namespace
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,7 +14,6 @@ from enkan.constants import CX_PATTERN
 DEFAULT_CONFIG_FILENAME = "enkan.toml"
 ConfigScope = Literal["build", "runtime", "both"]
 ConfigParser = Callable[[Any], Any | None]
-CliTransform = Callable[[Any], Any]
 
 
 class ConfigError(ValueError):
@@ -38,27 +38,49 @@ def parse_choice(*choices: str) -> ConfigParser:
 
 
 def parse_positive_int(value: Any) -> int | None:
-    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+    if isinstance(value, bool):
         return None
-    return value
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, str) and value.isdecimal():
+        parsed = int(value)
+        return parsed if parsed > 0 else None
+    return None
 
 
-def invert_bool(value: Any) -> Any:
-    return not value if isinstance(value, bool) else value
+@dataclass(frozen=True)
+class ArgparseEntry:
+    flags: tuple[str, ...]
+    action: str | None = None
+    const: Any = None
+    help: str | None = None
+    metavar: str | None = None
+
+
+def entries(*names: str, **kwargs: Any) -> tuple[ArgparseEntry, ...]:
+    return (ArgparseEntry(tuple(_argparse_flag(name) for name in names), **kwargs),)
+
+
+def _argparse_flag(name: str) -> str:
+    if name.startswith("-"):
+        return name
+    return f"--{name.replace('_', '-')}"
 
 
 @dataclass(frozen=True)
 class ConfigKey:
-    name: str
     toml_table: str
     toml_key: str
     default: Any
     parser: ConfigParser
-    cli_dest: str | None = None
-    cli_transform: CliTransform | None = None
+    argparse_entries: tuple[ArgparseEntry, ...] = ()
     choices: tuple[str, ...] = ()
     scope: ConfigScope = "both"
     invalid_fallback: bool = True
+
+    @property
+    def name(self) -> str:
+        return f"{self.toml_table}.{self.toml_key}"
 
 
 @dataclass(frozen=True)
@@ -70,34 +92,131 @@ class AppConfig:
 # Add new config items here first. This registry is the single source for
 # defaults, TOML shape, CLI binding, parsing, and future mutability/scope data.
 CONFIG_KEYS: tuple[ConfigKey, ...] = (
-    ConfigKey("mode", "slideshow", "mode", None, parse_mode, cli_dest="mode", scope="both"),
-    ConfigKey("random", "slideshow", "random", False, parse_bool, cli_dest="random", scope="both"),
-    ConfigKey("dont_recurse", "slideshow", "dont_recurse", False, parse_bool, cli_dest="dont_recurse", scope="both"),
-    ConfigKey("video", "slideshow", "video", True, parse_bool, cli_dest="video", scope="both"),
-    ConfigKey("mute", "slideshow", "mute", True, parse_bool, cli_dest="mute", scope="both"),
-    ConfigKey("progress.quiet", "progress", "quiet", False, parse_bool, cli_dest="quiet", scope="both"),
+    # SLIDESHOW
     ConfigKey(
-        "navigation_basis",
+        "slideshow",
+        "mode",
+        None,
+        parse_mode,
+        argparse_entries=entries(
+            "-m-",
+            "mode",
+            metavar="MODE",
+            help="Mode string, for example B12W3",
+        ),
+        scope="both",
+    ),
+    ConfigKey(
+        "slideshow",
+        "random",
+        False,
+        parse_bool,
+        argparse_entries=entries(
+            "random",
+            action="store_true",
+            help="Start in Completely Random mode",
+        ),
+        scope="both",
+    ),
+    ConfigKey(
+        "slideshow",
+        "dont_recurse",
+        False,
+        parse_bool,
+        argparse_entries=entries(
+            "no-recurse",
+            "nr",
+            action="store_true",
+            help="Do not recurse through folders",
+        ),
+        scope="both",
+    ),
+    ConfigKey(
+        "slideshow",
+        "video",
+        True,
+        parse_bool,
+        argparse_entries=(
+            ArgparseEntry(("--video",), action="store_true", help="Enable video playback"),
+            ArgparseEntry(("--no-video", "--nv"), action="store_false", help="Disable video playback"),
+        ),
+        scope="both",
+    ),
+    ConfigKey(
+        "slideshow",
+        "mute",
+        True,
+        parse_bool,
+        argparse_entries=entries(
+            "no-mute",
+            "nm",
+            action="store_false",
+            help="Disable mute",
+        ),
+        scope="both",
+    ),
+    ConfigKey(
         "slideshow",
         "navigation_basis",
         "folder",
         parse_choice("folder", "branch"),
-        cli_dest="navigation_basis",
+        argparse_entries=entries(
+            "navigation-basis",
+            "nb",
+            help="Default navigation basis: 'folder' or 'branch'",
+        ),
         choices=("folder", "branch"),
         scope="runtime",
     ),
     ConfigKey(
-        "cache.background_preload",
+        "slideshow",
+        "interval",
+        10000,
+        parse_positive_int,
+        argparse_entries=entries(
+            "interval",
+            "auto",
+            "-a",
+            metavar="INTERVAL",
+            help="Time in milliseconds for automated slide changes",
+        ),
+        scope="both",
+    ),
+    # PROGRESS
+    ConfigKey(
+        "progress",
+        "quiet",
+        False,
+        parse_bool,
+        argparse_entries=entries(
+            "quiet",
+            "-q",
+            action="store_true",
+            help="Suppress progress bars and progress toasts",
+        ),
+        scope="both",
+    ),
+    # CACHE
+    ConfigKey(
         "cache",
         "background_preload",
         True,
         parse_bool,
-        cli_dest="no_background",
-        cli_transform=invert_bool,
+        argparse_entries=(
+            ArgparseEntry(
+                ("--background-preload",),
+                action="store_true",
+                help="Enable background cache/preload refill",
+            ),
+            ArgparseEntry(
+                ("--no-background", "--nbg"),
+                action="store_false",
+                help="Disable background cache/preload refill",
+            ),
+        ),
         scope="runtime",
     ),
     ConfigKey(
-        "cache.policy",
         "cache",
         "policy",
         "cache-all",
@@ -106,10 +225,30 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         scope="runtime",
     ),
     ConfigKey(
-        "cache.max_bytes",
         "cache",
         "max_bytes",
         100 * 1024 * 1024,
+        parse_positive_int,
+        scope="runtime",
+    ),
+    ConfigKey(
+        "cache",
+        "preload_queue_length",
+        3,
+        parse_positive_int,
+        scope="runtime",
+    ),
+    ConfigKey(
+        "cache",
+        "cache_size",
+        10,
+        parse_positive_int,
+        scope="runtime",
+    ),
+    ConfigKey(
+        "cache",
+        "history_queue_length",
+        25,
         parse_positive_int,
         scope="runtime",
     ),
@@ -124,6 +263,13 @@ CONFIG_KEYS_BY_TOML_TABLE: dict[str, tuple[ConfigKey, ...]] = {
 }
 
 
+def _require_config_key(key: str) -> ConfigKey:
+    config_key = CONFIG_KEYS_BY_NAME.get(key)
+    if config_key is None:
+        raise KeyError(f"Unknown config key: {key}")
+    return config_key
+
+
 class Config:
     """Effective configuration facade for persisted, CLI, and runtime layers."""
 
@@ -131,11 +277,9 @@ class Config:
         self,
         app_config: AppConfig | None = None,
         args: Namespace | SimpleNamespace | None = None,
-        runtime_overrides: dict[str, Any] | None = None,
     ) -> None:
         self.app_config = app_config or AppConfig()
         self.args = args
-        self.runtime_overrides: dict[str, Any] = dict(runtime_overrides or {})
 
     @classmethod
     def from_args(
@@ -148,11 +292,7 @@ class Config:
         return cls(app_config=app_config, args=args)
 
     def __call__(self, key: str) -> Any:
-        config_key = CONFIG_KEYS_BY_NAME.get(key)
-        if config_key is None:
-            raise KeyError(f"Unknown config key: {key}")
-        if key in self.runtime_overrides:
-            return self.runtime_overrides[key]
+        config_key = _require_config_key(key)
         cli_value = self._cli_value(config_key)
         if cli_value is not None:
             return cli_value
@@ -161,19 +301,50 @@ class Config:
             return app_value
         return config_key.default
 
-    def with_runtime_overrides(self, **overrides: Any) -> "Config":
-        merged = {**self.runtime_overrides, **overrides}
-        return Config(self.app_config, self.args, merged)
-
     def _cli_value(self, config_key: ConfigKey) -> Any:
-        if self.args is None or config_key.cli_dest is None:
+        if self.args is None or not config_key.argparse_entries:
             return None
-        raw_value = getattr(self.args, config_key.cli_dest, None)
+        raw_value = getattr(self.args, config_key.name, None)
         if raw_value is None:
             return None
-        if config_key.cli_transform is not None:
-            raw_value = config_key.cli_transform(raw_value)
         return config_key.parser(raw_value)
+
+
+def add_config_arguments(parser: argparse.ArgumentParser) -> None:
+    for config_key in CONFIG_KEYS:
+        if not config_key.argparse_entries:
+            continue
+        parser.set_defaults(**{config_key.name: None})
+        for entry in config_key.argparse_entries:
+            kwargs: dict[str, Any] = {
+                "dest": config_key.name,
+                "default": None,
+            }
+            if entry.help is not None:
+                kwargs["help"] = entry.help
+            if entry.action is not None:
+                kwargs["action"] = entry.action
+            else:
+                kwargs["type"] = _argparse_type(config_key)
+                if entry.metavar is not None:
+                    kwargs["metavar"] = entry.metavar
+                if config_key.choices:
+                    kwargs["choices"] = config_key.choices
+            if entry.const is not None:
+                kwargs["const"] = entry.const
+            parser.add_argument(*entry.flags, **kwargs)
+
+
+def _argparse_type(config_key: ConfigKey) -> Callable[[str], Any]:
+    def parser(value: str) -> Any:
+        parsed = config_key.parser(value)
+        if parsed is None:
+            raise argparse.ArgumentTypeError(
+                f"invalid {config_key.name} value: {value!r}"
+            )
+        return parsed
+
+    return parser
 
 
 def discover_config_path(start_folder: Path | None = None) -> Path | None:

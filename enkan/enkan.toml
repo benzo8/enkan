@@ -5,3 +5,9 @@
 
 [slideshow]
 navigation_basis = "branch"  # default navigation basis: 'folder' or 'branch'
+
+[cache]
+background_preload = true # whether to preload images in the background
+preload_queue_length = 5  # number of images to preload in the background
+cache_size = 10           # number of loaded media items to keep in the LRU cache
+history_queue_length = 25 # number of history entries to keep
