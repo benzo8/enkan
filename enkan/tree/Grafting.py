@@ -35,7 +35,7 @@ class Grafting:
         t: Tree = self.tree
 
         # Resolve group graft level override
-        group_config = t.defaults.groups.get(group) if group else None
+        group_config = t.build_state.groups.get(group) if group else None
         group_graft_level = group_config.get("graft_level") if group_config else None
         graft_level = graft_level if graft_level is not None else group_graft_level
         if graft_level is None:

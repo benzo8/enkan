@@ -16,6 +16,7 @@ from enkan.config import (
     discover_config_path,
     load_app_config,
 )
+from enkan.utils.BuildState import BuildState
 from enkan.utils.argparse_setup import get_arg_parser
 
 
@@ -55,7 +56,6 @@ def test_config_registry_groups_toml_keys_by_table():
     assert grouped["slideshow"] >= {
         "mode",
         "provider",
-        "dont_recurse",
         "video",
         "mute",
         "navigation_basis",
@@ -80,7 +80,6 @@ def test_load_app_config_accepts_every_registered_toml_key(tmp_path):
 [slideshow]
 mode = "b2"
 provider = "CRW"
-dont_recurse = true
 video = false
 mute = false
 navigation_basis = "branch"
@@ -161,6 +160,20 @@ def test_load_app_config_rejects_unknown_keys(tmp_path):
 [slideshow]
 mode = "b1"
 unexpected = true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="Unknown slideshow key"):
+        load_app_config(str(config_path))
+
+
+def test_load_app_config_rejects_build_only_dont_recurse_key(tmp_path):
+    config_path = tmp_path / "enkan.toml"
+    config_path.write_text(
+        """
+[slideshow]
+dont_recurse = true
 """.strip(),
         encoding="utf-8",
     )
@@ -278,7 +291,6 @@ def test_config_facade_preserves_cli_precedence():
         **{
             "slideshow.mode": "b3",
             "slideshow.provider": None,
-            "slideshow.dont_recurse": None,
             "slideshow.video": None,
             "slideshow.mute": None,
             "progress.quiet": True,
@@ -295,6 +307,39 @@ def test_config_facade_preserves_cli_precedence():
     assert config("progress.quiet") is True
     assert config("cache.background_preload") is False
     assert config("slideshow.navigation_basis") == "folder"
+
+
+def test_config_facade_reports_cli_override():
+    args = Namespace(**{"slideshow.mode": "b3"})
+    config = Config(app_config=AppConfig(values={"slideshow.mode": "b1"}), args=args)
+
+    assert config.is_cli_override("slideshow.mode") is True
+    assert config.is_cli_override("slideshow.video") is False
+
+
+def test_build_state_treats_toml_mode_as_default_not_cli_pin():
+    config = Config(app_config=AppConfig(values={"slideshow.mode": "b2"}))
+    build_state = BuildState.from_config(
+        config,
+        cli_mode_pinned=config.is_cli_override("slideshow.mode"),
+    )
+
+    assert build_state.mode == {2: ("b", [0, 0])}
+    assert build_state.cli_mode is None
+    assert build_state.cli_mode_pinned is False
+
+
+def test_build_state_records_cli_pinned_mode():
+    args = Namespace(**{"slideshow.mode": "b3"})
+    config = Config(app_config=AppConfig(values={"slideshow.mode": "b2"}), args=args)
+    build_state = BuildState.from_config(
+        config,
+        cli_mode_pinned=config.is_cli_override("slideshow.mode"),
+    )
+
+    assert build_state.mode == {3: ("b", [0, 0])}
+    assert build_state.cli_mode == {3: ("b", [0, 0])}
+    assert build_state.cli_mode_pinned is True
 
 
 def test_config_facade_rejects_unknown_lookup_key():
@@ -360,6 +405,19 @@ def test_argparse_rejects_invalid_registry_value():
 
     with pytest.raises(SystemExit):
         parser.parse_args(["--navigation-basis", "node"])
+
+
+def test_argparse_no_recurse_is_manual_build_flag():
+    args = get_arg_parser().parse_args(["--no-recurse"])
+
+    assert args.no_recurse is True
+    assert not hasattr(args, "slideshow.dont_recurse")
+
+
+def test_argparse_no_recurse_short_alias_is_manual_build_flag():
+    args = get_arg_parser().parse_args(["--nr"])
+
+    assert args.no_recurse is True
 
 
 def test_argparse_no_background_feeds_positive_config_key():

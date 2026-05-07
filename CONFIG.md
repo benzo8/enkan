@@ -31,7 +31,6 @@ path does not exist, startup fails.
 [slideshow]
 mode = "b1"
 provider = "weighted"
-dont_recurse = false
 video = true
 mute = true
 navigation_basis = "folder"
@@ -84,6 +83,10 @@ legacy negative flag
 `cache.background_preload = false`; `--background-preload` maps it to `true`.
 The `--quiet` flag maps to `progress.quiet = true`, which suppresses progress
 bars and progress toasts.
+`slideshow.video` is a runtime filter: `video = false` or `--no-video` prevents
+videos from being selected for playback, but does not remove videos while
+building `.txt` inputs. Use `[v]` / `[nv]` in `.txt` files for build-time video
+inclusion.
 
 ## Current Defaults
 
@@ -91,7 +94,6 @@ bars and progress toasts.
 | --- | --- |
 | `slideshow.mode` | weighted mode, equivalent to internal `w1` behavior |
 | `slideshow.provider` | `weighted` |
-| `slideshow.dont_recurse` | `false` |
 | `slideshow.video` | `true` |
 | `slideshow.mute` | `true` |
 | `slideshow.navigation_basis` | `folder` |

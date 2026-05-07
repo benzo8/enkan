@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from enkan.utils.Defaults import Defaults
-from enkan.utils.Filters import Filters
+from enkan.utils.BuildState import BuildState
+from enkan.utils.Filters import BuildFilters
 
 
 @dataclass(frozen=True)
@@ -12,15 +12,19 @@ class SourceScope:
     Explicit per-source runtime scope used while ingesting/building one input.
 
     A SourceScope isolates txt-file globals and filter mutations from the shared
-    runtime Defaults/Filters while preserving top-level CLI precedence.
+    runtime build state and build filters while preserving top-level CLI precedence.
     """
 
-    defaults: Defaults
-    filters: Filters
+    build_state: BuildState
+    build_filters: BuildFilters
 
     @classmethod
-    def from_runtime(cls, defaults: Defaults, filters: Filters) -> "SourceScope":
+    def from_runtime(
+        cls,
+        build_state: BuildState,
+        build_filters: BuildFilters,
+    ) -> "SourceScope":
         return cls(
-            defaults=defaults.clone_for_source(),
-            filters=filters.clone_for_source(),
+            build_state=build_state.clone_for_source(),
+            build_filters=build_filters.clone_for_source(),
         )

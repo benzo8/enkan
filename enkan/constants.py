@@ -7,7 +7,7 @@ try:
     VERSION = _pkg_version(PACKAGE_NAME)
 except PackageNotFoundError:
     # Fallback during source-only situations (keep in sync with pyproject if used)
-    VERSION = "2.7.0.dev2"
+    VERSION = "2.7.0.dev3"
 TOTAL_WEIGHT = 100
 PARENT_STACK_MAX = 5
 VIDEO_START_DEBOUNCE_MS = 150

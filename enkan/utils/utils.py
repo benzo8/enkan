@@ -11,7 +11,7 @@ from enkan import constants
 
 if TYPE_CHECKING:
     from enkan.tree.Tree import Tree
-    from enkan.utils.Filters import Filters
+    from enkan.utils.Filters import BuildFilters
 
 def weighted_choice(image_paths: Sequence[str], cum_weights: Sequence[float]) -> str:
     """
@@ -149,20 +149,17 @@ def is_videofile(file: str) -> bool:
     return file.lower().endswith(constants.VIDEO_FILES)
 
 
-def is_videoallowed(data_video: bool | None, defaults) -> bool:
+def is_videoallowed(data_video: bool | None, build_filters) -> bool:
     """
     Determine if video inclusion is allowed for a node.
 
     Precedence:
-        1. defaults.args_video (explicit CLI override)
-        2. data_video (per node specification)
-        3. defaults.video (global default)
+        1. data_video (per node specification)
+        2. build_filters.include_video (source/build default)
     """
     if data_video is False:
         return False
-    if getattr(defaults, "args_video", None) is not None:
-        return defaults.args_video
-    return data_video if data_video is not None else defaults.video
+    return data_video if data_video is not None else build_filters.include_video
 
 
 def filter_valid_files(
@@ -200,7 +197,7 @@ def filtered_images_from_disk(
     path: str,
     *,
     include_video: bool = False,
-    filters: "Filters" | None = None,
+    filters: "BuildFilters" | None = None,
     ignored_files: Iterable[str] | None = None,
 ) -> List[str]:
     """Return the filtered media files that exist directly under ``path``."""
@@ -228,7 +225,7 @@ def images_from_path(
     *,
     tree: "Tree" | None = None,
     include_video: bool = False,
-    filters: "Filters" | None = None,
+    filters: "BuildFilters" | None = None,
     ignored_files: Iterable[str] | None = None,
 ) -> List[str]:
     """Lookup images for ``path`` via tree cache; fall back to disk scan."""
@@ -239,7 +236,9 @@ def images_from_path(
             if node is not None:
                 node_images = getattr(node, 'images', None)
                 if node_images:
-                    return list(node_images)
+                    if include_video:
+                        return list(node_images)
+                    return [img for img in node_images if not is_videofile(img)]
 
     return filtered_images_from_disk(
         path,

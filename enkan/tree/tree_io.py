@@ -8,6 +8,40 @@ from enkan.tree.Tree import Tree
 logger = logging.getLogger(__name__)
 
 
+class _LegacyDefaults:
+    """
+    Compatibility stand-in for old pickles that stored enkan.utils.Defaults.
+
+    This is only used during unpickling; new trees store BuildState directly.
+    """
+
+    @property
+    def mode(self):
+        args_mode = getattr(self, "args_mode", None)
+        if args_mode is not None:
+            return args_mode
+        global_mode = getattr(self, "global_mode", None)
+        if global_mode is not None:
+            return global_mode
+        return getattr(self, "_mode", None)
+
+
+class _LegacyTreeUnpickler:
+    def __init__(self, file_obj):
+        import pickle
+
+        class _Unpickler(pickle.Unpickler):
+            def find_class(self, module, name):
+                if module == "enkan.utils.Defaults" and name == "Defaults":
+                    return _LegacyDefaults
+                return super().find_class(module, name)
+
+        self._unpickler = _Unpickler(file_obj)
+
+    def load(self):
+        return self._unpickler.load()
+
+
 def load_tree_if_current(filename: str) -> Tree | None:
     """
     Attempt to load a pickled Tree, rebuild derived indexes in memory, and
@@ -80,10 +114,8 @@ def load_tree_from_file(input_path: str | os.PathLike[str]):
     Returns:
         Unpickled object (expected Tree).
     """
-    import pickle
-
     with open(input_path, "rb") as f:
-        return pickle.load(f)
+        return _LegacyTreeUnpickler(f).load()
 
 
 def write_image_list(

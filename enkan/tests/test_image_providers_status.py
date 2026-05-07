@@ -1,4 +1,5 @@
 from enkan.plugables.ImageProviders import ImageProviders
+from enkan.utils.BuildState import BuildState
 
 
 class _FakeNode:
@@ -24,7 +25,7 @@ class _FakeTree:
     def __init__(self, image_to_node, folder_to_node, mode_map):
         self.virtual_image_lookup = dict(image_to_node)
         self.path_lookup = dict(folder_to_node)
-        self.defaults = type("_Defaults", (), {"mode": mode_map})()
+        self.build_state = BuildState(mode=mode_map)
         self.built_mode = mode_map
 
     def resolve_node_for_image(self, image_path):

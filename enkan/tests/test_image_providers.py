@@ -10,6 +10,7 @@ from enkan.plugables.ImageProviders import (
 from enkan.mySlideshow.StatusBar import build_provider_detail_contribution
 from enkan.tree.selection_scope import SelectionScope, SelectionUnit
 from enkan.tree.diagnostics import _resolve_test_provider
+from enkan.utils.BuildState import BuildState
 
 
 class _FakeNode:
@@ -35,7 +36,7 @@ class _FakeTree:
     def __init__(self, image_to_node, folder_to_node, mode_map):
         self.virtual_image_lookup = dict(image_to_node)
         self.path_lookup = dict(folder_to_node)
-        self.defaults = type("_Defaults", (), {"mode": mode_map})()
+        self.build_state = BuildState(mode=mode_map)
         self.built_mode = mode_map
 
     def resolve_node_for_image(self, image_path):
@@ -643,7 +644,7 @@ def test_select_manager_uses_selection_scope_without_image_level_tree_resolution
     )
 
     class _NoResolveTree:
-        defaults = type("_Defaults", (), {"mode": {2: ("b", (0, 0))}})()
+        build_state = BuildState(mode={2: ("b", (0, 0))})
         built_mode = {2: ("b", (0, 0))}
 
         def resolve_node_for_image(self, image_path):

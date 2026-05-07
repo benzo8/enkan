@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional
 
-from enkan.utils.Defaults import ModeMap
+from enkan.utils.Mode import ModeMap
 from enkan.tree.tree_logic import Tree
 
 

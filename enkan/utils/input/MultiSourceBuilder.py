@@ -9,8 +9,9 @@ from enkan.tree.tree_logic import build_tree
 from enkan.tree.tree_logic import apply_mode_and_recalculate
 from enkan.utils.input.InputProcessor import InputProcessor
 from enkan.utils.utils import find_input_file
-from enkan.utils.Defaults import Defaults, Mode
-from enkan.utils.Filters import Filters
+from enkan.utils.BuildState import BuildState
+from enkan.utils.Mode import Mode
+from enkan.utils.Filters import BuildFilters
 from enkan.utils.input.SourceScope import SourceScope
 from enkan.utils.input.input_models import LoadedSource, SourceKind, classify_input_path
 from enkan.utils.input.TreeMerger import TreeMerger
@@ -24,14 +25,14 @@ class MultiSourceBuilder:
     each to a Tree and merging left-to-right.
     """
 
-    def __init__(self, defaults: Defaults, filters: Filters) -> None:
-        self.defaults = defaults
-        self.filters = filters
+    def __init__(self, build_state: BuildState, build_filters: BuildFilters) -> None:
+        self.build_state = build_state
+        self.build_filters = build_filters
 
     def build(self, input_files: Iterable[str], *, tk_root=None, tk_enabled: bool = True):
         sources: List[LoadedSource] = []
         builder_warnings: List[str] = []
-        target_mode = self.defaults.args_mode
+        target_mode = self.build_state.cli_mode if self.build_state.cli_mode_pinned else None
         target_lowest_level = min(target_mode.keys()) if target_mode else None
         if target_mode:
             logger.info(
@@ -86,8 +87,8 @@ class MultiSourceBuilder:
                 case SourceKind.LST:
                     logger.info("Rebuilding tree from list '%s'.", entry_path_full)
                     tree = build_tree(
-                        self.defaults,
-                        self.filters,
+                        self.build_state,
+                        self.build_filters,
                         kind="lst",
                         list_path=entry_path_full,
                         tk_root=tk_root,
@@ -152,7 +153,7 @@ class MultiSourceBuilder:
 
         # Stage 2: decide target mode and lowest rung
         if target_mode:
-            self.defaults.set_global_defaults(mode=target_mode)
+            self.build_state.set_mode(target_mode)
             target_lowest_level = min(target_mode.keys()) if target_mode else None
             logger.info(
                 "Final target mode set to %s (lowest rung %s).",
@@ -207,8 +208,8 @@ class MultiSourceBuilder:
         """
         nested_paths: List[str] = []
         warnings_out: List[str] = collector if collector is not None else []
-        source_scope = SourceScope.from_runtime(self.defaults, self.filters)
-        processor = InputProcessor(source_scope.defaults, source_scope.filters)
+        source_scope = SourceScope.from_runtime(self.build_state, self.build_filters)
+        processor = InputProcessor(source_scope.build_state, source_scope.build_filters)
 
         image_dirs, specific_images = (
             processor.process_input(
@@ -222,8 +223,8 @@ class MultiSourceBuilder:
 
         if image_dirs or specific_images:
             base_tree = build_tree(
-                source_scope.defaults,
-                source_scope.filters,
+                source_scope.build_state,
+                source_scope.build_filters,
                 image_dirs=image_dirs,
                 specific_images=specific_images,
                 mode=detected_mode,
@@ -279,11 +280,11 @@ class MultiSourceBuilder:
         warnings: List[str],
     ) -> None:
         if target_mode:
-            self.defaults.set_global_defaults(mode=target_mode)
+            self.build_state.set_mode(target_mode)
             try:
                 apply_mode_and_recalculate(
                     tree,
-                    self.defaults,
+                    self.build_state,
                     ignore_user_proportion=False,
                 )
             except ValueError as exc:

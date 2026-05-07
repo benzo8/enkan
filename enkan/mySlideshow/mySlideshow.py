@@ -13,9 +13,10 @@ from enkan.cache.ImageCacheManager import ImageCacheManager
 from enkan.tree import Tree
 from enkan.tree.TreeNode import TreeNode
 from enkan.utils import utils
-from enkan.utils.Defaults import Defaults, resolve_mode, parse_mode_string
+from enkan.utils.BuildState import BuildState
+from enkan.utils.Filters import BuildFilters, RuntimeFilters
+from enkan.utils.Mode import resolve_mode, parse_mode_string
 from enkan.plugables.FolderSelectionMemory import FolderSelectionMemory
-from enkan.utils.Filters import Filters
 from enkan.utils.SelectionWeights import SelectionWeights
 from enkan.plugables.ImageProviders import (
     ImageProviders,
@@ -78,8 +79,8 @@ class ImageSlideshow:
         image_paths: list,
         selection_weights: SelectionWeights,
         selection_scope: SelectionScope | None,
-        defaults: Defaults,
-        filters: Filters,
+        build_state: BuildState,
+        runtime_filters: RuntimeFilters,
         config: Config | None = None,
     ) -> None:
         self.root: TreeNode = root
@@ -103,8 +104,7 @@ class ImageSlideshow:
         self.original_scope_seen_folders: set[str] = set()
         self.config: Config = (
             config
-            or getattr(defaults, "config", None)
-            or Config(args=getattr(defaults, "args", None))
+            or Config()
         )
         _nav_basis = self._initial_navigation_basis(self.config)
         self.original_navigation_state = NavigationState(
@@ -128,8 +128,8 @@ class ImageSlideshow:
         self.screen_width: int = root.winfo_screenwidth()
         self.screen_height: int = root.winfo_screenheight()
 
-        self.defaults: Defaults = defaults
-        self.filters: Filters = filters
+        self.build_state: BuildState = build_state
+        self.runtime_filters: RuntimeFilters = runtime_filters
         self.video_muted: bool = self.config("slideshow.mute")
         self.auto_advance_interval: int | float | None = self.config("slideshow.interval")
         self.auto_advance_running: bool = False
@@ -217,7 +217,10 @@ class ImageSlideshow:
         self.providers = ImageProviders()
         
         self.set_provider(self._initial_provider(self.config))
-        self.mode, _ = resolve_mode(self.defaults.mode, min(self.defaults.mode.keys()))
+        self.mode, _ = resolve_mode(
+            self.build_state.mode,
+            min(self.build_state.mode.keys()),
+        )
 
         self.show_image()
         if self.config("slideshow.auto"):
@@ -524,11 +527,13 @@ class ImageSlideshow:
         )
 
     def _provider_kwargs(self) -> dict[str, object]:
+        runtime_filters = getattr(self, "runtime_filters", RuntimeFilters())
         return {
             **self.selection_weights.provider_kwargs(),
             "selection_scope": getattr(self, "selection_scope", None),
             "folder_memory": self.folder_memory,
             "tree": self.original_tree,
+            "include_video": runtime_filters.include_video,
         }
 
     def update_slide_show(
@@ -661,9 +666,11 @@ class ImageSlideshow:
     ) -> None:
         """Set up for a new directory and create an updated slideshow."""
         if navigation_node:
-            selection_scope = extract_selection_scope_from_tree(
-                tree=self.original_tree,
-                start_node=navigation_node,
+            selection_scope = self.runtime_filters.apply_to_selection_scope(
+                extract_selection_scope_from_tree(
+                    tree=self.original_tree,
+                    start_node=navigation_node,
+                )
             )
         elif os.path.isdir(new_path):
             parent_image_dirs = {
@@ -674,15 +681,15 @@ class ImageSlideshow:
                 }
             }
             parent_tree: Tree.Tree = build_tree(
-                self.defaults,
-                self.filters,
+                self.build_state,
+                BuildFilters(include_video=self.runtime_filters.include_video),
                 parent_image_dirs,
                 None,
                 tk_root=self.root,
                 tk_enabled=True,
             )
-            selection_scope = extract_selection_scope_from_tree(
-                parent_tree
+            selection_scope = self.runtime_filters.apply_to_selection_scope(
+                extract_selection_scope_from_tree(parent_tree)
             )
         else:
             logger.debug("No valid directory found.")
@@ -704,7 +711,7 @@ class ImageSlideshow:
         if not mode_dict:
             raise ValueError("Unable to parse mode string.")
         self._ignore_user_proportion = ignore_user
-        self.defaults.set_global_defaults(mode=mode_dict)
+        self.build_state.set_mode(mode_dict)
         self._recalculate_slideshow(ignore_user=ignore_user)
         return self.original_tree.current_mode_string() or mode_str
 
@@ -719,9 +726,10 @@ class ImageSlideshow:
     def _recalculate_slideshow(self, ignore_user: bool) -> None:
         selection_scope = apply_mode_and_recalculate_scope(
             self.original_tree,
-            self.defaults,
+            self.build_state,
             ignore_user_proportion=ignore_user,
         )
+        selection_scope = self.runtime_filters.apply_to_selection_scope(selection_scope)
         self.original_image_paths = selection_scope.image_paths[:]
         self.folder_memory = self._new_scope_memory()
         self.scope_seen_folders = set()
@@ -740,7 +748,7 @@ class ImageSlideshow:
             ),
             selection_scope=selection_scope,
         )
-        mode_dict = self.defaults.mode or {}
+        mode_dict = self.build_state.mode or {}
         if mode_dict:
             lowest = min(mode_dict.keys())
             self.mode, _ = resolve_mode(mode_dict, lowest)
@@ -1016,7 +1024,7 @@ class ImageSlideshow:
             controller.set_muted(self.video_muted)
 
     def print_tree_to_console(self, event=None) -> None:
-        print_tree(self.defaults, self.original_tree.root, max_depth=9999)
+        print_tree(self.build_state, self.original_tree.root, max_depth=9999)
 
     def reset_burst_cycle(self, event=None) -> None:
         """Reset the current burst queue when running the burst provider."""

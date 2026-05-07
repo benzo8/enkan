@@ -7,8 +7,8 @@ import enkan.utils.utils as utils
 from enkan.tree.TreeNode import TreeNode
 from enkan.tree.Tree import Tree
 from enkan.tree.Grafting import Grafting
-from enkan.utils.Filters import Filters
-from enkan.utils.Defaults import serialise_mode, ModeMap
+from enkan.utils.Filters import BuildFilters
+from enkan.utils.Mode import serialise_mode, ModeMap
 from enkan.utils.progress import Progress, progress
 
 ImageDirConfig = Dict[str, object]
@@ -114,7 +114,7 @@ class TreeBuilderTXT:
         if specific_images:
             self.process_specific_images(specific_images)
 
-        self.tree.built_mode = mode if mode is not None else self.tree.defaults.mode
+        self.tree.built_mode = mode if mode is not None else self.tree.build_state.mode
         self.tree.built_mode_string = serialise_mode(self.tree.built_mode)
 
     def process_directory(
@@ -126,11 +126,11 @@ class TreeBuilderTXT:
         """
         Walk a root directory using recursive os.scandir calls.
         """
-        filters: Filters = self.tree.filters
-        dont_recurse_globally: bool = self.tree.defaults.dont_recurse
+        build_filters: BuildFilters = self.tree.build_filters
+        dont_recurse_globally: bool = self.tree.build_filters.dont_recurse
 
         def recurse(current_path: str) -> None:
-            result: Literal[1] | Literal[2] | Literal[3] | Literal[0] = filters.passes(
+            result: Literal[1] | Literal[2] | Literal[3] | Literal[0] = build_filters.passes(
                 current_path
             )
             should_process: bool = result in (0, 3)
@@ -194,12 +194,12 @@ class TreeBuilderTXT:
         on whether it contains images and subdirectories.
         """
         include_video: bool = utils.is_videoallowed(
-            data.get("video"), self.tree.defaults
+            data.get("video"), self.tree.build_filters
         )
         images: List[str] = utils.filter_valid_files(
             path,
             files,
-            self.tree.filters.ignored_files,
+            self.tree.build_filters.ignored_files,
             include_video,
         )
         if not images:
@@ -233,7 +233,7 @@ class TreeBuilderTXT:
         """
         traversed_paths: List[str] = []
         include_video: bool = utils.is_videoallowed(
-            data.get("video"), self.tree.defaults
+            data.get("video"), self.tree.build_filters
         )
 
         def recurse(current_path: str) -> List[str]:
@@ -383,11 +383,11 @@ class TreeBuilderTXT:
         else:
             num_avg_images = 100  # fallback heuristic
 
-        filters = self.tree.filters
+        build_filters = self.tree.build_filters
         calc_level = self.tree.calculate_level
 
         for img_path, data in specific_images.items():
-            if filters.passes(img_path) != 0:
+            if build_filters.passes(img_path) != 0:
                 continue
 
             node_name = os.path.join(

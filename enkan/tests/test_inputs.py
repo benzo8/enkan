@@ -2,19 +2,23 @@ from __future__ import annotations
 
 import os
 import math
+import pickle
+import sys
+import types
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from enkan.utils.Defaults import Defaults, resolve_mode
-from enkan.utils.Filters import Filters
+from enkan.utils.BuildState import BuildState
+from enkan.utils.Filters import BuildFilters as Filters, RuntimeFilters
+from enkan.utils.Mode import ensure_mode_map, resolve_mode
 from enkan.tree.Tree import Tree
 from enkan.tree.TreeNode import TreeNode
 from enkan.tree.Grafting import Grafting
 from enkan.tree.tree_logic import apply_mode_and_recalculate
 from enkan.tree.tree_logic import calculate_weights
 from enkan.tree.tree_logic import extract_image_paths_and_weights_from_tree
+from enkan.tree.selection_scope import SelectionScope, SelectionUnit
 from enkan.utils.input.input_models import SourceKind, LoadedSource
 from enkan.utils.input.TreeMerger import TreeMerger
 from enkan.utils.input.MultiSourceBuilder import MultiSourceBuilder
@@ -24,15 +28,7 @@ from enkan.constants import TOTAL_WEIGHT
 
 @pytest.fixture
 def defaults():
-    return Defaults(
-        args=SimpleNamespace(
-            mode=None,
-            dont_recurse=None,
-            video=None,
-            debug=2,
-            no_background=False,
-        )
-    )
+    return BuildState()
 
 
 @pytest.fixture
@@ -42,8 +38,8 @@ def filters():
     return f
 
 
-def _make_tree(defaults: Defaults, filters: Filters, path: str, images) -> Tree:
-    tree = Tree(defaults, filters)
+def _make_tree(build_state: BuildState, filters: Filters, path: str, images) -> Tree:
+    tree = Tree(build_state, filters)
     try:
         tree.ensure_parent_exists(os.path.dirname(path))
     except ValueError:
@@ -61,15 +57,12 @@ def _make_tree(defaults: Defaults, filters: Filters, path: str, images) -> Tree:
     return tree
 
 
-def _make_defaults(mode_str: str | None = None) -> Defaults:
-    return Defaults(
-        args=SimpleNamespace(
-            mode=mode_str,
-            dont_recurse=None,
-            video=None,
-            debug=2,
-            no_background=False,
-        )
+def _make_defaults(mode_str: str | None = None) -> BuildState:
+    cli_mode = ensure_mode_map(mode_str) if mode_str is not None else None
+    return BuildState(
+        mode=cli_mode or ensure_mode_map(None),
+        cli_mode=cli_mode,
+        cli_mode_pinned=cli_mode is not None,
     )
 
 
@@ -123,7 +116,7 @@ def test_multisource_txt_txt_merges_directories():
     Path(txt1).write_text(f"{dir1}\n", encoding="utf-8")
     Path(txt2).write_text(f"{dir2}\n", encoding="utf-8")
 
-    defaults = _make_defaults(mode_str="b1")
+    defaults = _make_defaults()
     filters = Filters()
     builder = MultiSourceBuilder(defaults, filters)
 
@@ -143,7 +136,7 @@ def test_txt_directory_with_trailing_slash_does_not_create_self_child_node():
     txt = tmp / "input.txt"
     txt.write_text(f"{source_dir}{os.path.sep}\n", encoding="utf-8")
 
-    defaults = _make_defaults(mode_str="b1")
+    defaults = _make_defaults()
     filters = Filters()
     builder = MultiSourceBuilder(defaults, filters)
 
@@ -342,6 +335,54 @@ def test_outdated_tree_loads_when_repair_succeeds():
 
     assert warnings == []
     assert os.path.normpath(dir1) in merged_tree.path_lookup
+
+
+def test_legacy_defaults_tree_pickle_loads_and_repairs():
+    tmp = Path(_ensure_case_dir("legacy_defaults_tree_repair"))
+    defaults = _make_defaults()
+    filters = Filters()
+
+    dir1 = _create_dir_with_images(tmp, "base")
+    base_tree = _make_tree(defaults, filters, dir1, ["a.jpg"])
+
+    legacy_module = types.ModuleType("enkan.utils.Defaults")
+    exec(
+        "class Defaults:\n"
+        "    pass\n",
+        legacy_module.__dict__,
+    )
+    sys.modules["enkan.utils.Defaults"] = legacy_module
+    legacy_defaults = legacy_module.Defaults()
+    legacy_defaults._mode = {1: ("w", [0, 0])}
+    legacy_defaults.args_mode = None
+    legacy_defaults.global_mode = None
+
+    original_getstate = Tree.__getstate__
+
+    def legacy_getstate(tree):
+        state = tree.__dict__.copy()
+        state.pop("build_state", None)
+        state.pop("build_filters", None)
+        state["defaults"] = legacy_defaults
+        state["filters"] = filters
+        state["_pickle_version"] = Tree.PICKLE_VERSION - 1
+        return state
+
+    tree_path = tmp / "legacy.tree"
+    try:
+        Tree.__getstate__ = legacy_getstate
+        with open(tree_path, "wb") as f:
+            pickle.dump(base_tree, f, protocol=pickle.HIGHEST_PROTOCOL)
+    finally:
+        Tree.__getstate__ = original_getstate
+        sys.modules.pop("enkan.utils.Defaults", None)
+
+    builder = MultiSourceBuilder(defaults, filters)
+    loaded_tree, warnings = builder.build([str(tree_path)])
+
+    assert warnings == []
+    assert os.path.normpath(dir1) in loaded_tree.path_lookup
+    assert loaded_tree.build_state.mode == {1: ("w", [0, 0])}
 
 
 def test_outdated_tree_repairs_missing_indexes_without_txt_fallback():
@@ -677,35 +718,58 @@ def test_file_level_globals_do_not_leak_between_inputs():
     assert str(first_image) in paths
     assert str(first_video) not in paths
     assert str(second_video) in paths
-    assert defaults.global_video is None
+    assert filters.include_video is True
 
 
-def test_source_scope_preserves_cli_precedence_and_isolates_defaults_mutation():
-    defaults = Defaults(
-        args=SimpleNamespace(
-            mode="b2",
-            dont_recurse=False,
-            video=True,
-            debug=2,
-            no_background=False,
-            quiet=False,
-        )
+def test_runtime_filters_remove_videos_without_changing_build_scope():
+    selection_scope = SelectionScope.from_parts(
+        ["a.jpg", "clip.mp4", "b.jpg"],
+        [1.0, 2.0, 3.0],
+        [
+            SelectionUnit(
+                node_key="root",
+                node_level=1,
+                ancestor_keys=("root",),
+                image_paths=["a.jpg", "clip.mp4", "b.jpg"],
+                weights=[1.0, 2.0, 3.0],
+                cum_weights=[1.0, 3.0, 6.0],
+                base_total=6.0,
+                start_index=0,
+            )
+        ],
     )
-    defaults.set_global_defaults(mode={3: ("w", [0, 0])}, dont_recurse=True)
-    defaults.set_global_video(video=False)
-    defaults.groups["shared"] = {"proportion": 10}
 
-    source_scope = SourceScope.from_runtime(defaults, Filters())
+    filtered = RuntimeFilters(include_video=False).apply_to_selection_scope(
+        selection_scope
+    )
 
-    assert resolve_mode(source_scope.defaults.mode, 2)[0] == "b"
-    assert source_scope.defaults.video is True
-    source_scope.defaults.set_global_defaults(mode={4: ("b", [1, 2])})
-    source_scope.defaults.set_global_defaults(dont_recurse=False)
-    source_scope.defaults.groups["shared"]["proportion"] = 99
+    assert selection_scope.image_paths == ["a.jpg", "clip.mp4", "b.jpg"]
+    assert filtered.image_paths == ["a.jpg", "b.jpg"]
+    assert filtered.weights == [1.0, 3.0]
+    assert filtered.selection_units[0].image_paths == ["a.jpg", "b.jpg"]
 
-    assert defaults.global_mode == {3: ("w", [0, 0])}
-    assert defaults.global_dont_recurse is True
-    assert defaults.groups["shared"]["proportion"] == 10
+
+def test_source_scope_preserves_cli_precedence_and_isolates_build_state_mutation():
+    build_state = BuildState(
+        mode=ensure_mode_map("b2"),
+        cli_mode=ensure_mode_map("b2"),
+        cli_mode_pinned=True,
+    )
+    build_state.set_mode({3: ("w", [0, 0])})
+    build_state.groups["shared"] = {"proportion": 10}
+    filters = Filters(dont_recurse=True, include_video=False)
+
+    source_scope = SourceScope.from_runtime(build_state, filters)
+
+    assert resolve_mode(source_scope.build_state.mode, 3)[0] == "w"
+    assert source_scope.build_filters.include_video is False
+    source_scope.build_state.set_mode({4: ("b", [1, 2])})
+    source_scope.build_filters.dont_recurse = False
+    source_scope.build_state.groups["shared"]["proportion"] = 99
+
+    assert build_state.mode == {3: ("w", [0, 0])}
+    assert filters.dont_recurse is True
+    assert build_state.groups["shared"]["proportion"] == 10
 
 
 def test_source_scope_isolates_filters_mutation():
@@ -714,8 +778,8 @@ def test_source_scope_isolates_filters_mutation():
     filters.preprocess_ignored_files()
 
     source_scope = SourceScope.from_runtime(_make_defaults(), filters)
-    source_scope.filters.add_must_not_contain("skip")
-    source_scope.filters.add_dont_recurse_beyond_folder(r"C:\tmp")
+    source_scope.build_filters.add_must_not_contain("skip")
+    source_scope.build_filters.add_dont_recurse_beyond_folder(r"C:\tmp")
 
     assert "skip" not in filters.must_not_contain
     assert r"C:\tmp" not in filters.dont_recurse_beyond
@@ -965,7 +1029,7 @@ def test_lst_plain_and_weighted_merge():
     assert warnings == [] or warnings is not None
 
 
-def test_merger_replaces_images_for_matching_path(defaults: Defaults, filters: Filters):
+def test_merger_replaces_images_for_matching_path(defaults: BuildState, filters: Filters):
     base = _make_tree(defaults, filters, r"C:\foo", [r"C:\foo\a.jpg"])
     incoming = _make_tree(defaults, filters, r"C:\foo", [r"C:\foo\b.jpg"])
 
@@ -981,7 +1045,7 @@ def test_merger_replaces_images_for_matching_path(defaults: Defaults, filters: F
     assert r"C:\foo\a.jpg" not in merged_images
 
 
-def test_merger_replaces_only_matching_path_images(defaults: Defaults, filters: Filters):
+def test_merger_replaces_only_matching_path_images(defaults: BuildState, filters: Filters):
     base = _make_tree(defaults, filters, r"C:\foo", [r"C:\foo\a.jpg", r"C:\bar\keep.jpg"])
     incoming = _make_tree(defaults, filters, r"C:\foo", [r"C:\foo\new.jpg"])
 
@@ -998,7 +1062,7 @@ def test_merger_replaces_only_matching_path_images(defaults: Defaults, filters: 
     assert r"C:\foo\a.jpg" not in merged_images
 
 
-def test_merger_adds_new_branch(defaults: Defaults, filters: Filters):
+def test_merger_adds_new_branch(defaults: BuildState, filters: Filters):
     base = _make_tree(defaults, filters, r"C:\foo", ["a.jpg"])
     incoming = _make_tree(defaults, filters, r"C:\bar", ["x.jpg"])
     merger = TreeMerger()
@@ -1011,7 +1075,7 @@ def test_merger_adds_new_branch(defaults: Defaults, filters: Filters):
     assert os.path.normpath(r"C:\bar") in result.tree.path_lookup
 
 
-def test_merger_overwrites_user_proportion_on_match(defaults: Defaults, filters: Filters):
+def test_merger_overwrites_user_proportion_on_match(defaults: BuildState, filters: Filters):
     base = _make_tree(defaults, filters, r"C:\foo", ["a.jpg"])
     base_node = base.path_lookup[os.path.normpath(r"C:\foo")]
     base_node.proportion = 25
@@ -1036,7 +1100,7 @@ def test_merger_overwrites_user_proportion_on_match(defaults: Defaults, filters:
     assert merged_node.proportion == 25
 
 
-def test_merger_group_and_graft_offset_applied_to_leaf(defaults: Defaults, filters: Filters):
+def test_merger_group_and_graft_offset_applied_to_leaf(defaults: BuildState, filters: Filters):
     incoming = _make_tree(defaults, filters, r"C:\foo\bar", ["x.jpg"])
     incoming_node = incoming.path_lookup[os.path.normpath(r"C:\foo\bar")]
     incoming_node.group = "g1"
@@ -1055,7 +1119,7 @@ def test_merger_group_and_graft_offset_applied_to_leaf(defaults: Defaults, filte
     assert getattr(added_node, "group", None) == "g1"
 
 
-def test_merger_graft_offset_below_lowest_rung_raises(defaults: Defaults, filters: Filters):
+def test_merger_graft_offset_below_lowest_rung_raises(defaults: BuildState, filters: Filters):
     incoming = _make_tree(defaults, filters, r"C:\foo\bar", ["x.jpg"])
     base = _make_tree(defaults, filters, r"C:\foo", [])
 
@@ -1070,7 +1134,7 @@ def test_merger_graft_offset_below_lowest_rung_raises(defaults: Defaults, filter
 
 
 def test_merger_existing_structural_node_with_incoming_images_applies_graft_offset(
-    defaults: Defaults, filters: Filters
+    defaults: BuildState, filters: Filters
 ):
     # Base tree creates C:\foo\bar as structural-only via deeper child.
     base = _make_tree(defaults, filters, r"C:\foo\bar\leaf", ["base.jpg"])
@@ -1096,7 +1160,7 @@ def test_merger_existing_structural_node_with_incoming_images_applies_graft_offs
 
 
 def test_merger_replaces_specific_image_virtual_node_payload(
-    defaults: Defaults, filters: Filters
+    defaults: BuildState, filters: Filters
 ):
     image_path = os.path.normpath(r"C:\foo\picked.jpg")
     virtual_node_path = os.path.splitext(image_path)[0]
@@ -1116,8 +1180,11 @@ def test_merger_replaces_specific_image_virtual_node_payload(
     assert merged_images == [image_path]
 
 
-def test_apply_mode_and_recalculate_respects_user_proportion(defaults: Defaults, filters: Filters):
-    defaults.set_global_defaults(mode={1: ("b", (0, 0))})
+def test_apply_mode_and_recalculate_respects_user_proportion(
+    defaults: BuildState,
+    filters: Filters,
+):
+    defaults.set_mode({1: ("b", (0, 0))})
     tree = _make_tree(defaults, filters, r"C:\foo", ["a.jpg", "b.jpg"])
     node = tree.path_lookup[os.path.normpath(r"C:\foo")]
     node.user_proportion = 20

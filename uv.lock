@@ -104,7 +104,7 @@ wheels = [
 
 [[package]]
 name = "enkan"
-version = "2.6.5.dev10"
+version = "2.7.0.dev3"
 source = { editable = "." }
 dependencies = [
     { name = "matplotlib" },

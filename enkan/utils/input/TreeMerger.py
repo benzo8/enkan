@@ -294,7 +294,7 @@ class TreeMerger:
         """
         Create a new tree with all nodes shifted up/down by offset levels.
         """
-        shifted = Tree(tree.defaults, tree.filters)
+        shifted = Tree(tree.build_state, tree.build_filters)
         shifted.built_mode = getattr(tree, "built_mode", None)
         shifted.built_mode_string = getattr(tree, "built_mode_string", None)
         shifted.lst_inferred_mode = getattr(tree, "lst_inferred_mode", None)

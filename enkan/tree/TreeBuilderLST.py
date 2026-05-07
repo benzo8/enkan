@@ -7,7 +7,7 @@ from typing import Dict, List, Tuple
 
 from enkan.constants import ROOT_NODE_NAME
 from enkan.tree.Tree import Tree
-from enkan.utils.Defaults import serialise_mode
+from enkan.utils.Mode import serialise_mode
 from enkan.utils.progress import progress
 
 logger = logging.getLogger(__name__)

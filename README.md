@@ -126,8 +126,8 @@ Text files let you describe complex shows declaratively. General rules:
 | `[gN]` | Graft this branch up to tree level `N`, letting you bubble deep folders to a shallower menu. |
 | `[>group-name]` | Assign the line to a named group so you can share grafting, proportion, or mode changes. Combine with a `*` line to define the group (see below). |
 | `[f]` | Treat a directory as a flat bucket: gather every image under it into one node instead of mirroring the folder hierarchy. |
-| `[v]` / `[nv]` | Force-enable or disable video for this branch (overrides the default or CLI flag). |
-| `[m]` / `[nm]` | Force the slideshow to mute or unmute when media from this branch plays. |
+| `[v]` / `[nv]` | Force-enable or disable video inclusion while building this branch from a `.txt` file. |
+| `[m]` / `[nm]` | Deprecated no-op. Use `slideshow.mute` or `--no-mute` for runtime mute defaults. |
 | `[/]` | Do not recurse beyond this directory; only its direct files are considered. |
 
 Modifiers can appear in any order so long as they precede the path, for example:
@@ -144,7 +144,7 @@ Use a line whose path is just `*` to define global or group-level behaviour:
 
 ``` bash
 [b1w2]*                                     # Balanced top level, weighted from level 2 downward
-[v][nm]*                                    # Default to video enabled and audio unmuted
+[v]*                                        # Default to including video in this input file
 [>portraits][g3][%30%][w4,-20]*             # Define the "portraits" group once
 [>portraits]F:\Photos\Portrait Sessions     # Apply the group to a folder
 ```
@@ -174,7 +174,7 @@ A group definition stores graft level, proportion, and mode modifiers. Any line 
 | `--auto [N]` | Start automatic advance, optionally setting interval in milliseconds. |
 | `--interval N` | Set automatic advance interval in milliseconds without starting automatic advance. |
 | `--no-recurse` | Treat every supplied folder as non-recursive. |
-| `--video` / `--no-video` | Force-enable or disable video globally. |
+| `--video` / `--no-video` | Enable or disable runtime video playback without changing the built tree. |
 | `--no-mute` | Keep audio tracks unmuted (video default is muted). |
 | `--no-background` | Disable background cache/preload refill (useful when debugging). |
 | `--quiet` | Suppress progress bars and progress toasts. |

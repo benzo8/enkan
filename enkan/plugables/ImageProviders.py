@@ -207,7 +207,8 @@ class ImageProviders:
     def _controlled_random_mode_map(self, tree) -> dict[int, object]:
         if tree is None:
             return {}
-        return getattr(tree, "defaults", None).mode or getattr(tree, "built_mode", None) or {}
+        build_state = getattr(tree, "build_state", None)
+        return getattr(build_state, "mode", None) or getattr(tree, "built_mode", None) or {}
 
     def _controlled_random_balance_level(self, tree) -> int:
         mode_map = self._controlled_random_mode_map(tree)

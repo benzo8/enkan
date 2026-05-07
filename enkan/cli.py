@@ -10,8 +10,8 @@ from enkan.tree.Tree import Tree
 from enkan.tree.tree_logic import (
     extract_selection_scope_from_tree,
 )
-from enkan.utils.Defaults import Defaults, set_current_defaults
-from enkan.utils.Filters import Filters
+from enkan.utils.BuildState import BuildState
+from enkan.utils.Filters import BuildFilters, RuntimeFilters
 from enkan.utils.SelectionWeights import SelectionWeights
 from enkan.utils.input.MultiSourceBuilder import MultiSourceBuilder
 
@@ -20,10 +20,13 @@ logger = logging.getLogger("enkan.main")
 def main_with_args(args) -> None:
     config = Config.from_args(args)
 
-    defaults: Defaults = Defaults(args=args, config=config)
-    set_current_defaults(defaults)
-    filters: Filters = Filters()
-    filters.preprocess_ignored_files()
+    build_state = BuildState.from_config(
+        config,
+        cli_mode_pinned=config.is_cli_override("slideshow.mode"),
+    )
+    build_filters = BuildFilters(dont_recurse=bool(getattr(args, "no_recurse", False)))
+    build_filters.preprocess_ignored_files()
+    runtime_filters = RuntimeFilters(include_video=bool(config("slideshow.video")))
     tree: Tree = None
 
     # Normalize input_files to list
@@ -35,7 +38,7 @@ def main_with_args(args) -> None:
         input_files = list(args.input_file)
 
     # Build the tree from multiple sources
-    builder = MultiSourceBuilder(defaults, filters)
+    builder = MultiSourceBuilder(build_state, build_filters)
     tree, merge_warnings = builder.build(input_files)
     if merge_warnings:
         for msg in merge_warnings:
@@ -49,7 +52,7 @@ def main_with_args(args) -> None:
     # Print tree if requested
     if args.printtree:
         from enkan.tree.diagnostics import print_tree
-        print_tree(defaults, tree.root, max_depth=args.testdepth or 9999)
+        print_tree(build_state, tree.root, max_depth=args.testdepth or 9999)
         return
 
     # Output tree to file if requested
@@ -65,10 +68,12 @@ def main_with_args(args) -> None:
         logger.info("Tree written to %s", output_path)
         return
 
-    selection_scope = extract_selection_scope_from_tree(
-        tree,
-        test_iterations=args.test,
+    selection_scope = runtime_filters.apply_to_selection_scope(
+        extract_selection_scope_from_tree(tree)
     )
+    if not selection_scope.image_paths:
+        logger.error("No displayable media remains after applying runtime filters.")
+        return
     images = selection_scope.image_paths
     weights = selection_scope.weights
         
@@ -85,7 +90,7 @@ def main_with_args(args) -> None:
             images,
             weights,
             args.input_file,
-            config("slideshow.mode"),
+            tree.current_mode_string(),
             output_path,
         )
         logger.info("Output written to %s", output_path)
@@ -104,7 +109,7 @@ def main_with_args(args) -> None:
             args.test,
             args.testdepth,
             args.histo,
-            defaults,
+            build_state,
             test_models=args.test_model,
         )
         return
@@ -115,7 +120,7 @@ def main_with_args(args) -> None:
         images,
         SelectionWeights.from_parts(weights, cum_weights),
         selection_scope,
-        defaults,
-        filters,
+        build_state,
+        runtime_filters,
         config,
     )

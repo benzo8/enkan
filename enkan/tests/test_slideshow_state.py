@@ -176,7 +176,6 @@ def test_set_provider_seeds_status_from_current_media_without_history_record():
     slideshow.image_paths = ["root\\folder\\one.jpg"]
     slideshow.current_image_path = "root\\folder\\one.jpg"
     slideshow.current_image_index = 0
-    slideshow.defaults = SimpleNamespace(background=False)
     slideshow.selection_weights = SimpleNamespace(
         provider_kwargs=lambda: {"weights": [1.0]},
         weights=[1.0],

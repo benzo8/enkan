@@ -50,6 +50,13 @@ def get_arg_parser() -> argparse.ArgumentParser:
         "--histo", action="store_true", help="Show distribution histogram"
     )
     parser.add_argument(
+        "--no-recurse",
+        "--nr",
+        dest="no_recurse",
+        action="store_true",
+        help="Do not recurse through folder inputs while building txt/folder trees",
+    )
+    parser.add_argument(
         "--debug",
         type=int,
         choices=[1, 2, 3, 4, 5],

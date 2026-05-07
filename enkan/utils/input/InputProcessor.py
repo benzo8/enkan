@@ -6,16 +6,16 @@ import logging
 from enkan import constants
 from enkan.tree.Tree import Tree
 from enkan.utils import utils
-from enkan.utils.Defaults import Mode
+from enkan.utils.Mode import Mode
 from enkan.utils.progress import progress
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
 class InputProcessor:
-    def __init__(self, defaults, filters):
-        self.defaults = defaults
-        self.filters = filters
+    def __init__(self, build_state, build_filters):
+        self.build_state = build_state
+        self.build_filters = build_filters
         self.detected_mode = None
         self.detected_lowest = None
 
@@ -153,17 +153,17 @@ class InputProcessor:
         # Handle filters
         if line.startswith("[+]"):
             keyword: str = line[3:].strip()
-            self.filters.add_must_contain(keyword)
+            self.build_filters.add_must_contain(keyword)
             return None, None
         elif line.startswith("[-]"):
             path_or_keyword: str = line[3:].strip()
             if os.path.isabs(path_or_keyword):
                 if os.path.isfile(path_or_keyword):
-                    self.filters.add_ignored_file(path_or_keyword)
+                    self.build_filters.add_ignored_file(path_or_keyword)
                 else:
-                    self.filters.add_ignored_dir(path_or_keyword)
+                    self.build_filters.add_ignored_dir(path_or_keyword)
             else:
-                self.filters.add_must_not_contain(path_or_keyword)
+                self.build_filters.add_must_not_contain(path_or_keyword)
             return None, None
 
         # Strip quotes early (if users quote paths)
@@ -174,7 +174,7 @@ class InputProcessor:
         # Remove all modifiers from the line to get the path
         path = constants.MODIFIER_PATTERN.sub("", line).strip()
 
-        # Defaults/state container (handlers mutate this)
+        # Per-line state container (handlers mutate this)
         # Can be global: video, mute, mode_modifier, dont_recurse
         # Can be inherited: weight_modifier, is_percentage, video
         # Node-only: proportion, graft_level, group, flat
@@ -226,13 +226,21 @@ class InputProcessor:
 
         def handle_mute(_s: str):
             state["mute"] = True
+            logger.warning(
+                "Ignoring deprecated [m] input modifier; use slideshow.mute "
+                "or --no-mute for runtime mute defaults."
+            )
 
         def handle_no_mute(_s: str):
             state["mute"] = False
+            logger.warning(
+                "Ignoring deprecated [nm] input modifier; use slideshow.mute "
+                "or --no-mute for runtime mute defaults."
+            )
 
         def handle_dont_recurse(_s: str):
             state["dont_recurse"] = True
-            self.filters.add_dont_recurse_beyond_folder(path)
+            self.build_filters.add_dont_recurse_beyond_folder(path)
 
         # Ordered list of (pattern, handler)
         HANDLERS = (
@@ -262,7 +270,7 @@ class InputProcessor:
 
         if path == "*":
             if state["group"]:
-                self.defaults.groups[state["group"]] = {
+                self.build_state.groups[state["group"]] = {
                     "proportion": state["proportion"] or None,
                     "user_proportion": state["user_proportion"] or None,
                     "graft_level": state["graft_level"] or None,
@@ -270,21 +278,22 @@ class InputProcessor:
                 }
                 return None, None
             if state["video"] is not None:
-                self.defaults.set_global_video(video=state["video"])
+                self.build_filters.include_video = state["video"]
             if state["mode_modifier"]:
                 self.detected_mode = state["mode_modifier"]
                 self.detected_lowest = min(state["mode_modifier"].keys())
             if recdepth == 1 and apply_global_mode:
-                self.defaults.set_global_defaults(
-                    mode=state["mode_modifier"] or self.defaults.mode,
-                    dont_recurse=state["dont_recurse"],
+                self.build_state.set_mode(
+                    state["mode_modifier"] or self.build_state.mode
                 )
+                if state["dont_recurse"] is not None:
+                    self.build_filters.dont_recurse = state["dont_recurse"]
             return None, None
 
         # Calculate an effective graft level when harmonising modes across inputs
         def _effective_graft_level(path_str: str) -> int | None:
             group_config = (
-                self.defaults.groups.get(state["group"]) if state["group"] else None
+                self.build_state.groups.get(state["group"]) if state["group"] else None
             )
             group_graft_level = (
                 group_config.get("graft_level") if group_config else None

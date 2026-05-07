@@ -1,8 +1,8 @@
 import tkinter as tk
 
 from enkan.config import Config
-from enkan.utils.Defaults import Defaults
-from enkan.utils.Filters import Filters
+from enkan.utils.BuildState import BuildState
+from enkan.utils.Filters import RuntimeFilters
 from enkan.utils.SelectionWeights import SelectionWeights
 from enkan.tree.Tree import Tree
 from enkan.tree.tree_logic import SelectionScope
@@ -15,8 +15,8 @@ def start_slideshow(
     all_image_paths: list,
     selection_weights: SelectionWeights,
     selection_scope: SelectionScope | None,
-    defaults: Defaults, 
-    filters: Filters, 
+    build_state: BuildState,
+    runtime_filters: RuntimeFilters,
     config: Config | None = None,
 ) -> None:
     """
@@ -26,7 +26,7 @@ def start_slideshow(
         all_image_paths (list): List of image paths.
         selection_weights (SelectionWeights): Weight data corresponding to image paths.
         tree (Tree): Tree object containing the image hierarchy.
-        defaults (object): Defaults object containing configuration.
+        build_state: state used for runtime mode recalculation.
     """
 
     root = tk.Tk()
@@ -36,8 +36,8 @@ def start_slideshow(
         all_image_paths,
         selection_weights,
         selection_scope,
-        defaults,
-        filters,
+        build_state,
+        runtime_filters,
         config,
     )
     root.mainloop()

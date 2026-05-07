@@ -9,8 +9,9 @@ from .TreeBuilderLST import TreeBuilderLST
 from .TreeNode import TreeNode
 from .selection_scope import SelectionScope, SelectionUnit
 from .diagnostics import report_branch_weight_sums
-from enkan.utils.Defaults import Defaults, resolve_mode, ModeMap
-from enkan.utils.Filters import Filters
+from enkan.utils.BuildState import BuildState
+from enkan.utils.Mode import resolve_mode, ModeMap
+from enkan.utils.Filters import BuildFilters
 from enkan.constants import TOTAL_WEIGHT
 from enkan.utils.logging import HURT_LEVEL
 
@@ -28,8 +29,8 @@ def _ancestor_keys_for_node(node: TreeNode) -> tuple[str, ...]:
 
 
 def build_tree(
-    defaults: Defaults,
-    filters: Filters,
+    build_state: BuildState,
+    build_filters: BuildFilters,
     image_dirs: Mapping[str, dict] | None = None,
     specific_images: Optional[Mapping[str, dict]] = None,
     mode: Optional[ModeMap] = None,
@@ -44,7 +45,7 @@ def build_tree(
         kind="txt" (default): use directory/image mappings (image_dirs/specific_images)
         kind="lst": build from a .lst path
     """
-    tree = Tree(defaults, filters)
+    tree = Tree(build_state, build_filters)
 
     source_kind = (kind or "txt").lower()
     match source_kind:
@@ -139,7 +140,8 @@ def calculate_weights(tree: Tree, ignore_user_proportion: bool = False) -> None:
         mode_modifier = node.mode_modifier or mode_modifier
         child_level = node.level + 1
         child_mode, slope = resolve_mode(
-            tree.defaults.mode | (node.children[0].mode_modifier or {}), child_level
+            tree.build_state.mode | (node.children[0].mode_modifier or {}),
+            child_level,
         )
 
         image_bucket: _ImageBucket | None = (
@@ -263,10 +265,10 @@ def calculate_weights(tree: Tree, ignore_user_proportion: bool = False) -> None:
 
     _reset_proportions(tree.root)
 
-    lowest_rung: int = min(tree.defaults.mode.keys())
+    lowest_rung: int = min(tree.build_state.mode.keys())
     starting_nodes: List[TreeNode] = tree.get_nodes_at_level(lowest_rung) or [tree.root]
 
-    mode, slope = resolve_mode(tree.defaults.mode, lowest_rung)
+    mode, slope = resolve_mode(tree.build_state.mode, lowest_rung)
 
     starting_nodes = _fill_missing_proportions(
         starting_nodes,
@@ -301,7 +303,7 @@ def extract_selection_scope_from_tree(
         tree (Tree): The tree from which to extract image paths and weights.
         start_node (TreeNode, optional): The node from which to start the traversal. If None, starts from the root.
         test_iterations (int, optional): If provided, use node names instead of image paths for output
-            (useful for testing distributions). Defaults to None.
+            (useful for testing distributions). Default is None.
 
     Returns:
         SelectionScope: Flattened image/weight arrays plus node-level selection units.
@@ -355,7 +357,7 @@ def extract_selection_scope_from_tree(
     traverse_node(start_node)
 
     if unweighted_image_nodes:
-        lowest_rung = min(tree.defaults.mode.keys()) if tree.defaults.mode else None
+        lowest_rung = min(tree.build_state.mode.keys()) if tree.build_state.mode else None
         sample = ", ".join(
             f"{n.path} (level {n.level}, images {len(n.images)})"
             for n in unweighted_image_nodes[:3]
@@ -386,13 +388,13 @@ def extract_image_paths_and_weights_from_tree(
 
 
 def apply_mode_and_recalculate_scope(
-    tree: Tree, defaults: Defaults, ignore_user_proportion: bool = False
+    tree: Tree, build_state: BuildState, ignore_user_proportion: bool = False
 ) -> SelectionScope:
     """
-    Apply the current defaults.mode to the tree, recalculate weights, and return
+    Apply the current build_state.mode to the tree, recalculate weights, and return
     a full SelectionScope for downstream runtime consumers.
     """
-    tree.defaults = defaults
+    tree.build_state = build_state
     clear_weights(tree)
     calculate_weights(tree, ignore_user_proportion=ignore_user_proportion)
     selection_scope = extract_selection_scope_from_tree(tree)
@@ -402,15 +404,15 @@ def apply_mode_and_recalculate_scope(
 
 
 def apply_mode_and_recalculate(
-    tree: Tree, defaults: Defaults, ignore_user_proportion: bool = False
+    tree: Tree, build_state: BuildState, ignore_user_proportion: bool = False
 ) -> tuple[list[str], list[float], list[float]]:
     """
-    Apply the current defaults.mode to the tree, recalculate weights, and return
+    Apply the current build_state.mode to the tree, recalculate weights, and return
     images/weights/cumulative weights for downstream consumers.
     """
     selection_scope = apply_mode_and_recalculate_scope(
         tree,
-        defaults,
+        build_state,
         ignore_user_proportion=ignore_user_proportion,
     )
     return (

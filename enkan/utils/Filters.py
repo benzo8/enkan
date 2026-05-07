@@ -1,22 +1,33 @@
 import os
+from dataclasses import dataclass
+from itertools import accumulate
 
-class Filters:
-    def __init__(self):
+from enkan.tree.selection_scope import SelectionScope, SelectionUnit
+from enkan.utils import utils
+
+
+class BuildFilters:
+    def __init__(self, *, dont_recurse: bool = False, include_video: bool = True):
         self.must_contain = set()
         self.must_not_contain = set()
         self.ignored_dirs = set()
         self.ignored_files = set()
         self.ignored_files_dirs = set()
+        self.dont_recurse = dont_recurse
         self.dont_recurse_beyond = set()
+        self.include_video = include_video
 
-    def clone_for_source(self) -> "Filters":
+    def clone_for_source(self) -> "BuildFilters":
         """
         Create a source-local clone for input parsing/building.
 
         This preserves top-level filter state while isolating per-source filter
         mutations such as txt-local include/exclude directives.
         """
-        clone = Filters()
+        clone = BuildFilters(
+            dont_recurse=self.dont_recurse,
+            include_video=self.include_video,
+        )
         clone.must_contain = set(self.must_contain)
         clone.must_not_contain = set(self.must_not_contain)
         clone.ignored_dirs = set(self.ignored_dirs)
@@ -67,3 +78,57 @@ class Filters:
             return 3
 
         return 0
+
+
+@dataclass(frozen=True)
+class RuntimeFilters:
+    include_video: bool = True
+
+    def apply_to_selection_scope(self, selection_scope: SelectionScope) -> SelectionScope:
+        if self.include_video:
+            return selection_scope
+
+        image_paths: list[str] = []
+        weights: list[float] = []
+        selection_units: list[SelectionUnit] = []
+
+        for unit in selection_scope.selection_units:
+            unit_images: list[str] = []
+            unit_weights: list[float] = []
+            start_index = len(image_paths)
+            for image_path, weight in zip(unit.image_paths, unit.weights):
+                if utils.is_videofile(image_path):
+                    continue
+                image_paths.append(image_path)
+                weights.append(weight)
+                unit_images.append(image_path)
+                unit_weights.append(weight)
+            if unit_images:
+                selection_units.append(
+                    SelectionUnit(
+                        node_key=unit.node_key,
+                        node_level=unit.node_level,
+                        ancestor_keys=unit.ancestor_keys,
+                        image_paths=unit_images,
+                        weights=unit_weights,
+                        cum_weights=list(accumulate(unit_weights)),
+                        base_total=sum(unit_weights),
+                        start_index=start_index,
+                    )
+                )
+
+        if not selection_scope.selection_units:
+            for image_path, weight in zip(selection_scope.image_paths, selection_scope.weights):
+                if utils.is_videofile(image_path):
+                    continue
+                image_paths.append(image_path)
+                weights.append(weight)
+
+        return SelectionScope.from_parts(
+            image_paths,
+            weights,
+            selection_units,
+        )
+
+
+Filters = BuildFilters

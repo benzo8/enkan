@@ -168,19 +168,6 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
     ),
     ConfigKey(
         "slideshow",
-        "dont_recurse",
-        False,
-        parse_bool,
-        argparse_entries=entries(
-            "no-recurse",
-            "nr",
-            action="store_true",
-            help="Do not recurse through folders",
-        ),
-        scope="both",
-    ),
-    ConfigKey(
-        "slideshow",
         "video",
         True,
         parse_bool,
@@ -370,6 +357,10 @@ class Config:
         if app_value is not None:
             return app_value
         return config_key.default
+
+    def is_cli_override(self, key: str) -> bool:
+        config_key = _require_config_key(key)
+        return self._cli_value(config_key) is not None
 
     def _cli_value(self, config_key: ConfigKey) -> Any:
         if self.args is None or not config_key.argparse_entries:

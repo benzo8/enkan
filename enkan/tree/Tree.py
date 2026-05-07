@@ -7,27 +7,47 @@ from typing import Any, Optional, Literal
 # --- Local ---
 from .TreeNode import TreeNode
 from enkan.constants import ROOT_NODE_NAME
-from enkan.utils.Defaults import Defaults, serialise_mode, ModeMap
-from enkan.utils.Filters import Filters
+from enkan.utils.BuildState import BuildState
+from enkan.utils.Mode import serialise_mode, ModeMap
+from enkan.utils.Filters import BuildFilters
 
 
 class Tree:
-    PICKLE_VERSION = 4
+    PICKLE_VERSION = 5
 
-    def __init__(self, defaults: Defaults, filters: Filters) -> None:
+    def __init__(self, build_state: BuildState, build_filters: BuildFilters) -> None:
         # Use string path, not int
         self.root: TreeNode = TreeNode(name=ROOT_NODE_NAME, path=ROOT_NODE_NAME)
         self.node_lookup: dict[str, TreeNode] = {ROOT_NODE_NAME: self.root}
         self.path_lookup: dict[str, TreeNode] = {ROOT_NODE_NAME: self.root}
         self.virtual_image_lookup: dict[str, TreeNode] = {ROOT_NODE_NAME: self.root}
-        self.defaults: Defaults = defaults
-        self.filters: Filters = filters
+        self.build_state: BuildState = build_state
+        self.build_filters: BuildFilters = build_filters
         self.built_mode_string: Optional[str] = None
         self.built_mode: Optional[ModeMap] = None
         self._post_init_indexes()
 
     def _post_init_indexes(self) -> None:
         # Repair fields that may be missing when loading older .tree pickles.
+        if not hasattr(self, "build_state"):
+            legacy_defaults = getattr(self, "defaults", None)
+            self.build_state = BuildState(
+                mode=getattr(legacy_defaults, "mode", None) or BuildState().mode
+            )
+        if not hasattr(self, "build_filters"):
+            legacy_filters = getattr(self, "filters", None)
+            self.build_filters = BuildFilters()
+            if legacy_filters is not None:
+                for name in (
+                    "must_contain",
+                    "must_not_contain",
+                    "ignored_dirs",
+                    "ignored_files",
+                    "ignored_files_dirs",
+                    "dont_recurse_beyond",
+                ):
+                    if hasattr(legacy_filters, name):
+                        setattr(self.build_filters, name, set(getattr(legacy_filters, name)))
         if not hasattr(self, "virtual_image_lookup"):
             self.virtual_image_lookup = {}
         if not hasattr(self, "node_lookup"):
@@ -147,6 +167,8 @@ class Tree:
     def __getstate__(self) -> dict[str, Any]:
         state: dict[str, Any] = self.__dict__.copy()
         state.pop("_container_path_overrides", None)
+        state.pop("defaults", None)
+        state.pop("filters", None)
         state["_pickle_version"] = self.PICKLE_VERSION
         return state
 
@@ -326,7 +348,7 @@ class Tree:
         return os.path.join(ROOT_NODE_NAME, *components).lower()
 
     def current_mode_string(self) -> Optional[str]:
-        return serialise_mode(self.defaults.mode or {})
+        return serialise_mode(self.build_state.mode or {})
 
     def set_path_to_level(self, path: str, level: int, group: str | None = None) -> str:
         current_level: int = self.calculate_level(path)

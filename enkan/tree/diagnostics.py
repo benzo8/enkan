@@ -7,7 +7,7 @@ from enkan.constants import TOTAL_WEIGHT
 from enkan.config import get_current_config
 from enkan.plugables.FolderSelectionMemory import FolderSelectionMemory
 from enkan.plugables.ImageProviders import ImageProviders
-from enkan.utils.Defaults import resolve_mode
+from enkan.utils.Mode import resolve_mode
 from enkan.utils.progress import progress
 from enkan.tree.TreeNode import TreeNode
 
@@ -16,7 +16,7 @@ logger: logging.Logger = logging.getLogger("enkan.tree.diagnostics")
 
 
 def print_tree(
-    defaults,
+    build_state,
     node,
     indent: str = "",
     current_depth: int = 0,
@@ -34,7 +34,7 @@ def print_tree(
 
     num_images = len(node.images) if node.images else 0
     mode, _ = resolve_mode(
-        defaults.mode | (node.mode_modifier if node.mode_modifier else {}),
+        build_state.mode | (node.mode_modifier if node.mode_modifier else {}),
         node.level,
     )
     percent_sign = "%" if node.is_percentage else ""
@@ -48,10 +48,10 @@ def print_tree(
         )
 
     for child in node.children:
-        print_tree(defaults, child, indent + " + ", current_depth + 1, max_depth)
+        print_tree(build_state, child, indent + " + ", current_depth + 1, max_depth)
 
 
-def _normalise_test_models(test_models, defaults):
+def _normalise_test_models(test_models, build_state):
     if not test_models:
         return [get_current_config()("slideshow.provider")]
     if isinstance(test_models, str):
@@ -159,10 +159,10 @@ def test_distribution(
     iterations,
     testdepth,
     histo,
-    defaults,
+    build_state,
     test_models=None,
 ):
-    models = _normalise_test_models(test_models, defaults)
+    models = _normalise_test_models(test_models, build_state)
     results_by_model = {}
     for model_name in models:
         resolved_name, counts = _directory_counts_for_model(
