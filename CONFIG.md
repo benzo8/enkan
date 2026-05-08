@@ -113,7 +113,7 @@ slideshow startup without requiring a user config file.
 
 ## Precedence
 
-The intended long-term precedence is:
+The effective precedence is:
 
 1. Built-in defaults.
 2. App config file.
@@ -122,9 +122,11 @@ The intended long-term precedence is:
 5. Command-line options.
 6. Session-only runtime changes.
 
-Registry-backed settings are wired for built-in defaults, app config, and CLI
-overrides in `2.7.0.dev2`; input-file modifier normalisation remains scoped to
-the existing build-time input pipeline.
+Command-line options are the highest persisted/user-supplied layer. They are
+intended for case-by-case overrides, so TOML config and input-file modifiers
+must not silently beat an explicit CLI argument. Input-file modifiers remain
+build-scoped; they only participate in this ordering where they express the
+same setting as a registry-backed option.
 
 For `slideshow.mode`, a tree snapshot records the final effective build mode.
 Loading a `.tree` without `--mode` uses that recorded mode; loading it with

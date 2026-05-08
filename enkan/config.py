@@ -25,7 +25,11 @@ def parse_bool(value: Any) -> bool | None:
 
 
 def parse_mode(value: Any) -> str | None:
-    return value.lower() if isinstance(value, str) and CX_PATTERN.fullmatch(value) else None
+    return (
+        value.lower()
+        if isinstance(value, str) and CX_PATTERN.fullmatch(value)
+        else None
+    )
 
 
 def parse_choice(*choices: str) -> ConfigParser:
@@ -172,8 +176,14 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         True,
         parse_bool,
         argparse_entries=(
-            ArgparseEntry(("--video",), action="store_true", help="Enable video playback"),
-            ArgparseEntry(("--no-video", "--nv"), action="store_false", help="Disable video playback"),
+            ArgparseEntry(
+                ("--video",), action="store_true", help="Enable video playback"
+            ),
+            ArgparseEntry(
+                ("--no-video", "--nv"),
+                action="store_false",
+                help="Disable video playback",
+            ),
         ),
         scope="both",
     ),
@@ -182,11 +192,13 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "mute",
         True,
         parse_bool,
-        argparse_entries=entries(
-            "no-mute",
-            "nm",
-            action="store_false",
-            help="Disable mute",
+        argparse_entries=(
+            ArgparseEntry(("--mute",), action="store_true", help="Enable mute"),
+            ArgparseEntry(
+                ("--no-mute", "--nm"),
+                action="store_false",
+                help="Disable mute",
+            ),
         ),
         scope="both",
     ),
@@ -231,6 +243,11 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
                     "in milliseconds"
                 ),
             ),
+            ArgparseEntry(
+                ("--no-auto",),
+                action="store_false",
+                help="Disable automatic slide changes",
+            ),
         ),
         scope="both",
     ),
@@ -240,11 +257,17 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "quiet",
         False,
         parse_bool,
-        argparse_entries=entries(
-            "quiet",
-            "-q",
-            action="store_true",
-            help="Suppress progress bars and progress toasts",
+        argparse_entries=(
+            ArgparseEntry(
+                ("--quiet", "-q"),
+                action="store_true",
+                help="Suppress progress bars and progress toasts",
+            ),
+            ArgparseEntry(
+                ("--no-quiet",),
+                action="store_false",
+                help="Show progress bars and progress toasts",
+            ),
         ),
         scope="both",
     ),
@@ -342,7 +365,9 @@ class Config:
         *,
         start_folder: Path | None = None,
     ) -> "Config":
-        app_config = load_app_config(getattr(args, "config", None), start_folder=start_folder)
+        app_config = load_app_config(
+            getattr(args, "config", None), start_folder=start_folder
+        )
         config = cls(app_config=app_config, args=args)
         global _current_config
         _current_config = config
@@ -447,7 +472,9 @@ def discover_config_path(start_folder: Path | None = None) -> Path | None:
     return None
 
 
-def resolve_config_path(config_path: str | None = None, start_folder: Path | None = None) -> Path | None:
+def resolve_config_path(
+    config_path: str | None = None, start_folder: Path | None = None
+) -> Path | None:
     """
     Return the config path to use.
 
@@ -461,7 +488,9 @@ def resolve_config_path(config_path: str | None = None, start_folder: Path | Non
     return discover_config_path(start_folder=start_folder)
 
 
-def load_app_config(config_path: str | None = None, start_folder: Path | None = None) -> AppConfig:
+def load_app_config(
+    config_path: str | None = None, start_folder: Path | None = None
+) -> AppConfig:
     path = resolve_config_path(config_path, start_folder=start_folder)
     if path is None:
         return AppConfig()

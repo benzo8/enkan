@@ -309,6 +309,33 @@ def test_config_facade_preserves_cli_precedence():
     assert config("slideshow.navigation_basis") == "folder"
 
 
+@pytest.mark.parametrize(
+    ("cli_args", "app_values", "key", "expected"),
+    [
+        (["--mode", "b3"], {"slideshow.mode": "b1"}, "slideshow.mode", "b3"),
+        (["--provider", "burst"], {"slideshow.provider": "random"}, "slideshow.provider", "burst"),
+        (["--random"], {"slideshow.provider": "weighted"}, "slideshow.provider", "random"),
+        (["--video"], {"slideshow.video": False}, "slideshow.video", True),
+        (["--no-video"], {"slideshow.video": True}, "slideshow.video", False),
+        (["--mute"], {"slideshow.mute": False}, "slideshow.mute", True),
+        (["--no-mute"], {"slideshow.mute": True}, "slideshow.mute", False),
+        (["--navigation-basis", "branch"], {"slideshow.navigation_basis": "folder"}, "slideshow.navigation_basis", "branch"),
+        (["--interval", "7500"], {"slideshow.interval": 1000}, "slideshow.interval", 7500),
+        (["--auto"], {"slideshow.auto": False}, "slideshow.auto", True),
+        (["--no-auto"], {"slideshow.auto": True}, "slideshow.auto", False),
+        (["--quiet"], {"progress.quiet": False}, "progress.quiet", True),
+        (["--no-quiet"], {"progress.quiet": True}, "progress.quiet", False),
+        (["--background-preload"], {"cache.background_preload": False}, "cache.background_preload", True),
+        (["--no-background"], {"cache.background_preload": True}, "cache.background_preload", False),
+    ],
+)
+def test_registered_cli_flags_override_toml(cli_args, app_values, key, expected):
+    args = get_arg_parser().parse_args(cli_args)
+    config = Config(app_config=AppConfig(values=app_values), args=args)
+
+    assert config(key) == expected
+
+
 def test_config_facade_reports_cli_override():
     args = Namespace(**{"slideshow.mode": "b3"})
     config = Config(app_config=AppConfig(values={"slideshow.mode": "b1"}), args=args)
@@ -434,6 +461,20 @@ def test_argparse_background_preload_feeds_positive_config_key():
     assert config("cache.background_preload") is True
 
 
+def test_argparse_mute_feeds_config():
+    args = get_arg_parser().parse_args(["--mute"])
+    config = Config(args=args)
+
+    assert config("slideshow.mute") is True
+
+
+def test_argparse_no_quiet_feeds_config():
+    args = get_arg_parser().parse_args(["--no-quiet"])
+    config = Config(app_config=AppConfig(values={"progress.quiet": True}), args=args)
+
+    assert config("progress.quiet") is False
+
+
 def test_argparse_interval_feeds_config_as_positive_int():
     args = get_arg_parser().parse_args(["--interval", "7500"])
     config = Config(args=args)
@@ -468,6 +509,13 @@ def test_argparse_interval_and_auto_are_composable():
 
     assert config("slideshow.auto") is True
     assert config("slideshow.interval") == 7500
+
+
+def test_argparse_no_auto_overrides_config_auto():
+    args = get_arg_parser().parse_args(["--no-auto"])
+    config = Config(app_config=AppConfig(values={"slideshow.auto": True}), args=args)
+
+    assert config("slideshow.auto") is False
 
 
 def test_argparse_does_not_generate_cache_sizing_flags():

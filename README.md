@@ -171,13 +171,13 @@ A group definition stores graft level, proportion, and mode modifiers. Any line 
 | `--mode` | Provide a global mode string such as `b1w2` to override file defaults. |
 | `--provider NAME` | Start with `weighted` / `WGT`, `controlled_random_weighted` / `CRW`, `burst` / `BUR`, or `random` / `RND`. |
 | `--random` | Compatibility shortcut for `--provider random`. |
-| `--auto [N]` | Start automatic advance, optionally setting interval in milliseconds. |
+| `--auto [N]` / `--no-auto` | Enable or disable automatic advance, optionally setting interval in milliseconds. |
 | `--interval N` | Set automatic advance interval in milliseconds without starting automatic advance. |
 | `--no-recurse` | Treat every supplied folder as non-recursive. |
 | `--video` / `--no-video` | Enable or disable runtime video playback without changing the built tree. |
-| `--no-mute` | Keep audio tracks unmuted (video default is muted). |
+| `--mute` / `--no-mute` | Enable or disable muted video playback. |
 | `--no-background` | Disable background cache/preload refill (useful when debugging). |
-| `--quiet` | Suppress progress bars and progress toasts. |
+| `--quiet` / `--no-quiet` | Suppress or show progress bars and progress toasts. |
 | `--test N` | Run `N` randomised draws and report the observed distribution. Combine with `--histo` for a matplotlib histogram. |
 | `--test_model`, `--tm` | Comma-separated provider suffixes to compare during `--test`, for example `weighted,controlled_random_weighted`. |
 | `--printtree` | Emit a text representation of the computed tree. |

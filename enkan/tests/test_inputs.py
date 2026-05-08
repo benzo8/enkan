@@ -12,6 +12,7 @@ import pytest
 from enkan.utils.BuildState import BuildState
 from enkan.utils.Filters import BuildFilters as Filters, RuntimeFilters
 from enkan.utils.Mode import ensure_mode_map, resolve_mode
+from enkan.config import AppConfig, Config
 from enkan.tree.Tree import Tree
 from enkan.tree.TreeNode import TreeNode
 from enkan.tree.Grafting import Grafting
@@ -706,6 +707,25 @@ def test_cli_mode_persists_as_tree_built_mode_over_txt_global_mode():
     assert defaults.mode == ensure_mode_map("b4b6")
     assert tree.built_mode == ensure_mode_map("b4b6")
     assert tree.built_mode_string == "b4,0,0 b6,0,0"
+
+
+def test_txt_global_mode_overrides_toml_mode_without_cli_pin():
+    tmp = Path(_ensure_case_dir("mode_precedence_toml_then_txt"))
+    config = Config(app_config=AppConfig(values={"slideshow.mode": "b2"}))
+    defaults = BuildState.from_config(
+        config,
+        cli_mode_pinned=config.is_cli_override("slideshow.mode"),
+    )
+    filters = Filters()
+    dir1 = _create_dir_with_images(tmp, os.path.join("a", "b"))
+    txt1 = tmp / "one.txt"
+    txt1.write_text(f"[b3]*\n{dir1}\n", encoding="utf-8")
+
+    tree, warnings = MultiSourceBuilder(defaults, filters).build([str(txt1)])
+
+    assert warnings == []
+    assert defaults.mode == ensure_mode_map("b3")
+    assert tree.built_mode == ensure_mode_map("b3")
 
 
 def test_tree_load_uses_built_mode_unless_cli_mode_is_provided():
