@@ -83,7 +83,7 @@ class TreeBuilderTXT:
             total=len(image_dirs),
             desc="Building tree",
             leave=True,
-            unit="dir",
+            unit="file",
             dynamic_ncols=True,
             tk_root=tk_root,
             tk_enabled=tk_enabled,
@@ -145,6 +145,7 @@ class TreeBuilderTXT:
             try:
                 with os.scandir(current_path) as iterator:
                     for entry in iterator:
+                        pbar.desc = f"Processing {current_path}"
                         try:
                             if entry.is_dir(follow_symlinks=False):
                                 dirs.append(entry.name)
@@ -152,6 +153,8 @@ class TreeBuilderTXT:
                                 follow_symlinks=False
                             ):
                                 files.append(entry.name)
+                                pbar.total += 1
+                                pbar.refresh()
                         except OSError:
                             continue
             except (PermissionError, FileNotFoundError, NotADirectoryError):
@@ -160,8 +163,6 @@ class TreeBuilderTXT:
             if should_process:
                 file_count: int = len(files)
                 if file_count:
-                    pbar.total += file_count
-                    pbar.desc = f"Processing {current_path}"
                     pbar.leave = True
                     pbar.update(file_count)
                     pbar.refresh()
