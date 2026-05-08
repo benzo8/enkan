@@ -117,10 +117,15 @@ The intended long-term precedence is:
 
 1. Built-in defaults.
 2. App config file.
-3. Command-line options.
-4. Input-file global modifiers.
-5. Input-file local modifiers.
+3. Input-file global modifiers.
+4. Input-file local modifiers.
+5. Command-line options.
 6. Session-only runtime changes.
 
-Only the first three layers are wired for migrated settings in `2.7.0.dev2`.
-Input-file modifier normalisation is planned for the next slices.
+Registry-backed settings are wired for built-in defaults, app config, and CLI
+overrides in `2.7.0.dev2`; input-file modifier normalisation remains scoped to
+the existing build-time input pipeline.
+
+For `slideshow.mode`, a tree snapshot records the final effective build mode.
+Loading a `.tree` without `--mode` uses that recorded mode; loading it with
+`--mode` applies the CLI mode instead.

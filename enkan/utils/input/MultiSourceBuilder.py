@@ -10,7 +10,7 @@ from enkan.tree.tree_logic import apply_mode_and_recalculate
 from enkan.utils.input.InputProcessor import InputProcessor
 from enkan.utils.utils import find_input_file
 from enkan.utils.BuildState import BuildState
-from enkan.utils.Mode import Mode
+from enkan.utils.Mode import Mode, copy_mode_map, serialise_mode
 from enkan.utils.Filters import BuildFilters
 from enkan.utils.input.SourceScope import SourceScope
 from enkan.utils.input.input_models import LoadedSource, SourceKind, classify_input_path
@@ -293,6 +293,9 @@ class MultiSourceBuilder:
                 logger.warning(msg)
                 raise
 
+        if self.build_state.cli_mode_pinned or getattr(tree, "built_mode", None) is not None:
+            tree.built_mode = copy_mode_map(tree.build_state.mode)
+            tree.built_mode_string = serialise_mode(tree.built_mode)
         tree.build_runtime_resolution_indexes()
 
     def _collect_tree_warnings(self, tree) -> List[str]:

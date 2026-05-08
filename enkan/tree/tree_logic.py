@@ -140,7 +140,7 @@ def calculate_weights(tree: Tree, ignore_user_proportion: bool = False) -> None:
         mode_modifier = node.mode_modifier or mode_modifier
         child_level = node.level + 1
         child_mode, slope = resolve_mode(
-            tree.build_state.mode | (node.children[0].mode_modifier or {}),
+            tree.build_state.mode_with_modifiers(node.children[0].mode_modifier),
             child_level,
         )
 

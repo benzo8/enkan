@@ -34,7 +34,7 @@ def print_tree(
 
     num_images = len(node.images) if node.images else 0
     mode, _ = resolve_mode(
-        build_state.mode | (node.mode_modifier if node.mode_modifier else {}),
+        build_state.mode_with_modifiers(node.mode_modifier),
         node.level,
     )
     percent_sign = "%" if node.is_percentage else ""

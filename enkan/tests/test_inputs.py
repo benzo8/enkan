@@ -688,6 +688,68 @@ def test_mode_precedence_cli_wins():
     assert warnings == [] or warnings is not None
     # CLI mode b2 should be in defaults and applied after merge
     assert defaults.mode.get(2) == ("b", [0, 0])
+    assert tree.built_mode == ensure_mode_map("b2")
+
+
+def test_cli_mode_persists_as_tree_built_mode_over_txt_global_mode():
+    tmp = Path(_ensure_case_dir("mode_precedence_tree_persist"))
+    defaults = _make_defaults(mode_str="b4b6")
+    filters = Filters()
+    dir1 = _create_dir_with_images(tmp, os.path.join("a", "b", "c", "d", "e"))
+    txt1 = tmp / "one.txt"
+    txt1.write_text(f"[w4,80w5b6]*\n{dir1}\n", encoding="utf-8")
+
+    builder = MultiSourceBuilder(defaults, filters)
+    tree, warnings = builder.build([str(txt1)])
+
+    assert warnings == []
+    assert defaults.mode == ensure_mode_map("b4b6")
+    assert tree.built_mode == ensure_mode_map("b4b6")
+    assert tree.built_mode_string == "b4,0,0 b6,0,0"
+
+
+def test_tree_load_uses_built_mode_unless_cli_mode_is_provided():
+    tmp = Path(_ensure_case_dir("mode_precedence_tree_load"))
+    source_defaults = _make_defaults(mode_str="b4b6")
+    filters = Filters()
+    dir1 = _create_dir_with_images(tmp, os.path.join("a", "b", "c", "d", "e"))
+    txt1 = tmp / "one.txt"
+    txt1.write_text(f"[w4,80w5b6]*\n{dir1}\n", encoding="utf-8")
+
+    tree, warnings = MultiSourceBuilder(source_defaults, filters).build([str(txt1)])
+    assert warnings == []
+
+    from enkan.tree.tree_io import write_tree_to_file
+
+    tree_path = tmp / "one.tree"
+    write_tree_to_file(tree, tree_path)
+
+    loaded_defaults = _make_defaults()
+    loaded_tree, loaded_warnings = MultiSourceBuilder(loaded_defaults, Filters()).build(
+        [str(tree_path)]
+    )
+
+    assert loaded_warnings == []
+    assert loaded_defaults.mode == ensure_mode_map("b4b6")
+    assert loaded_tree.built_mode == ensure_mode_map("b4b6")
+
+    override_defaults = _make_defaults(mode_str="w4")
+    override_tree, override_warnings = MultiSourceBuilder(
+        override_defaults,
+        Filters(),
+    ).build([str(tree_path)])
+
+    assert override_warnings == []
+    assert override_defaults.mode == ensure_mode_map("w4")
+    assert override_tree.built_mode == ensure_mode_map("w4")
+
+
+def test_cli_mode_pinned_ignores_input_local_mode_modifiers():
+    build_state = _make_defaults(mode_str="b5")
+
+    effective = build_state.mode_with_modifiers(ensure_mode_map("w5"))
+
+    assert effective == ensure_mode_map("b5")
 
 
 def test_file_level_globals_do_not_leak_between_inputs():

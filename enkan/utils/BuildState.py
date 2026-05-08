@@ -37,3 +37,13 @@ class BuildState:
 
     def set_mode(self, mode: Any) -> None:
         self.mode = ensure_mode_map(mode)
+
+    def mode_with_modifiers(self, *mode_modifiers: Any) -> ModeMap:
+        effective = copy_mode_map(self.mode) or ensure_mode_map(None)
+        if self.cli_mode_pinned and self.cli_mode:
+            return effective
+
+        for modifier in mode_modifiers:
+            if modifier:
+                effective.update(ensure_mode_map(modifier))
+        return effective
