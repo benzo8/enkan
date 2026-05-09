@@ -10,6 +10,20 @@ from enkan.cache.PreloadQueue import PreloadQueue, PreloadedMedia
 from enkan.plugables.ImageLoaders import ImageLoaders
 
 
+class _Sink:
+    def __init__(self):
+        self.contributions = []
+
+    def set_contribution(self, contribution):
+        self.contributions.append(contribution)
+
+    def set_contributions(self, contributions):
+        self.contributions.extend(contributions)
+
+    def clear_contribution(self, key):
+        pass
+
+
 def test_preload_queue_uses_typed_items():
     queue = PreloadQueue(2)
 
@@ -82,6 +96,58 @@ def test_cache_manager_preloads_and_caches_videos(tmp_path: Path):
     assert media_obj.data == b"video-bytes"
     assert str(video_path) in manager.lru_cache
     assert isinstance(manager.lru_cache.get(str(video_path)), CachedVideoData)
+    assert manager.lru_cache.get(str(video_path)).is_memory_backed
+
+
+def test_cache_manager_cache_all_policy_reads_oversized_videos(
+    tmp_path: Path, monkeypatch
+):
+    video_path = tmp_path / "large.mp4"
+    video_path.write_bytes(b"video-bytes")
+    monkeypatch.setattr("enkan.cache.ImageCacheManager.constants.VIDEO_CACHE_MAX_BYTES", 1)
+    monkeypatch.setattr("enkan.cache.ImageCacheManager.constants.VIDEO_CACHE_POLICY", "cache-all")
+
+    manager = ImageCacheManager(iter([str(video_path)]), 0, background_preload=False)
+
+    queued = manager.preload_queue.items()
+    assert len(queued) == 1
+    assert queued[0].path == str(video_path)
+    assert isinstance(queued[0].media, CachedVideoData)
+    assert queued[0].media.data == b"video-bytes"
+    assert queued[0].media.is_memory_backed
+
+    image_path, media_obj = manager.get_next(record_history=False)
+
+    assert image_path == str(video_path)
+    assert isinstance(media_obj, CachedVideoData)
+    assert media_obj.data == b"video-bytes"
+
+
+def test_cache_manager_bounded_bytes_policy_uses_path_backed_payload_for_oversized_videos(
+    tmp_path: Path, monkeypatch
+):
+    video_path = tmp_path / "large.mp4"
+    video_path.write_bytes(b"video-bytes")
+    monkeypatch.setattr("enkan.cache.ImageCacheManager.constants.VIDEO_CACHE_MAX_BYTES", 1)
+    monkeypatch.setattr(
+        "enkan.cache.ImageCacheManager.constants.VIDEO_CACHE_POLICY",
+        "bounded-bytes",
+    )
+
+    manager = ImageCacheManager(iter([str(video_path)]), 0, background_preload=False)
+
+    queued = manager.preload_queue.items()
+    assert len(queued) == 1
+    assert queued[0].path == str(video_path)
+    assert isinstance(queued[0].media, CachedVideoData)
+    assert queued[0].media.data is None
+    assert queued[0].media.is_path_backed
+
+    image_path, media_obj = manager.get_next(record_history=False)
+
+    assert image_path == str(video_path)
+    assert isinstance(media_obj, CachedVideoData)
+    assert media_obj.data is None
 
 
 def test_cache_manager_waits_for_starved_background_refill(monkeypatch):
@@ -175,6 +241,23 @@ def test_cache_manager_returns_none_for_invalid_explicit_path(monkeypatch):
     assert image_path is None
     assert image_obj is None
     assert "missing.jpg" not in manager.lru_cache
+
+
+def test_cache_manager_publishes_cache_dots_status(monkeypatch):
+    monkeypatch.setattr(ImageCacheManager, "_load_media", lambda self, path: f"media:{path}")
+    sink = _Sink()
+
+    manager = ImageCacheManager(
+        iter(["one.jpg", "two.jpg"]),
+        0,
+        background_preload=False,
+        status_sink=sink,
+    )
+
+    assert sink.contributions[-1].key == "cache-dots"
+    assert sink.contributions[-1].zone.value == "center"
+    assert sink.contributions[-1].content.full == len(manager.preload_queue)
+    assert sink.contributions[-1].content.total == manager.preload_queue.max_size
 
 
 def test_cache_manager_skips_missing_image_when_loader_raises(monkeypatch):

@@ -4,6 +4,18 @@ This file summarizes user-facing and project-shaping changes across the practica
 
 It is intentionally concise. Detailed engineering-level change history remains in Git commit history.
 
+## 2.6.5
+
+- Refactored status handling so status updates come from the owning runtime components, with `StatusBar` owning rendering and layout.
+- Preserved existing visible status output (filepath, provider/CRW text, cache and burst dots, `SUB`/`PAR`, auto-advance, and runtime/video failure text).
+- Kept provider behavior and hotkeys unchanged, including CRW display controls and video controls.
+
+## 2.6.0
+
+- Improved video transition reliability and responsiveness during rapid navigation by hardening playback lifecycle handling.
+- Added keyboard video transport controls (`V`, `,`, `.`, `Z`, `X`) and clearer runtime status for position, pause state, and recoverable playback/control failures.
+- Clarified video caching behavior for large shows with explicit memory-backed versus path-backed handling based on cache mode and file size.
+
 ## 2.5.1
 
 - Fixed VLC hanging the UI during video transitions: teardown now runs on a background thread, rapid navigation requests are debounced, and a new `VideoPlaybackController` module owns the full VLC lifecycle.
